@@ -1,0 +1,155 @@
+// Role and CompanyMembership.status are plain Strings, not Prisma enums —
+// SQLite's connector doesn't support native enums. Valid values are
+// enforced at the app layer (see src/types/roles.ts). Swapping to Postgres
+// later (see docs) can upgrade these to real enums with no app-level
+// behavior change.
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  // Set on first successful MSG91 proxy-auth login (see
+  // docs/CLAUDE.md "Auth flow" and docs/msg91-proxy-auth.md). Null for a
+  // member a company_admin invited by email who hasn't logged in yet.
+  msg91Id String? @unique
+
+  memberships   CompanyMembership[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+}
+
+// Dashboard session refresh token (httpOnly cookie) — see docs/CLAUDE.md
+// "Auth flow" #1. Only the hash is stored.
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// A Company here IS the same entity MSG91 calls "company" on a verified
+// identity (`currentCompany`) — not a separate thing linked to it by a
+// mapping. msg91Id is that entity's MSG91-side identifier; see
+// src/services/msg91Login.ts.
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  msg91Id String? @unique
+
+  memberships  CompanyMembership[]
+  projects     Project[]
+  deployTokens DeployToken[]
+  auditLogs    AuditLog[]
+}
+
+// One row per (user, company) pair — role is scoped to that pair, not
+// global to the user. status starts "invited" for a member added by
+// email before they've ever logged in, and flips to "active" on that
+// email's first MSG91 login (see docs/CLAUDE.md "Members").
+model CompanyMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  role      String // "company_admin" | "project_admin" | "viewer" — see src/types/roles.ts
+  status    String   @default("active") // "invited" | "active"
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+// Company-wide deploy token (confirmed scope — see docs/CLAUDE.md "Open
+// questions" #1). Only the hash is ever stored; the raw token is shown
+// once at creation time, mirroring GitHub PAT-style UX.
+model DeployToken {
+  id          String    @id @default(cuid())
+  companyId   String
+  label       String
+  tokenHash   String    @unique
+  tokenPrefix String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// One Project == one deployed app on hostnsoft-deploy. slug is immutable
+// once created (it's the subdomain hostnsoft-deploy routes by —
+// <slug>.app.hostnsoft.com — and the X-App-Name it expects); name is a
+// mutable display label. See docs/CLAUDE.md "Projects".
+model Project {
+  id        String   @id @default(cuid())
+  companyId String
+  slug      String   @unique
+  name      String
+  memoryMb  Int      @default(256) // overrides hostnsoft-deploy's auto-detected default
+  createdAt DateTime @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  deployments Deployment[]
+  envVars     EnvVar[]
+}
+
+// Versioned deploy history — one row per deploy attempt.
+model Deployment {
+  id          String    @id @default(cuid())
+  projectId   String
+  version     String
+  imageTag    String?
+  memoryMb    Int?
+  status      String // "success" | "failed" | "in_progress"
+  errorDetail String?
+  triggeredBy String? // userId, or a deploy token label/prefix
+  createdAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model EnvVar {
+  id        String   @id @default(cuid())
+  projectId String
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+  updatedBy String? // userId of last mutator, for audit convenience
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, key])
+}
+
+// Every mutating action (env var change, memory change, token create/
+// revoke, role change) gets a row here: who, what, when.
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  companyId   String?
+  projectId   String?
+  action      String
+  details     String?
+  createdAt   DateTime @default(now())
+
+  actor   User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}
