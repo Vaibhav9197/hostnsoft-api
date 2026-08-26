@@ -78,6 +78,19 @@ Two independent things, per `docs/CLAUDE.md`:
    back; this API only needs to support token CRUD (`src/routes/tokens.routes.ts`),
    which it does.
 
+## Internal endpoints (service-to-service, not for end users)
+
+- **`POST /internal/deploy-tokens/validate`** (`src/routes/internalTokens.routes.ts`)
+  — `{companyId, token}` → `{valid: boolean}`. Called by `hostnsoft-deploy`
+  on every `POST /apps` to confirm the deploy request's `X-Company-Id` +
+  `Authorization` token pair is live (exists, not revoked, belongs to that
+  company) before it spends any build resources. No `requireAuth` — the
+  raw token itself is the credential. Mounted **before** any router that
+  calls `.use(requireAuth)` on itself (see the comment in
+  `src/routes/index.ts`) — mounting it later would get it silently 401'd
+  by an earlier router's blanket auth check, since all routers here mount
+  at `/`.
+
 ## Deliberately unresolved / stubbed (see docs/CLAUDE.md for why)
 
 Marked with `TODO` comments at their exact location rather than silently

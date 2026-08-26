@@ -247,12 +247,36 @@ orientation to that repo's structure and known constraints.
 
 **It is a separate git repository.** Do not edit files inside
 `../hostnsoft-deploy/` while working on `hostnsoft-api` — if this
-project's design requires a change there (e.g. a new endpoint for
-per-company-token-authenticated deploys, or updating a running app's env vars
-via the Nomad job spec), call that out explicitly as a needed change to a
-separate repo, rather than editing it in passing. It should be reviewed
-and deployed to the server independently, following whatever release
-process that repo uses.
+project's design requires a change there (e.g. updating a running app's
+env vars via the Nomad job spec), call that out explicitly as a needed
+change to a separate repo, rather than editing it in passing. It should
+be reviewed and deployed to the server independently, following whatever
+release process that repo uses. (Per-company-token-authenticated
+deploys, below, was a deliberate exception — the user explicitly asked
+for that specific cross-repo change.)
+
+**Resolved 2026-08-26 — per-company-token-authenticated deploys**:
+`hostnsoft-deploy`'s `server.js` no longer trusts a single shared
+`PLATFORM_TOKEN`. It now requires an `X-Company-Id` header alongside the
+`Authorization: Bearer <token>`, and confirms that pair against this
+service via `POST /internal/deploy-tokens/validate`
+(`src/routes/internalTokens.routes.ts`) before doing anything else. That
+endpoint takes no auth of its own beyond the token itself (see its
+comment for why), hashes the token, and checks it exists, isn't revoked
+(honoring the rotation grace window), and belongs to the claimed company
+— then stamps `DeployToken.lastUsedAt`. See
+`../hostnsoft-deploy/docs/CLAUDE.md` for that repo's side.
+
+**Routing gotcha hit while wiring this up, worth remembering**: every
+resource router here (`companiesRouter`, `tokensRouter`, etc.) calls
+`.use(requireAuth)` on itself with no path filter. Since all these
+routers mount at `/` in `src/routes/index.ts`, that blanket check runs
+for *any* request that reaches it first in mount order — not just
+requests meant for that router — and 401s them before they can fall
+through to a later-mounted, intentionally-unauthenticated router. Any
+new no-auth route (like the internal one above) MUST be mounted before
+the first `requireAuth`-applying router, or it silently 401s. See the
+comment in `src/routes/index.ts`.
 
 This is the central architectural question for this project: **does
 `hostnsoft-api` extend `hostnsoft-deploy` directly, or sit as a separate
