@@ -112,9 +112,24 @@ model Project {
 
 // Versioned deploy history — one row per deploy attempt.
 model Deployment {
-  id          String    @id @default(cuid())
-  projectId   String
-  version     String
+  id        String @id @default(cuid())
+  projectId String
+
+  // The deployment's own sequence number within this project — "v1",
+  // "v2", ... — computed server-side (see src/routes/internalDeployments.routes.ts),
+  // never client-supplied. This is what's unique per project, deliberately
+  // kept separate from appVersion below: a user can redeploy without
+  // bumping their app's version at all (hostnsoft-deploy enforces no
+  // uniqueness on X-App-Version — it even falls back to a timestamp when
+  // that header is missing), so appVersion alone can't be the identity of
+  // a deploy attempt.
+  version String
+
+  // Whatever hostnsoft-deploy actually used for the image tag — the raw
+  // X-App-Version header, or its Date.now() fallback. Informational only;
+  // NOT unique, and may repeat across deployments of the same project.
+  appVersion String
+
   imageTag    String?
   memoryMb    Int?
   status      String // "success" | "failed" | "in_progress"
@@ -124,6 +139,8 @@ model Deployment {
   finishedAt  DateTime?
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
 }
 
 model EnvVar {

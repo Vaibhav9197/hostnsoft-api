@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { loadProjectContext } from "../middleware/projectContext";
 import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 
@@ -13,9 +14,10 @@ envVarsRouter.get(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
     const envVars = await prisma.envVar.findMany({
-      where: { projectId: req.params.projectId },
+      where: { projectId: req.project!.id },
     });
     res.json(envVars);
   }
@@ -33,15 +35,17 @@ envVarsRouter.put(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
     const { vars } = upsertEnvVarsSchema.parse(req.body);
+    const projectId = req.project!.id;
 
     const results = await prisma.$transaction(
       vars.map(({ key, value }) =>
         prisma.envVar.upsert({
-          where: { projectId_key: { projectId: req.params.projectId, key } },
+          where: { projectId_key: { projectId, key } },
           update: { value, updatedBy: req.userId },
-          create: { projectId: req.params.projectId, key, value, updatedBy: req.userId },
+          create: { projectId, key, value, updatedBy: req.userId },
         })
       )
     );
@@ -49,7 +53,7 @@ envVarsRouter.put(
     await logAudit({
       actorUserId: req.userId,
       companyId: req.company!.id,
-      projectId: req.params.projectId,
+      projectId,
       action: "env_var.upsert",
       details: vars.map((v) => v.key).join(", "),
     });
@@ -61,15 +65,16 @@ envVarsRouter.delete(
   "/companies/:companyId/projects/:projectId/env-vars/:key",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
     await prisma.envVar.delete({
-      where: { projectId_key: { projectId: req.params.projectId, key: req.params.key } },
+      where: { projectId_key: { projectId: req.project!.id, key: req.params.key } },
     });
 
     await logAudit({
       actorUserId: req.userId,
       companyId: req.company!.id,
-      projectId: req.params.projectId,
+      projectId: req.project!.id,
       action: "env_var.delete",
       details: req.params.key,
     });

@@ -47,9 +47,11 @@ src/
 └── types/                 Role union, Express Request augmentation
 ```
 
-Request pipeline for a company/project-scoped route:
+Request pipeline for a company-scoped route:
 `requireAuth` → `loadCompanyContext` (loads the caller's `CompanyMembership` for
-`:companyId`) → `requireRole(minimum)`.
+`:companyId`) → `requireRole(minimum)`. Any route that *also* has a
+`:projectId` param needs `loadProjectContext` too (after
+`loadCompanyContext`) — see the security note below.
 
 ## Auth flow implemented here
 
@@ -84,12 +86,55 @@ Two independent things, per `docs/CLAUDE.md`:
   — `{companyId, token}` → `{valid: boolean}`. Called by `hostnsoft-deploy`
   on every `POST /apps` to confirm the deploy request's `X-Company-Id` +
   `Authorization` token pair is live (exists, not revoked, belongs to that
-  company) before it spends any build resources. No `requireAuth` — the
-  raw token itself is the credential. Mounted **before** any router that
-  calls `.use(requireAuth)` on itself (see the comment in
-  `src/routes/index.ts`) — mounting it later would get it silently 401'd
-  by an earlier router's blanket auth check, since all routers here mount
-  at `/`.
+  company) before it spends any build resources.
+- **`POST /internal/deployments/record`** (`src/routes/internalDeployments.routes.ts`)
+  — `{companyId, token, projectSlug, appVersion, status, imageTag?,
+  memoryMb?, errorDetail?}` → the created `Deployment` row. Called by
+  `hostnsoft-deploy` once a deploy attempt concludes (success or failure) —
+  this is what actually populates `GET .../projects/:projectId/deployments`.
+  Re-validates the token independently (via the shared
+  `findLiveDeployToken` in `src/services/deployTokenAuth.ts`) rather than
+  trusting that hostnsoft-deploy already checked it once. Auto-creates the
+  `Project` row on first sight of a given `(companyId, slug)` pair, since
+  real deploys often happen via CLI/skill before anyone's touched the
+  dashboard — race-safe via create-then-catch-conflict, since two
+  concurrent first-deploys of a brand-new project is a real scenario
+  (parallel CI jobs), not a hypothetical.
+  `triggeredBy` is set server-side from the token's own `label`, not
+  trusted from the request body.
+
+  **`version` vs `appVersion`** — deliberately two different fields.
+  `appVersion` is whatever hostnsoft-deploy used for the image tag (the
+  client's `X-App-Version`, or its own timestamp fallback) — informational
+  only, **not unique**, since a user can redeploy without ever bumping it.
+  `version` (`"v1"`, `"v2"`, ...) is this API's own per-project sequence
+  number, assigned server-side and never client-supplied — that's what's
+  actually DB-unique per project (`@@unique([projectId, version])`),
+  computed race-safely the same create-then-catch-conflict way as the
+  project auto-create above.
+
+Both internal endpoints have no `requireAuth` of their own — the raw
+deploy token itself is the credential. Mounted **before** any router that
+calls `.use(requireAuth)` on itself (see the comment in
+`src/routes/index.ts`) — mounting either later would get it silently
+401'd by an earlier router's blanket auth check, since all routers here
+mount at `/`.
+
+## Security fix — cross-tenant project access (2026-08-27)
+
+Every `:projectId`-scoped route used to look projects up by bare `id`
+(`prisma.project.update({ where: { id: req.params.projectId } })`, etc.)
+with no check that the project actually belonged to `:companyId`. A
+`project_admin` (or even `viewer`, for reads) in **any** company could
+read, rename, delete, or read/write the env vars of **any other**
+company's project just by knowing or guessing a project id — env vars
+included real secrets in the shape shown in this doc's examples. Fixed
+with a new `loadProjectContext` middleware (`src/middleware/projectContext.ts`)
+that 404s unless the project belongs to the already-resolved company;
+applied to every route in `projects.routes.ts`, `envVars.routes.ts`, and
+`deployments.routes.ts` that takes a `:projectId`. Verified with a live
+cross-tenant exploit attempt (a second company trying to read/rename a
+first company's project and env vars) — all three now 404 correctly.
 
 ## Deliberately unresolved / stubbed (see docs/CLAUDE.md for why)
 
@@ -105,10 +150,6 @@ implemented, per the project brief's "don't guess silently":
   /companies/:companyId/projects/:projectId` deletes the DB row only;
   `hostnsoft-deploy` has no stop/decommission endpoint yet, so the
   underlying Nomad job is left running, orphaned, until that exists.
-- **Deployment recording** (`deployments.routes.ts`) — `POST
-  .../deployments/record` has nothing calling it yet; `hostnsoft-deploy`
-  has no webhook/callback today, so whether this API polls it or gets
-  pushed to is still open.
 - **Live health / logs** — `GET .../projects/:id` returns `health:
   "unknown"`; there's no log retrieval endpoint yet (open question #4:
   pull from Nomad/Docker on demand vs. a centralized log sink).

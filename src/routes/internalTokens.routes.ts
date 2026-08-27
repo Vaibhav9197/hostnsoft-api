@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { prisma } from "../lib/prisma";
-import { hashToken } from "../lib/deployTokens";
+import { findLiveDeployToken } from "../services/deployTokenAuth";
 
 export const internalTokensRouter = Router();
 
@@ -25,23 +24,10 @@ const validateSchema = z.object({
 internalTokensRouter.post("/internal/deploy-tokens/validate", async (req, res) => {
   const { companyId, token } = validateSchema.parse(req.body);
 
-  const record = await prisma.deployToken.findUnique({
-    where: { tokenHash: hashToken(token) },
-  });
-
-  const isLive =
-    !!record &&
-    record.companyId === companyId &&
-    (!record.revokedAt || record.revokedAt.getTime() > Date.now());
-
-  if (!isLive) {
+  const record = await findLiveDeployToken(companyId, token);
+  if (!record) {
     return res.json({ valid: false });
   }
-
-  await prisma.deployToken.update({
-    where: { id: record.id },
-    data: { lastUsedAt: new Date() },
-  });
 
   res.json({ valid: true, tokenId: record.id, label: record.label });
 });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { loadProjectContext } from "../middleware/projectContext";
 import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
@@ -56,16 +57,12 @@ projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (
 projectsRouter.get(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
+  loadProjectContext,
   async (req, res) => {
-    const project = await prisma.project.findFirst({
-      where: { id: req.params.projectId, companyId: req.company!.id },
-    });
-    if (!project) return res.status(404).json({ error: "Project not found" });
-
     // TODO: fetch live health from hostnsoft-deploy (Nomad allocation
     // status) once that integration point is designed — see
     // docs/CLAUDE.md "Required capabilities".
-    res.json({ ...project, health: "unknown" });
+    res.json({ ...req.project, health: "unknown" });
   }
 );
 
@@ -76,10 +73,11 @@ projectsRouter.patch(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
     const { name } = renameProjectSchema.parse(req.body);
     const project = await prisma.project.update({
-      where: { id: req.params.projectId },
+      where: { id: req.project!.id },
       data: { name },
     });
 
@@ -100,11 +98,12 @@ projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/memory",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
     const { memoryMb } = updateMemorySchema.parse(req.body);
 
     const project = await prisma.project.update({
-      where: { id: req.params.projectId },
+      where: { id: req.project!.id },
       data: { memoryMb },
     });
 
@@ -131,12 +130,13 @@ projectsRouter.delete(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   requireRole("project_admin"),
+  loadProjectContext,
   async (req, res) => {
-    await prisma.project.delete({ where: { id: req.params.projectId } });
+    await prisma.project.delete({ where: { id: req.project!.id } });
     await logAudit({
       actorUserId: req.userId,
       companyId: req.company!.id,
-      projectId: req.params.projectId,
+      projectId: req.project!.id,
       action: "project.delete",
     });
     res.status(204).end();
