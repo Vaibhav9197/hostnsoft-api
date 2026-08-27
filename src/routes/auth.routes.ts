@@ -11,6 +11,7 @@ import {
 import { verifyProxyAuthToken, Msg91AuthError } from "../lib/msg91";
 import { findOrCreateUserFromMsg91 } from "../services/msg91Login";
 import { requireAuth } from "../middleware/auth";
+import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 
 export const authRouter = Router();
 
@@ -43,21 +44,30 @@ function setRefreshCookie(res: import("express").Response, refreshToken: string)
   });
 }
 
+// Shared by both msg91 flows below (POST exchange and GET callback) — the
+// only difference between them is how the caller learns the result (JSON
+// body vs. a browser redirect), not how a token gets turned into a
+// session. Throws Msg91AuthError if MSG91 rejects the token; anything
+// else is a real server error and propagates as-is.
+async function loginWithMsg91Token(token: string) {
+  const identity = await verifyProxyAuthToken(token);
+  const user = await findOrCreateUserFromMsg91(identity);
+  const session = await issueSession(user.id);
+  return { user, ...session };
+}
+
 const exchangeSchema = z.object({ token: z.string().min(1) });
 
-// Token-exchange flow (docs/msg91-proxy-auth.md, "Option B"). The client
-// embeds the MSG91 widget and gets back a proxy_auth_token; it sends that
-// token here. This is the ONLY thing that establishes trust — the token
-// is verified against MSG91 before any local user is created or session
-// issued. If the identity carries a currentCompany, it IS a hostnsoft
-// Company (see src/services/msg91Login.ts) — not a separate entity linked
-// to one.
+// Token-exchange flow (docs/msg91-proxy-auth.md, "Option B" — token
+// exchange, best for pure API/SPA clients). The client embeds the MSG91
+// widget and gets the token back directly in its `success` callback; it
+// POSTs that token here itself, in-page, no navigation involved.
 authRouter.post("/auth/msg91/exchange", async (req, res) => {
   const { token } = exchangeSchema.parse(req.body);
 
-  let identity;
+  let result;
   try {
-    identity = await verifyProxyAuthToken(token);
+    result = await loginWithMsg91Token(token);
   } catch (err) {
     if (err instanceof Msg91AuthError) {
       return res.status(401).json({ error: "Authentication failed" });
@@ -65,8 +75,7 @@ authRouter.post("/auth/msg91/exchange", async (req, res) => {
     throw err;
   }
 
-  const user = await findOrCreateUserFromMsg91(identity);
-  const { accessToken, refreshToken } = await issueSession(user.id);
+  const { user, accessToken, refreshToken } = result;
   setRefreshCookie(res, refreshToken);
 
   const memberships = await prisma.companyMembership.findMany({
@@ -83,6 +92,57 @@ authRouter.post("/auth/msg91/exchange", async (req, res) => {
       role: m.role,
     })),
   });
+});
+
+// Only allows a same-origin-relative path, never letting the query string
+// dictate the redirect's origin — the classic open-redirect vector, and
+// exactly what docs/msg91-proxy-auth.md's security notes call out
+// ("restrict redirect targets to an allowlist if you use the redirect
+// flow"). The allowlist here is simply "must be a path on FRONTEND_ORIGIN,
+// full stop" — the origin itself is never taken from the request.
+const DEFAULT_REDIRECT_PATH = "/";
+function safeRedirectPath(next: unknown): string {
+  if (typeof next !== "string" || next.length === 0) return DEFAULT_REDIRECT_PATH;
+  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://")) {
+    return DEFAULT_REDIRECT_PATH;
+  }
+  return next;
+}
+
+// Redirect flow (docs/msg91-proxy-auth.md, "Option A" — callback flow,
+// for browser-based apps that configure the widget's `addInfo.redirect_path`
+// to point here instead of handling the token in-page). MSG91 sends the
+// user's browser here directly with `?proxy_auth_token=...` (plus
+// whatever else was already on the configured redirect_path, e.g.
+// `?next=/dashboard`) — there is no JSON response to read here, only a
+// redirect, since nothing in-page ever gets to inspect this response.
+//
+// Session is still established server-side exactly like the POST flow
+// (the refresh cookie is set on this redirect response, same as any
+// other auth response) — the frontend lands on `next` already logged in,
+// and should call POST /auth/refresh on load to mint an access token
+// from that cookie rather than expecting one in the URL (an access token
+// in a redirect URL would end up in browser history and server logs).
+authRouter.get("/auth/msg91/callback", async (req, res) => {
+  const next = safeRedirectPath(req.query.next);
+  const token = req.query.proxy_auth_token;
+
+  if (typeof token !== "string" || token.length === 0) {
+    return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=missing_token`);
+  }
+
+  let result;
+  try {
+    result = await loginWithMsg91Token(token);
+  } catch (err) {
+    if (err instanceof Msg91AuthError) {
+      return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=invalid_token`);
+    }
+    throw err;
+  }
+
+  setRefreshCookie(res, result.refreshToken);
+  res.redirect(`${FRONTEND_ORIGIN}${next}`);
 });
 
 authRouter.post("/auth/refresh", async (req, res) => {

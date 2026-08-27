@@ -82,7 +82,25 @@ auth product), not a classic OAuth provider. See `docs/msg91-proxy-auth.md`
 and `docs/auth.md` for the integration pattern this was modeled on.
 Implemented in `src/lib/msg91.ts` (token verification against
 `routes.msg91.com/api/c/getDetails`), `src/services/msg91Login.ts`
-(user + company linking), and the `POST /auth/msg91/exchange` route. MSG91's
+(user + company linking), and **both** of MSG91's documented integration
+shapes (`docs/msg91-proxy-auth.md` "Option A" and "Option B" — added
+2026-08-27, sharing one `loginWithMsg91Token` helper in
+`src/routes/auth.routes.ts`):
+- `POST /auth/msg91/exchange {token}` — for a client that gets the token
+  in-page (the widget's `success` callback) and POSTs it itself; returns
+  the session as JSON.
+- `GET /auth/msg91/callback?proxy_auth_token=...&next=/path` — for a
+  client that configures the widget's `addInfo.redirect_path` to point
+  here instead; MSG91 redirects the *browser* here with the token in the
+  query string, so there's no JSON response to read — this sets the
+  refresh cookie and 302s the browser to `next` on `FRONTEND_ORIGIN`
+  (never taking the redirect's origin from the request itself — see the
+  `safeRedirectPath` guard, a direct response to this doc's own security
+  note about restricting redirect targets to an allowlist). The frontend
+  is expected to call `POST /auth/refresh` on load to mint an access
+  token from that cookie, rather than expecting one in the URL.
+
+MSG91's
 `currentCompany` on a verified identity is mapped to a hostnsoft `Company`
 (`Company.msg91Id`) — the first person from a company to log in
 creates the company as its `company_admin`; later logins from the same company

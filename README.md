@@ -58,9 +58,26 @@ Request pipeline for a company-scoped route:
 Two independent things, per `docs/CLAUDE.md`:
 
 1. **Dashboard login (human, browser)** — MSG91 proxy-auth
-   (`docs/msg91-proxy-auth.md`). The dashboard frontend (a separate repo)
-   embeds MSG91's widget and gets back a `proxy_auth_token`; it sends
-   that to `POST /auth/msg91/exchange {token}` here. This API:
+   (`docs/msg91-proxy-auth.md`). The dashboard frontend embeds MSG91's
+   widget; the widget itself needs a `referenceId` (from MSG91/36Blocks'
+   own dashboard for this account — not something this API issues or
+   stores) passed into `window.initVerification({ referenceId, ... })`,
+   entirely client-side. Once MSG91 hands back a `proxy_auth_token`, two
+   ways to reach this API, both sharing the same `loginWithMsg91Token`
+   logic in `src/routes/auth.routes.ts`:
+   - **`POST /auth/msg91/exchange {token}`** — the widget's `success`
+     callback fires in-page with the token; the frontend POSTs it itself
+     and reads the session back as JSON.
+   - **`GET /auth/msg91/callback?proxy_auth_token=...&next=/path`** — the
+     widget's `addInfo.redirect_path` points here instead; MSG91 redirects
+     the *browser*, so this responds with a redirect (to `next`, always
+     rooted at `FRONTEND_ORIGIN` — see `safeRedirectPath`, an
+     open-redirect guard, never the request's own origin), not JSON. The
+     refresh cookie is still set on this response; the frontend should
+     call `POST /auth/refresh` on load to get an access token rather than
+     expecting one in the URL.
+
+   Either way, this API:
    - verifies the token against MSG91 (`src/lib/msg91.ts`, calls
      `routes.msg91.com/api/c/getDetails`) — never trusts it unverified;
    - finds-or-creates the local `User` keyed by `msg91Id`, falling back
@@ -71,9 +88,9 @@ Two independent things, per `docs/CLAUDE.md`:
      company as `company_admin`; later logins from the same company join as
      `viewer` (promotable via the existing member-role endpoint);
    - activates any `invited` memberships for that email;
-   - issues this API's own short-lived access token (response body) plus
-     an httpOnly refresh-token cookie. `POST /auth/refresh` rotates it;
-     `POST /auth/logout` revokes it.
+   - issues this API's own short-lived access token plus an httpOnly
+     refresh-token cookie. `POST /auth/refresh` rotates it; `POST
+     /auth/logout` revokes it.
 2. **Agent bootstrap** — not implemented here at all, deliberately. The
    agent-side `hostnsoft-deploy` skill package is responsible for telling
    a first-time user to create a token via this dashboard and paste it

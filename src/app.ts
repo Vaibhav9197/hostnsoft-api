@@ -5,6 +5,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { router } from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
+import { FRONTEND_ORIGIN } from "./lib/frontendOrigin";
 
 export function createApp() {
   const app = express();
@@ -15,7 +16,7 @@ export function createApp() {
   // cross-origin from the dashboard frontend.
   app.use(
     cors({
-      origin: process.env.FRONTEND_ORIGIN ?? "http://localhost:3000",
+      origin: FRONTEND_ORIGIN,
       credentials: true,
     })
   );
