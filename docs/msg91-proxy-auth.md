@@ -2,6 +2,8 @@
 
 > This document explains how the MSG91 proxy-auth service works and how to integrate the same pattern in a different API-only product.
 
+> **Correction (2026-08-31), don't repeat this mistake**: the `getDetails`-based verification step below (section 3, and the `server calls https://routes.msg91.com/api/c/getDetails` line just below) does **not** match this MSG91 account's actual API — confirmed against a real, working integration test. The real verification step is `generateAuthToken` (needs an account-level `authkey` header, server-side only — see `src/lib/msg91.ts` and `docs/CLAUDE.md` "Auth flow" for what's actually implemented and live). Everything else in this document — the widget loading, the token-exchange vs. redirect-flow shape, the security notes — still applies; only the specific verification endpoint was wrong.
+
 ## Purpose
 
 MSG91 proxy auth is a hosted authentication flow where MSG91 owns the login / registration / forgot-password UI and issues a single, verified identity token back to your app. Your backend then verifies that token against MSG91 and creates or links a user in your own system.

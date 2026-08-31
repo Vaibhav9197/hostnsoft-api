@@ -79,7 +79,10 @@ Two independent things, per `docs/CLAUDE.md`:
 
    Either way, this API:
    - verifies the token against MSG91 (`src/lib/msg91.ts`, calls
-     `routes.msg91.com/api/c/getDetails`) — never trusts it unverified;
+     `generateAuthToken` with the account-level `MSG91_AUTHKEY` — **server-side
+     only**, never expose that key to a browser — and decodes the returned
+     JWT's `user`/`company` claims) — never trusts the widget's token
+     unverified;
    - finds-or-creates the local `User` keyed by `msg91Id`, falling back
      to linking by email for a member a company_admin invited before their
      first login (`src/services/msg91Login.ts`);

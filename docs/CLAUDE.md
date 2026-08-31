@@ -80,12 +80,27 @@ person at all.
 MSG91's hosted proxy-auth widget (`proxy.msg91.com` — MSG91's "36Blocks"
 auth product), not a classic OAuth provider. See `docs/msg91-proxy-auth.md`
 and `docs/auth.md` for the integration pattern this was modeled on.
-Implemented in `src/lib/msg91.ts` (token verification against
-`routes.msg91.com/api/c/getDetails`), `src/services/msg91Login.ts`
+Implemented in `src/lib/msg91.ts`, `src/services/msg91Login.ts`
 (user + company linking), and **both** of MSG91's documented integration
 shapes (`docs/msg91-proxy-auth.md` "Option A" and "Option B" — added
 2026-08-27, sharing one `loginWithMsg91Token` helper in
 `src/routes/auth.routes.ts`):
+
+**Corrected 2026-08-31**: token verification is `generateAuthToken`
+(`authkey` header + `proxy_auth_token` header → `{data: {jwt}}`, whose
+payload carries `user`/`company` claims directly), **not**
+`routes.msg91.com/api/c/getDetails` as `docs/msg91-proxy-auth.md`
+originally described — that doc's pattern didn't match this account's
+real API, confirmed against a live integration test. `MSG91_AUTHKEY` is
+account-wide (its own JWTs carry permissions like
+`create_authkey`/`delete_authkey`/`assign_permissions`) — it must only
+ever be read server-side in `src/lib/msg91.ts`; if it ever appears in
+frontend/browser code, treat it as compromised and rotate it in the
+MSG91 dashboard. The returned JWT's payload is decoded, not
+cryptographically verified — trust comes from having just fetched it
+directly from MSG91 over an authkey-authenticated call, not from
+checking its signature (we don't have, and don't need, MSG91's HS256
+signing secret).
 - `POST /auth/msg91/exchange {token}` — for a client that gets the token
   in-page (the widget's `success` callback) and POSTs it itself; returns
   the session as JSON.
