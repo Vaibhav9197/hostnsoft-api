@@ -46,6 +46,9 @@ async function createDeploymentWithNextVersion(
       if (!isUniqueConstraintViolation(err)) throw err;
       // Another deploy for this project claimed that version number
       // between our count() and create() — recompute and retry.
+      console.log(
+        `[createDeploymentWithNextVersion] lost the race for ${version} on project ${projectId} (attempt ${attempt + 1}/${MAX_ATTEMPTS}) — retrying`
+      );
     }
   }
   throw new Error(
@@ -90,6 +93,9 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
     });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
+    console.log(
+      `[internalDeployments.record] lost create race for project slug "${body.projectSlug}" — fetching the winner's row`
+    );
     project = await prisma.project.findUniqueOrThrow({ where: { slug: body.projectSlug } });
   }
 

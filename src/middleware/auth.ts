@@ -13,7 +13,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     const { userId } = verifyAccessToken(token);
     req.userId = userId;
     next();
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[requireAuth] rejected ${req.method} ${req.path}: ${(err as Error)?.message ?? err}`
+    );
     return res.status(401).json({ error: "Invalid or expired access token" });
   }
 }
