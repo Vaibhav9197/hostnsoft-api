@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { healthRouter } from "./health.routes";
 import { internalTokensRouter } from "./internalTokens.routes";
+import { internalProjectsRouter } from "./internalProjects.routes";
 import { internalDeploymentsRouter } from "./internalDeployments.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
@@ -19,6 +20,7 @@ export const router = Router();
 // regardless of whether the request's path even belongs to that router.
 router.use(healthRouter);
 router.use(internalTokensRouter);
+router.use(internalProjectsRouter);
 router.use(internalDeploymentsRouter);
 
 router.use(authRouter);

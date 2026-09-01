@@ -2,7 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma, type Deployment } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
+import { claimProjectForCompany } from "../services/projectClaim";
 
 export const internalDeploymentsRouter = Router();
 
@@ -19,10 +21,6 @@ const recordSchema = z.object({
   memoryMb: z.number().int().optional(),
   errorDetail: z.string().optional(),
 });
-
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
-}
 
 // Assigns this project's next sequential deploy number ("v1", "v2", ...)
 // and creates the row atomically enough to survive two deploys of the
@@ -64,6 +62,13 @@ async function createDeploymentWithNextVersion(
 // whatever check happened earlier in the same deploy request) is the
 // credential, so this endpoint is trustworthy on its own rather than
 // relying on the caller having already been authenticated once.
+//
+// Project resolution here is a defense-in-depth backstop, not the
+// primary enforcement point — hostnsoft-deploy is expected to have
+// already called POST /internal/projects/claim before ever building, so
+// the "wrong company" conflict below should be close to unreachable in
+// practice. Shares claimProjectForCompany with that endpoint rather than
+// duplicating the create-then-catch-conflict logic.
 internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) => {
   const body = recordSchema.parse(req.body);
 
@@ -72,43 +77,14 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  // hostnsoft-deploy only knows the app's slug (its X-App-Name), not this
-  // service's internal project id — resolve/attach by (companyId, slug).
-  // Auto-creates the Project row on first-ever deploy of a given slug
-  // under this company, since real-world usage often deploys via the
-  // skill/CLI before anyone has touched the dashboard — recording
-  // deployment history should never silently fail just because nobody
-  // clicked "create project" first.
-  //
-  // create-then-catch-conflict, not check-then-create: parallel CI jobs
-  // can easily fire the very first deploy of a brand-new project at
-  // nearly the same instant, and two concurrent finds both seeing no
-  // existing row must not both try to create one and crash on the
-  // resulting unique-constraint violation — same pattern as company
-  // creation in msg91Login.ts.
-  let project: Awaited<ReturnType<typeof prisma.project.findUnique>>;
-  try {
-    project = await prisma.project.create({
-      data: { companyId: body.companyId, slug: body.projectSlug, name: body.projectSlug },
-    });
-  } catch (err) {
-    if (!isUniqueConstraintViolation(err)) throw err;
-    console.log(
-      `[internalDeployments.record] lost create race for project slug "${body.projectSlug}" — fetching the winner's row`
-    );
-    project = await prisma.project.findUniqueOrThrow({ where: { slug: body.projectSlug } });
-  }
-
-  if (project.companyId !== body.companyId) {
-    // The slug is already claimed by a DIFFERENT company's project (slugs
-    // are globally unique, since they're a live subdomain). Recording
-    // this under the wrong company would be worse than not recording it.
+  const claim = await claimProjectForCompany(body.companyId, body.projectSlug);
+  if (claim.conflict) {
     return res.status(409).json({
       error: `Project slug "${body.projectSlug}" belongs to a different company`,
     });
   }
 
-  const deployment = await createDeploymentWithNextVersion(project.id, {
+  const deployment = await createDeploymentWithNextVersion(claim.project.id, {
     appVersion: body.appVersion,
     imageTag: body.imageTag,
     memoryMb: body.memoryMb,

@@ -1,5 +1,5 @@
-import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import type { Msg91Identity } from "../lib/msg91";
 
 export async function findOrCreateUserFromMsg91(identity: Msg91Identity) {
@@ -42,10 +42,6 @@ export async function findOrCreateUserFromMsg91(identity: Msg91Identity) {
   }
 
   return user;
-}
-
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 }
 
 // A hostnsoft Company IS the same entity MSG91 calls "currentCompany" on a
