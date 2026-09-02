@@ -116,7 +116,7 @@ signing secret).
   token from that cookie, rather than expecting one in the URL.
 
 MSG91's
-`currentCompany` on a verified identity is mapped to a hostnsoft `Company`
+`currentCompany` on a verified identity is mapped to an Embarko `Company`
 (`Company.msg91Id`) — the first person from a company to log in
 creates the company as its `company_admin`; later logins from the same company
 join as `viewer`, promotable via the existing member-role endpoint. This
@@ -164,13 +164,14 @@ The `hostnsoft-deploy` client-facing skill package (`SKILL.md` +
 `../hostnsoft-deploy/CLAUDE.md` about exactly where this package lives
 relative to the server repo of the same name) should:
 
-1. Check for an existing stored token first — `HOSTNSOFT_TOKEN` env var,
-   or a local credentials file. If found, use it directly; skip
-   everything below.
+1. Check for an existing stored token first — `DEPLOY_TOKEN` env var
+   (renamed from `HOSTNSOFT_TOKEN` as part of the Embarko rebrand — see
+   `hostnsoft-skill/`), or a local credentials file. If found, use it
+   directly; skip everything below.
 2. If none exists, tell the person plainly: *"You'll need a deploy token
    — go to `https://hostnsoft.com/login`, sign in, open your company's Tokens
    page, create one, and paste it here"* (or: *"...and set it as
-   `HOSTNSOFT_TOKEN` in your environment"*).
+   `DEPLOY_TOKEN` in your environment"*).
 3. Wait for the person to paste the token back in chat, or confirm
    they've set the env var — there is no polling, no automatic detection
    of completion. The human closes the loop by pasting the token.
@@ -179,7 +180,7 @@ relative to the server repo of the same name) should:
    happens once per machine/agent context, not once per conversation.
 
 This is the same shape the original `hostnsoft-deploy` skill already
-assumed (`HOSTNSOFT_TOKEN` as a required env var) — this just adds the
+assumed (`DEPLOY_TOKEN` as a required env var) — this just adds the
 missing "what do I do if I don't have one yet" guidance for a first-time
 user, rather than introducing new infrastructure.
 

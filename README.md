@@ -86,7 +86,7 @@ Two independent things, per `docs/CLAUDE.md`:
    - finds-or-creates the local `User` keyed by `msg91Id`, falling back
      to linking by email for a member a company_admin invited before their
      first login (`src/services/msg91Login.ts`);
-   - **maps MSG91's `currentCompany` to a hostnsoft `Company`**
+   - **maps MSG91's `currentCompany` to an Embarko `Company`**
      (`Company.msg91Id`): first person from that company creates the
      company as `company_admin`; later logins from the same company join as
      `viewer` (promotable via the existing member-role endpoint);

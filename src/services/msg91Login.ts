@@ -44,7 +44,7 @@ export async function findOrCreateUserFromMsg91(identity: Msg91Identity) {
   return user;
 }
 
-// A hostnsoft Company IS the same entity MSG91 calls "currentCompany" on a
+// An Embarko Company IS the same entity MSG91 calls "currentCompany" on a
 // verified identity — not two things joined by a mapping. This finds the
 // Company row for that MSG91 id (creating it on first sight) and ensures
 // the user has a membership in it.
