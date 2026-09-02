@@ -1,9 +1,10 @@
 import type { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
+import { logger } from "../lib/logger";
 
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ) {
@@ -27,7 +28,7 @@ export function errorHandler(
     return res.status(status).json({ error: (err as Error)?.message ?? "Bad request" });
   }
 
-  console.error(err);
+  logger.error(`[errorHandler] ${req.method} ${req.path} ->`, err);
   const message = err instanceof Error ? err.message : "Internal server error";
   res.status(500).json({ error: message });
 }

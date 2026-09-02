@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
+import { logger } from "../lib/logger";
 
 export const internalDeploymentsRouter = Router();
 
@@ -43,7 +44,7 @@ async function createDeploymentWithNextVersion(
       if (!isUniqueConstraintViolation(err)) throw err;
       // Another deploy for this project claimed that version number
       // between our count() and create() — recompute and retry.
-      console.log(
+      logger.info(
         `[createDeploymentWithNextVersion] lost the race for ${version} on project ${projectId} (attempt ${attempt + 1}/${MAX_ATTEMPTS}) — retrying`
       );
     }

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyAccessToken } from "../lib/jwt";
+import { logger } from "../lib/logger";
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
@@ -14,7 +15,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     req.userId = userId;
     next();
   } catch (err) {
-    console.warn(
+    logger.warn(
       `[requireAuth] rejected ${req.method} ${req.path}: ${(err as Error)?.message ?? err}`
     );
     return res.status(401).json({ error: "Invalid or expired access token" });

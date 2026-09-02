@@ -12,6 +12,7 @@ import { verifyProxyAuthToken, Msg91AuthError } from "../lib/msg91";
 import { findOrCreateUserFromMsg91 } from "../services/msg91Login";
 import { requireAuth } from "../middleware/auth";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
+import { logger } from "../lib/logger";
 
 export const authRouter = Router();
 
@@ -70,7 +71,7 @@ authRouter.post("/auth/msg91/exchange", async (req, res) => {
     result = await loginWithMsg91Token(token);
   } catch (err) {
     if (err instanceof Msg91AuthError) {
-      console.warn(`[auth.msg91.exchange] rejected: ${err.message}`);
+      logger.warn(`[auth.msg91.exchange] rejected: ${err.message}`);
       return res.status(401).json({ error: "Authentication failed" });
     }
     throw err;
@@ -137,7 +138,7 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
     result = await loginWithMsg91Token(token);
   } catch (err) {
     if (err instanceof Msg91AuthError) {
-      console.warn(`[auth.msg91.callback] rejected: ${err.message}`);
+      logger.warn(`[auth.msg91.callback] rejected: ${err.message}`);
       return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=invalid_token`);
     }
     throw err;
