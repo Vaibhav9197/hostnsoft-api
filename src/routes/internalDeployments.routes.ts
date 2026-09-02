@@ -9,7 +9,6 @@ import { claimProjectForCompany } from "../services/projectClaim";
 export const internalDeploymentsRouter = Router();
 
 const recordSchema = z.object({
-  companyId: z.string().min(1),
   token: z.string().min(1),
   projectSlug: z.string().min(1),
   // Whatever hostnsoft-deploy used for the image tag (X-App-Version, or
@@ -61,7 +60,9 @@ async function createDeploymentWithNextVersion(
 // requireAuth, the deploy token itself (re-checked here, independently of
 // whatever check happened earlier in the same deploy request) is the
 // credential, so this endpoint is trustworthy on its own rather than
-// relying on the caller having already been authenticated once.
+// relying on the caller having already been authenticated once. The
+// token's own companyId is the source of truth for which company this
+// deployment belongs to.
 //
 // Project resolution here is a defense-in-depth backstop, not the
 // primary enforcement point — hostnsoft-deploy is expected to have
@@ -72,12 +73,12 @@ async function createDeploymentWithNextVersion(
 internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) => {
   const body = recordSchema.parse(req.body);
 
-  const tokenRecord = await findLiveDeployToken(body.companyId, body.token);
+  const tokenRecord = await findLiveDeployToken(body.token);
   if (!tokenRecord) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const claim = await claimProjectForCompany(body.companyId, body.projectSlug);
+  const claim = await claimProjectForCompany(tokenRecord.companyId, body.projectSlug);
   if (claim.conflict) {
     return res.status(409).json({
       error: `Project slug "${body.projectSlug}" belongs to a different company`,
