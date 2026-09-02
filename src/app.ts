@@ -5,11 +5,16 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { router } from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
+import { requestLogger } from "./middleware/requestLogger";
 import { FRONTEND_ORIGIN } from "./lib/frontendOrigin";
 
 export function createApp() {
   const app = express();
 
+  // First, ahead of everything else — every log line for the rest of this
+  // request's lifecycle (including inside helmet/cors failures and the
+  // final error handler) needs the request id already in context.
+  app.use(requestLogger);
   app.use(helmet());
   // credentials: true + an explicit origin (not "*") is required for the
   // httpOnly refresh-token cookie in src/routes/auth.routes.ts to work

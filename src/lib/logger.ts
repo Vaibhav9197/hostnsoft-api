@@ -1,15 +1,19 @@
 /**
  * Every log line in this service goes through here so they all share one
- * shape: `[<ISO timestamp>] [<LEVEL>] <message>`. Before this, call sites
- * used raw console.log/warn/error inconsistently, with no timestamp —
- * made it hard to correlate a log line with a specific request or tell
- * how stale a line in a scrollback was.
+ * shape: `<ISO timestamp> <request id>: <message>`. The request id comes
+ * from AsyncLocalStorage (see requestContext.ts) so every log made while
+ * handling a request — including deep inside services — is tagged with
+ * it automatically, without passing it around explicitly. Logs made
+ * outside any request (startup, fatal env-var checks) get "-" instead.
  */
+import { getRequestId } from "./requestContext";
+
 type LogArgs = unknown[];
 
 function write(level: "info" | "warn" | "error", args: LogArgs): void {
   const fn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
-  fn(`[${new Date().toISOString()}] [${level.toUpperCase()}]`, ...args);
+  const requestId = getRequestId() ?? "-";
+  fn(`${new Date().toISOString()} ${requestId}:`, ...args);
 }
 
 export const logger = {
