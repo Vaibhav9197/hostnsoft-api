@@ -30,7 +30,9 @@ export async function claimProjectForCompany(
     });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
-    console.log(`[claimProjectForCompany] lost create race for slug "${slug}" — fetching the winner's row`);
+    // Project already exists — true concurrent-create races are rare;
+    // this branch mostly just means "this app has been deployed before,"
+    // which is the normal case for every redeploy, so it isn't logged.
     project = await prisma.project.findUniqueOrThrow({ where: { slug } });
   }
 

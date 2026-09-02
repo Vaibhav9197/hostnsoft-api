@@ -82,11 +82,9 @@ async function joinOrCreateCompany(
     });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
-    // Membership already exists (invited beforehand, or a concurrent
-    // login raced us here) — leave it as-is.
-    console.log(
-      `[joinOrCreateCompany] membership already exists for user ${userId} in company ${companyId} — skipping create`
-    );
+    // Membership already exists — the overwhelmingly common case is just
+    // "this user already logged in before," not a live race, so this
+    // isn't logged: it would fire on nearly every returning login.
   }
 }
 
@@ -100,11 +98,9 @@ async function findOrCreateCompany(
     return { companyId: company.id, justCreated: true };
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
-    // Another login for this MSG91 company won the create race between our
-    // attempt and now — fetch the row it created instead of failing.
-    console.log(
-      `[findOrCreateCompany] lost create race for msg91Id ${msg91Company.id} — fetching the winner's row`
-    );
+    // Company already exists — true concurrent-create races are rare;
+    // this branch mostly just means "this company has logged in before,"
+    // which happens on nearly every login, so it isn't logged.
     const company = await prisma.company.findUniqueOrThrow({
       where: { msg91Id: msg91Company.id },
     });
