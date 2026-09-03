@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "../lib/prisma";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
 
@@ -34,9 +35,22 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     });
   }
 
+  // Include this project's already-active custom domains (see
+  // docs/Customdomain-req.md) so every fresh deploy/rebuild regenerates
+  // the job spec with their routers too — without this, a redeploy after
+  // a custom domain was already active would silently drop it, since
+  // hostnsoft-deploy has no persistent state of its own to remember it
+  // by. This is the same call hostnsoft-deploy already makes on every
+  // deploy, so no new integration point is needed for this to work.
+  const activeDomains = await prisma.domain.findMany({
+    where: { projectId: result.project.id, status: "active" },
+    select: { domain: true },
+  });
+
   res.json({
     projectId: result.project.id,
     slug: result.project.slug,
     memoryMb: result.project.memoryMb,
+    customDomains: activeDomains.map((d) => d.domain),
   });
 });

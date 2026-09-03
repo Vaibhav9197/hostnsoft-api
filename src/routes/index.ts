@@ -9,6 +9,7 @@ import { tokensRouter } from "./tokens.routes";
 import { projectsRouter } from "./projects.routes";
 import { deploymentsRouter } from "./deployments.routes";
 import { envVarsRouter } from "./envVars.routes";
+import { domainsRouter } from "./domains.routes";
 
 export const router = Router();
 
@@ -29,3 +30,4 @@ router.use(tokensRouter);
 router.use(projectsRouter);
 router.use(deploymentsRouter);
 router.use(envVarsRouter);
+router.use(domainsRouter);
