@@ -42,19 +42,6 @@ domainsRouter.post(
 
     const type = classifyDomain(domain);
 
-    // Product decision: subdomain (CNAME) mapping only — apex/root
-    // domains are rejected rather than supported via an A record. Apex
-    // support would mean handing every such customer the origin server's
-    // real IP directly, with no CDN/proxy in front of it and no failover
-    // if that IP ever changes; CNAME-only avoids both. See
-    // docs/Customdomain-req.md's "Edge cases" for the underlying apex/
-    // CNAME DNS limitation this sidesteps entirely by not offering it.
-    if (type === "apex") {
-      return res.status(400).json({
-        error: `"${domain}" is an apex/root domain, which isn't supported — use a subdomain instead (e.g. "www.${domain}" or "app.${domain}")`,
-      });
-    }
-
     let created;
     try {
       created = await prisma.domain.create({
