@@ -1,6 +1,7 @@
 import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
+import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
 
 export type ClaimResult =
   | { project: Project; conflict: false }
@@ -36,10 +37,54 @@ export async function claimProjectForCompany(
     project = await prisma.project.findUniqueOrThrow({ where: { slug } });
   }
 
-  if (project.companyId !== companyId) {
-    // Slug already belongs to a DIFFERENT company (slugs are globally
-    // unique platform-wide — they're a live subdomain). This is the
-    // actual "app name must be unique" enforcement point.
+  if (project.companyId === companyId) {
+    return { project, conflict: false };
+  }
+
+  if (project.isOrphan) {
+    // Adopt it — see docs/Anonymous-deploy-req.md #6. A previously
+    // anonymous deploy is being claimed with a real token for the first
+    // time: assign it to this company and clear every orphan field so it
+    // behaves identically to a project that was always token-created.
+    const adopted = await prisma.project.update({
+      where: { id: project.id },
+      data: { companyId, isOrphan: false, orphanExpiresAt: null },
+    });
+    return { project: adopted, conflict: false };
+  }
+
+  // Slug already belongs to a DIFFERENT, already-claimed company (slugs
+  // are globally unique platform-wide — they're a live subdomain). This
+  // is the actual "app name must be unique" enforcement point.
+  return { project: null, conflict: true };
+}
+
+// The no-token path — see docs/Anonymous-deploy-req.md. Same create-
+// then-catch-conflict shape as claimProjectForCompany above, but there's
+// no company at all yet: a brand-new slug becomes a fresh orphan
+// project; an already-orphan slug is simply reused (redeploying to the
+// same anonymous session does NOT reset its expiry — the 24h clock
+// starts once, at first creation); a slug already claimed by a real
+// company is never touchable anonymously.
+export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
+  let project: Project;
+  try {
+    project = await prisma.project.create({
+      data: {
+        slug,
+        name: slug,
+        isOrphan: true,
+        orphanExpiresAt: new Date(Date.now() + ORPHAN_TTL_MS),
+      },
+    });
+  } catch (err) {
+    if (!isUniqueConstraintViolation(err)) throw err;
+    project = await prisma.project.findUniqueOrThrow({ where: { slug } });
+  }
+
+  if (!project.isOrphan) {
+    // Already claimed by a real company — an anonymous caller can never
+    // take over or redeploy to it, even under its own name.
     return { project: null, conflict: true };
   }
 
