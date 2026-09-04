@@ -62,11 +62,25 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     select: { domain: true },
   });
 
+  // This project's configured env vars (see envVars.routes.ts) — sent on
+  // every deploy so hostnsoft-deploy can bake them into the container's
+  // env block. Previously set here but never actually reached the
+  // running app (see docs/CLAUDE.md's known gaps); this is that missing
+  // integration point. An orphan project can never have any (env vars
+  // are only ever set through the company-scoped route, which requires
+  // an already-claimed project), so this naturally comes back empty for
+  // anonymous deploys without any special-casing.
+  const envVars = await prisma.envVar.findMany({
+    where: { projectId: project.id },
+    select: { key: true, value: true },
+  });
+
   res.json({
     projectId: project.id,
     slug: project.slug,
     memoryMb: project.memoryMb,
     customDomains: activeDomains.map((d) => d.domain),
+    envVars,
     // Orphan fields — see docs/Anonymous-deploy-req.md. isOrphan is
     // always present; the other two are only meaningful (and only sent)
     // when it's true, so hostnsoft-deploy can check one field to decide

@@ -23,14 +23,26 @@ envVarsRouter.get(
   }
 );
 
+// Restricted to standard env-var identifier syntax — hostnsoft-deploy
+// embeds `key` as a bare, unquoted attribute name directly in generated
+// Nomad job-spec HCL (`env { KEY = "value" }`, see nomad-job-spec.js).
+// An unrestricted key could break out of that block and inject arbitrary
+// job-spec content; this is the actual enforcement point; the value side
+// is safe since it's always inside a quoted+escaped string literal.
+const ENV_VAR_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 const upsertEnvVarsSchema = z.object({
-  vars: z.array(z.object({ key: z.string().min(1), value: z.string() })),
+  vars: z.array(
+    z.object({
+      key: z.string().min(1).regex(ENV_VAR_KEY_PATTERN, "Must be a valid env var name (letters, digits, underscore; can't start with a digit)"),
+      value: z.string(),
+    })
+  ),
 });
 
-// Bulk upsert. Persists here only for now — does not yet reach the running
-// app. See docs/CLAUDE.md open question #3: propagating this into
-// hostnsoft-deploy's Nomad job spec (and triggering a redeploy) is a
-// separate, not-yet-designed integration point in that sibling repo.
+// Bulk upsert. Now actually reaches the running app — see
+// hostnsoft-deploy's nomad-job-spec.js, which bakes these into the
+// Nomad job spec's env block on every deploy.
 envVarsRouter.put(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
