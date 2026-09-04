@@ -45,6 +45,17 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
     select: { domain: true },
   });
 
+  // Include the project's env vars too — this endpoint regenerates the
+  // ENTIRE job spec from scratch (see hostnsoft-deploy's
+  // /internal/apps/:appName/config), so omitting them here would silently
+  // strip them from the running container the moment a custom domain is
+  // activated/deactivated/re-verified, independent of anything the user
+  // actually changed about their env vars.
+  const envVars = await prisma.envVar.findMany({
+    where: { projectId },
+    select: { key: true, value: true },
+  });
+
   let response: Response;
   try {
     response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
@@ -57,6 +68,7 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
         imageTag: latestSuccess.imageTag,
         memoryMb: project.memoryMb,
         customDomains: activeDomains.map((d) => d.domain),
+        envVars,
       }),
     });
   } catch (e) {
