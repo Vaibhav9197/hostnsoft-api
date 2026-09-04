@@ -15,7 +15,7 @@
  */
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
-import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/customDomainConfig";
+import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
 
 interface PushResult {
   pushed: boolean;

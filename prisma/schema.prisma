@@ -97,15 +97,29 @@ model DeployToken {
 // once created (it's the subdomain hostnsoft-deploy routes by —
 // <slug>.app.hostnsoft.com — and the X-App-Name it expects); name is a
 // mutable display label. See docs/CLAUDE.md "Projects".
+//
+// companyId is nullable to support anonymous ("orphan") deploys — see
+// docs/Anonymous-deploy-req.md. A project with companyId null is always
+// isOrphan true; the two are set/cleared together (see
+// src/services/projectClaim.ts). slug stays unique regardless of orphan
+// status — an orphan project occupies its name exactly like a claimed
+// one.
 model Project {
   id        String   @id @default(cuid())
-  companyId String
+  companyId String?
   slug      String   @unique
   name      String
   memoryMb  Int      @default(256) // overrides hostnsoft-deploy's auto-detected default
   createdAt DateTime @default(now())
 
-  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // See docs/Anonymous-deploy-req.md. orphanExpiresAt is computed once,
+  // at creation, from the TTL config in effect at that moment — not
+  // derived from createdAt at delete-time — so a later TTL config change
+  // never retroactively changes an already-quoted deletion time.
+  isOrphan        Boolean   @default(false)
+  orphanExpiresAt DateTime?
+
+  company     Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]

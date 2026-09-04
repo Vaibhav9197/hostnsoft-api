@@ -23,24 +23,6 @@ if (!process.env.ORIGIN_SERVER_IP) {
 }
 export const ORIGIN_SERVER_IP: string = process.env.ORIGIN_SERVER_IP;
 
-if (!process.env.HOSTNSOFT_DEPLOY_URL) {
-  throw new Error(
-    "HOSTNSOFT_DEPLOY_URL environment variable is not set. Required to push " +
-      "custom-domain router config to hostnsoft-deploy on activation."
-  );
-}
-export const HOSTNSOFT_DEPLOY_URL: string = process.env.HOSTNSOFT_DEPLOY_URL;
-
-if (!process.env.INTERNAL_API_SECRET) {
-  throw new Error(
-    "INTERNAL_API_SECRET environment variable is not set. This authenticates " +
-      "hostnsoft-api's own calls INTO hostnsoft-deploy (the reverse direction of " +
-      "the deploy-token flow) — must match hostnsoft-deploy's INTERNAL_API_SECRET " +
-      "exactly."
-  );
-}
-export const INTERNAL_API_SECRET: string = process.env.INTERNAL_API_SECRET;
-
 // How often previously-verified domains get re-checked against live DNS —
 // see docs/Customdomain-req.md constraint #3 ("re-checked periodically
 // after activation ... don't continue serving or attempting to renew
