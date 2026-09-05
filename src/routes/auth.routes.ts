@@ -1,107 +1,50 @@
 import { Router } from "express";
 import { z } from "zod";
-import { prisma } from "../lib/prisma";
-import { signAccessToken } from "../lib/jwt";
 import {
-  REFRESH_COOKIE_NAME,
-  REFRESH_TOKEN_TTL_MS,
-  generateRefreshToken,
-  hashRefreshToken,
-} from "../lib/refreshTokens";
-import { verifyProxyAuthToken, Msg91AuthError } from "../lib/msg91";
-import { findOrCreateUserFromMsg91 } from "../services/msg91Login";
-import { requireAuth } from "../middleware/auth";
+  verifyProxyAuthToken,
+  getMyDetails,
+  isCompanyMember,
+  switchCompany,
+  evictProxyAuthToken,
+  ProxyError,
+} from "../lib/msg91";
+import { requireProxyToken } from "../middleware/proxyToken";
+import { logAudit } from "../services/audit";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { logger } from "../lib/logger";
 
 export const authRouter = Router();
 
-// The agent never logs in as the person and never holds a dashboard
-// session — it only needs a Deploy Token, bootstrapped manually through
-// this dashboard once (see docs/CLAUDE.md "Auth flow" #2). Everything
-// below is the *human* login path only.
-
-async function issueSession(userId: string) {
-  const accessToken = signAccessToken(userId);
-  const { token: refreshToken, tokenHash } = generateRefreshToken();
-
-  await prisma.refreshToken.create({
-    data: {
-      userId,
-      tokenHash,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
-    },
-  });
-
-  return { accessToken, refreshToken };
-}
-
-function setRefreshCookie(res: import("express").Response, refreshToken: string) {
-  res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: REFRESH_TOKEN_TTL_MS,
-  });
-}
-
-// Shared by both msg91 flows below (POST exchange and GET callback) — the
-// only difference between them is how the caller learns the result (JSON
-// body vs. a browser redirect), not how a token gets turned into a
-// session. Throws Msg91AuthError if MSG91 rejects the token; anything
-// else is a real server error and propagates as-is.
-async function loginWithMsg91Token(token: string) {
-  const identity = await verifyProxyAuthToken(token);
-  const user = await findOrCreateUserFromMsg91(identity);
-  const session = await issueSession(user.id);
-  return { user, ...session };
-}
+// Human login only — the deploy agent never holds a session, just a deploy
+// token (docs/CLAUDE.md "Auth flow" #2).
+//
+// Identity and sessions are proxy's entirely: there is no local session,
+// JWT, or refresh token. The proxy_auth_token (PAT) the client gets from
+// the MSG91 widget IS the credential, sent on every request and verified
+// (with caching) by requireProxyToken.
 
 const exchangeSchema = z.object({ token: z.string().min(1) });
 
-// Token-exchange flow (docs/msg91-proxy-auth.md, "Option B" — token
-// exchange, best for pure API/SPA clients). The client embeds the MSG91
-// widget and gets the token back directly in its `success` callback; it
-// POSTs that token here itself, in-page, no navigation involved.
+// Token-exchange flow ("Option B"): the widget's success callback fires
+// in-page and the client POSTs the token here itself.
+//
+// The client must KEEP that token — it's the credential for every
+// authenticated route from here on.
 authRouter.post("/auth/msg91/exchange", async (req, res) => {
   const { token } = exchangeSchema.parse(req.body);
 
-  let result;
-  try {
-    result = await loginWithMsg91Token(token);
-  } catch (err) {
-    if (err instanceof Msg91AuthError) {
-      logger.warn(`[auth.msg91.exchange] rejected: ${err.message}`);
-      return res.status(401).json({ error: "Authentication failed" });
-    }
-    throw err;
-  }
-
-  const { user, accessToken, refreshToken } = result;
-  setRefreshCookie(res, refreshToken);
-
-  const memberships = await prisma.companyMembership.findMany({
-    where: { userId: user.id },
-    include: { company: true },
-  });
+  // A rejected token propagates as ProxyError -> 401 via errorHandler.
+  const identity = await verifyProxyAuthToken(token);
 
   res.json({
-    user: { id: user.id, email: user.email, name: user.name },
-    token: accessToken,
-    companies: memberships.map((m) => ({
-      companyId: m.companyId,
-      companyName: m.company.name,
-      role: m.role,
-    })),
+    user: { id: identity.id, email: identity.email, name: identity.name },
+    // Proxy's current company; the full list is GET /companies.
+    currentCompany: identity.company,
   });
 });
 
-// Only allows a same-origin-relative path, never letting the query string
-// dictate the redirect's origin — the classic open-redirect vector, and
-// exactly what docs/msg91-proxy-auth.md's security notes call out
-// ("restrict redirect targets to an allowlist if you use the redirect
-// flow"). The allowlist here is simply "must be a path on FRONTEND_ORIGIN,
-// full stop" — the origin itself is never taken from the request.
+// Only same-origin-relative paths; the origin is never taken from the
+// request. Guards the open-redirect vector.
 const DEFAULT_REDIRECT_PATH = "/";
 function safeRedirectPath(next: unknown): string {
   if (typeof next !== "string" || next.length === 0) return DEFAULT_REDIRECT_PATH;
@@ -111,20 +54,11 @@ function safeRedirectPath(next: unknown): string {
   return next;
 }
 
-// Redirect flow (docs/msg91-proxy-auth.md, "Option A" — callback flow,
-// for browser-based apps that configure the widget's `addInfo.redirect_path`
-// to point here instead of handling the token in-page). MSG91 sends the
-// user's browser here directly with `?proxy_auth_token=...` (plus
-// whatever else was already on the configured redirect_path, e.g.
-// `?next=/dashboard`) — there is no JSON response to read here, only a
-// redirect, since nothing in-page ever gets to inspect this response.
-//
-// Session is still established server-side exactly like the POST flow
-// (the refresh cookie is set on this redirect response, same as any
-// other auth response) — the frontend lands on `next` already logged in,
-// and should call POST /auth/refresh on load to mint an access token
-// from that cookie rather than expecting one in the URL (an access token
-// in a redirect URL would end up in browser history and server logs).
+// Redirect flow ("Option A"): MSG91 sends the browser here with the token in
+// the query string, so this answers with a redirect, not JSON. The token is
+// verified (so bad logins surface as auth_error) but not forwarded onward —
+// a frontend on this flow gets its PAT from the proxy embed it already
+// hosts.
 authRouter.get("/auth/msg91/callback", async (req, res) => {
   const next = safeRedirectPath(req.query.next);
   const token = req.query.proxy_auth_token;
@@ -133,78 +67,66 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
     return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=missing_token`);
   }
 
-  let result;
+  // The one place proxy failures are caught by hand: this response is a
+  // redirect, so errorHandler's JSON body would be useless to the browser.
   try {
-    result = await loginWithMsg91Token(token);
+    await verifyProxyAuthToken(token);
   } catch (err) {
-    if (err instanceof Msg91AuthError) {
+    if (err instanceof ProxyError && err.code === "PROXY_TOKEN_REJECTED") {
       logger.warn(`[auth.msg91.callback] rejected: ${err.message}`);
       return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=invalid_token`);
+    }
+    if (err instanceof ProxyError) {
+      logger.error(`[auth.msg91.callback] proxy ${err.status}: ${err.message}`);
+      return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=identity_unavailable`);
     }
     throw err;
   }
 
-  setRefreshCookie(res, result.refreshToken);
   res.redirect(`${FRONTEND_ORIGIN}${next}`);
 });
 
-authRouter.post("/auth/refresh", async (req, res) => {
-  const raw = req.cookies?.[REFRESH_COOKIE_NAME];
-  if (!raw) return res.status(401).json({ error: "Missing refresh token" });
-
-  const tokenHash = hashRefreshToken(raw);
-  const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
-
-  if (
-    !existing ||
-    existing.revokedAt ||
-    existing.expiresAt.getTime() < Date.now()
-  ) {
-    return res.status(401).json({ error: "Invalid or expired refresh token" });
-  }
-
-  // Rotate on every use — the old refresh token is single-use.
-  await prisma.refreshToken.update({
-    where: { id: existing.id },
-    data: { revokedAt: new Date() },
-  });
-
-  const { accessToken, refreshToken } = await issueSession(existing.userId);
-  setRefreshCookie(res, refreshToken);
-  res.json({ accessToken });
-});
-
-authRouter.post("/auth/logout", async (req, res) => {
-  const raw = req.cookies?.[REFRESH_COOKIE_NAME];
-  if (raw) {
-    await prisma.refreshToken.updateMany({
-      where: { tokenHash: hashRefreshToken(raw), revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-  }
-  res.clearCookie(REFRESH_COOKIE_NAME);
+// The frontend revokes the PAT against proxy directly on logout; our job is
+// only to drop the cached identity so a revoked PAT isn't served from our
+// verification cache.
+authRouter.post("/auth/logout", requireProxyToken, async (req, res) => {
+  await evictProxyAuthToken(req.proxyAuthToken!);
   res.status(204).end();
 });
 
-authRouter.get("/auth/me", requireAuth, async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.userId },
-    include: { memberships: { include: { company: true } } },
-  });
+// Base identity comes from the caller's own proxy_auth_token
+// (requireProxyToken — usually a cache hit from login, no extra proxy
+// call). getMyDetails is the user-key GET /c/getDetails, the caller's own
+// full record straight from their PAT — no id lookup needed, unlike the
+// admin-key getUserById. Its result wins on overlap since it's fuller.
+authRouter.get("/auth/me", requireProxyToken, async (req, res) => {
+  const details = await getMyDetails(req.proxyAuthToken!);
+  res.json({ ...req.proxyIdentity, ...details });
+});
 
-  if (!user) {
-    return res.status(404).json({ error: "User not found" });
+const switchCompanySchema = z.object({ companyId: z.string().min(1) });
+
+// Moves proxy's current company for this user. This API never reads current
+// company — scope is the URL's :companyId — so nothing local changes. It
+// exists because the company-aware proxy embed renders whatever proxy thinks
+// is current, and must agree with the dashboard.
+//
+// Membership is checked with the same primitive every scoped route uses, so
+// a non-member gets the same 404 and proxy is never asked to switch into a
+// company the user isn't in.
+authRouter.post("/auth/switch-company", requireProxyToken, async (req, res) => {
+  const { companyId } = switchCompanySchema.parse(req.body);
+
+  if (!(await isCompanyMember(req.userId!, companyId))) {
+    return res.status(404).json({ error: "Company not found" });
   }
 
-  res.json({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    companies: user.memberships.map((m) => ({
-      companyId: m.companyId,
-      companyName: m.company.name,
-      role: m.role,
-      status: m.status,
-    })),
+  await switchCompany(req.proxyAuthToken!, companyId);
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId,
+    action: "company.switch",
   });
+  res.json({ companyId });
 });

@@ -1,12 +1,20 @@
-import type { Company, CompanyMembership, Project } from "@prisma/client";
+import type { Project } from "@prisma/client";
+import type { Msg91Identity } from "../lib/msg91";
 
 declare global {
   namespace Express {
     interface Request {
+      // Proxy user id, from the verified PAT (src/middleware/proxyToken.ts).
       userId?: string;
-      company?: Company;
-      membership?: CompanyMembership;
+      // Proxy company id from the URL, confirmed as one the caller belongs
+      // to (src/middleware/companyContext.ts). Only the id is carried —
+      // there is no local Company row, and nothing downstream needs more.
+      company?: { id: string };
       project?: Project;
+      // Set by src/middleware/proxyToken.ts on routes that act AS the user
+      // against proxy (company list, switch, /auth/me). Never persisted.
+      proxyAuthToken?: string;
+      proxyIdentity?: Msg91Identity;
     }
   }
 }

@@ -1,8 +1,8 @@
-// Role and CompanyMembership.status are plain Strings, not Prisma enums —
-// SQLite's connector doesn't support native enums. Valid values are
-// enforced at the app layer (see src/types/roles.ts). Swapping to Postgres
-// later (see docs) can upgrade these to real enums with no app-level
-// behavior change.
+// Identity lives on MSG91 proxy: there is deliberately no User, Company or
+// CompanyMembership model. Every userId/companyId below is a plain string
+// holding the PROXY id — no foreign key, since the referenced rows aren't
+// ours. Consequence: a company deleted on proxy leaves its Project and
+// DeployToken rows orphaned (nothing signals us).
 
 datasource db {
   provider = "sqlite"
@@ -13,104 +13,38 @@ generator client {
   provider = "prisma-client-js"
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-
-  // Set on first successful MSG91 proxy-auth login (see
-  // docs/CLAUDE.md "Auth flow" and docs/msg91-proxy-auth.md). Null for a
-  // member a company_admin invited by email who hasn't logged in yet.
-  msg91Id String? @unique
-
-  memberships   CompanyMembership[]
-  refreshTokens RefreshToken[]
-  auditLogs     AuditLog[]
-}
-
-// Dashboard session refresh token (httpOnly cookie) — see docs/CLAUDE.md
-// "Auth flow" #1. Only the hash is stored.
-model RefreshToken {
-  id        String    @id @default(cuid())
-  userId    String
-  tokenHash String    @unique
-  createdAt DateTime  @default(now())
-  expiresAt DateTime
-  revokedAt DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-// A Company here IS the same entity MSG91 calls "company" on a verified
-// identity (`currentCompany`) — not a separate thing linked to it by a
-// mapping. msg91Id is that entity's MSG91-side identifier; see
-// src/services/msg91Login.ts.
-model Company {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
-
-  msg91Id String? @unique
-
-  memberships  CompanyMembership[]
-  projects     Project[]
-  deployTokens DeployToken[]
-  auditLogs    AuditLog[]
-}
-
-// One row per (user, company) pair — role is scoped to that pair, not
-// global to the user. status starts "invited" for a member added by
-// email before they've ever logged in, and flips to "active" on that
-// email's first MSG91 login (see docs/CLAUDE.md "Members").
-model CompanyMembership {
-  id        String   @id @default(cuid())
-  userId    String
-  companyId String
-  role      String // "company_admin" | "project_admin" | "viewer" — see src/types/roles.ts
-  status    String   @default("active") // "invited" | "active"
-  createdAt DateTime @default(now())
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, companyId])
-}
-
-// Company-wide deploy token (confirmed scope — see docs/CLAUDE.md "Open
-// questions" #1). Only the hash is ever stored; the raw token is shown
-// once at creation time, mirroring GitHub PAT-style UX.
+// Company-wide deploy token. Only the hash is stored; the raw token is shown
+// once at creation, like a GitHub PAT. The token IS the company identity for
+// hostnsoft-deploy (src/services/deployTokenAuth.ts).
 model DeployToken {
   id          String    @id @default(cuid())
   companyId   String
+  createdBy   String
   label       String
   tokenHash   String    @unique
   tokenPrefix String
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   revokedAt   DateTime?
   lastUsedAt  DateTime?
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  @@index([companyId])
 }
 
-// One Project == one deployed app on hostnsoft-deploy. slug is immutable
-// once created (it's the subdomain hostnsoft-deploy routes by —
-// <slug>.app.hostnsoft.com — and the X-App-Name it expects); name is a
-// mutable display label. See docs/CLAUDE.md "Projects".
-//
-// companyId is nullable to support anonymous ("orphan") deploys — see
-// docs/Anonymous-deploy-req.md. A project with companyId null is always
-// isOrphan true; the two are set/cleared together (see
-// src/services/projectClaim.ts). slug stays unique regardless of orphan
-// status — an orphan project occupies its name exactly like a claimed
-// one.
+// One Project == one deployed app on hostnsoft-deploy. slug is immutable —
+// it's the subdomain hostnsoft-deploy routes by (<slug>.app.hostnsoft.com)
+// and the X-App-Name it expects; name is just a display label.
+// companyId/createdBy are null only for orphan (anonymous) projects — see
+// docs/Anonymous-deploy-req.md — until a real deploy token claims them.
 model Project {
   id        String   @id @default(cuid())
   companyId String?
+  createdBy String?
   slug      String   @unique
   name      String
-  memoryMb  Int      @default(256) // overrides hostnsoft-deploy's auto-detected default
+  memoryMb  Int      @default(256) // overrides hostnsoft-deploy's default
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // See docs/Anonymous-deploy-req.md. orphanExpiresAt is computed once,
   // at creation, from the TTL config in effect at that moment — not
@@ -119,10 +53,11 @@ model Project {
   isOrphan        Boolean   @default(false)
   orphanExpiresAt DateTime?
 
-  company     Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]
+
+  @@index([companyId])
 }
 
 // A client-owned domain (or subdomain) attached to a project — see
@@ -155,27 +90,23 @@ model Deployment {
   id        String @id @default(cuid())
   projectId String
 
-  // The deployment's own sequence number within this project — "v1",
-  // "v2", ... — computed server-side (see src/routes/internalDeployments.routes.ts),
-  // never client-supplied. This is what's unique per project, deliberately
-  // kept separate from appVersion below: a user can redeploy without
-  // bumping their app's version at all (hostnsoft-deploy enforces no
-  // uniqueness on X-App-Version — it even falls back to a timestamp when
-  // that header is missing), so appVersion alone can't be the identity of
-  // a deploy attempt.
+  // This project's own deploy sequence number ("v1", "v2", ...), assigned
+  // server-side. Kept separate from appVersion because a user can redeploy
+  // without bumping their app's version, so appVersion can't identify a
+  // deploy attempt.
   version String
 
-  // Whatever hostnsoft-deploy actually used for the image tag — the raw
-  // X-App-Version header, or its Date.now() fallback. Informational only;
-  // NOT unique, and may repeat across deployments of the same project.
+  // Whatever hostnsoft-deploy used as the image tag (the raw X-App-Version,
+  // or its timestamp fallback). Informational; NOT unique.
   appVersion String
 
   imageTag    String?
   memoryMb    Int?
   status      String // "success" | "failed" | "in_progress"
   errorDetail String?
-  triggeredBy String? // userId, or a deploy token label/prefix
+  triggeredBy String? // proxy userId, or a deploy token label/prefix
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   finishedAt  DateTime?
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -188,16 +119,18 @@ model EnvVar {
   projectId String
   key       String
   value     String
+  createdAt DateTime @default(now())
+  createdBy String
   updatedAt DateTime @updatedAt
-  updatedBy String? // userId of last mutator, for audit convenience
+  updatedBy String? // proxy userId of last mutator
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, key])
 }
 
-// Every mutating action (env var change, memory change, token create/
-// revoke, role change) gets a row here: who, what, when.
+// Every mutating action: who, what, when. Ids are proxy ids kept as plain
+// strings so audit rows outlive anything proxy deletes.
 model AuditLog {
   id          String   @id @default(cuid())
   actorUserId String?
@@ -206,7 +139,7 @@ model AuditLog {
   action      String
   details     String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  actor   User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
-  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  @@index([companyId, createdAt])
 }

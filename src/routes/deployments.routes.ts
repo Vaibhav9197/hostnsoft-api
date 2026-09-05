@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
+import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
 
 export const deploymentsRouter = Router();
-deploymentsRouter.use(requireAuth);
+deploymentsRouter.use(requireProxyToken);
 
 // Populated by hostnsoft-deploy calling POST /internal/deployments/record
 // after each deploy attempt concludes — see

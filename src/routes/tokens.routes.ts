@@ -1,14 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
+import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
-import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 import { generateDeployToken } from "../lib/deployTokens";
 
 export const tokensRouter = Router();
-tokensRouter.use(requireAuth);
+tokensRouter.use(requireProxyToken);
 
 // A rotated token stays valid for this long after its replacement is
 // issued, so an in-flight CI run doesn't break the instant a token
@@ -24,13 +23,12 @@ const createTokenSchema = z.object({ label: z.string().min(1) });
 tokensRouter.post(
   "/companies/:companyId/tokens",
   loadCompanyContext,
-  requireRole("company_admin"),
   async (req, res) => {
     const { label } = createTokenSchema.parse(req.body);
     const { token, prefix, tokenHash } = generateDeployToken();
 
     const record = await prisma.deployToken.create({
-      data: { companyId: req.company!.id, label, tokenHash, tokenPrefix: prefix },
+      data: { companyId: req.company!.id, createdBy: req.userId!, label, tokenHash, tokenPrefix: prefix },
     });
 
     await logAudit({
@@ -53,7 +51,6 @@ tokensRouter.post(
 tokensRouter.get(
   "/companies/:companyId/tokens",
   loadCompanyContext,
-  requireRole("company_admin"),
   async (req, res) => {
     const tokens = await prisma.deployToken.findMany({
       where: { companyId: req.company!.id },
@@ -73,10 +70,16 @@ tokensRouter.get(
 tokensRouter.delete(
   "/companies/:companyId/tokens/:tokenId",
   loadCompanyContext,
-  requireRole("company_admin"),
   async (req, res) => {
+    // Scoped to this company — a bare-id update would let a member of ANY
+    // company revoke another company's token just by knowing its id.
+    const existing = await prisma.deployToken.findFirst({
+      where: { id: req.params.tokenId, companyId: req.company!.id },
+    });
+    if (!existing) return res.status(404).json({ error: "Token not found" });
+
     const token = await prisma.deployToken.update({
-      where: { id: req.params.tokenId },
+      where: { id: existing.id },
       data: { revokedAt: new Date() },
     });
 
@@ -96,7 +99,6 @@ tokensRouter.delete(
 tokensRouter.post(
   "/companies/:companyId/tokens/:tokenId/rotate",
   loadCompanyContext,
-  requireRole("company_admin"),
   async (req, res) => {
     const old = await prisma.deployToken.findFirst({
       where: { id: req.params.tokenId, companyId: req.company!.id },
@@ -113,7 +115,7 @@ tokensRouter.post(
         },
       }),
       prisma.deployToken.create({
-        data: { companyId: req.company!.id, label: old.label, tokenHash, tokenPrefix: prefix },
+        data: { companyId: req.company!.id, createdBy: req.userId!, label: old.label, tokenHash, tokenPrefix: prefix },
       }),
     ]);
 

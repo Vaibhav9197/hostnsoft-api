@@ -25,7 +25,7 @@ const claimSchema = z.object({
 // created, not after. The deploy token's own companyId identifies which
 // company the project gets created under — a project never needs to
 // exist via the dashboard first; this is the auto-create path for
-// CLI/skill-first usage. No requireAuth — the deploy token itself is the
+// CLI/skill-first usage. No requireProxyToken — the deploy token itself is the
 // credential, same trust shape as the other /internal/* endpoints.
 internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   const { token, slug } = claimSchema.parse(req.body);

@@ -25,7 +25,7 @@ const recordSchema = z.object({
 // Assigns this project's next sequential deploy number ("v1", "v2", ...)
 // and creates the row atomically enough to survive two deploys of the
 // same project landing at nearly the same moment: create-then-catch-
-// conflict, same pattern as company creation in msg91Login.ts, rather
+// conflict, same pattern as project claiming in src/services/projectClaim.ts, rather
 // than trusting a count() read is still accurate by the time create()
 // runs.
 async function createDeploymentWithNextVersion(
@@ -58,7 +58,7 @@ async function createDeploymentWithNextVersion(
 // concluded, success or failure — this is what actually populates the
 // deployment history GET /companies/:companyId/projects/:projectId/deployments
 // reads. Same auth shape as /internal/deploy-tokens/validate: no
-// requireAuth, the deploy token itself (re-checked here, independently of
+// requireProxyToken, the deploy token itself (re-checked here, independently of
 // whatever check happened earlier in the same deploy request) is the
 // credential, so this endpoint is trustworthy on its own rather than
 // relying on the caller having already been authenticated once. The

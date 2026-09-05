@@ -1,19 +1,17 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
+import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
-import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 
 export const envVarsRouter = Router();
-envVarsRouter.use(requireAuth);
+envVarsRouter.use(requireProxyToken);
 
 envVarsRouter.get(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const envVars = await prisma.envVar.findMany({
@@ -46,7 +44,6 @@ const upsertEnvVarsSchema = z.object({
 envVarsRouter.put(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const { vars } = upsertEnvVarsSchema.parse(req.body);
@@ -57,7 +54,7 @@ envVarsRouter.put(
         prisma.envVar.upsert({
           where: { projectId_key: { projectId, key } },
           update: { value, updatedBy: req.userId },
-          create: { projectId, key, value, updatedBy: req.userId },
+          create: { projectId, key, value, createdBy: req.userId!, updatedBy: req.userId },
         })
       )
     );
@@ -76,7 +73,6 @@ envVarsRouter.put(
 envVarsRouter.delete(
   "/companies/:companyId/projects/:projectId/env-vars/:key",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     await prisma.envVar.delete({
