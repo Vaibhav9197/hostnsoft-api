@@ -27,7 +27,7 @@ export async function claimProjectForCompany(
   let project: Project;
   try {
     project = await prisma.project.create({
-      data: { companyId, slug, name: slug },
+      data: { companyId, createdBy: "hostnsoft-deploy", slug, name: slug },
     });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;

@@ -1,15 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
+import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
-import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 
 export const projectsRouter = Router();
-projectsRouter.use(requireAuth);
+projectsRouter.use(requireProxyToken);
 
 const createProjectSchema = z.object({ name: z.string().min(1) });
 
@@ -19,7 +18,6 @@ const createProjectSchema = z.object({ name: z.string().min(1) });
 projectsRouter.post(
   "/companies/:companyId/projects",
   loadCompanyContext,
-  requireRole("project_admin"),
   async (req, res) => {
     const { name } = createProjectSchema.parse(req.body);
     const slug = slugify(name);
@@ -35,7 +33,7 @@ projectsRouter.post(
     }
 
     const project = await prisma.project.create({
-      data: { companyId: req.company!.id, slug, name },
+      data: { companyId: req.company!.id, createdBy: req.userId!, slug, name },
     });
 
     await logAudit({
@@ -72,7 +70,6 @@ const renameProjectSchema = z.object({ name: z.string().min(1) });
 projectsRouter.patch(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const { name } = renameProjectSchema.parse(req.body);
@@ -97,7 +94,6 @@ const updateMemorySchema = z.object({ memoryMb: z.number().int().positive() });
 projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/memory",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const { memoryMb } = updateMemorySchema.parse(req.body);
@@ -129,7 +125,6 @@ projectsRouter.patch(
 projectsRouter.delete(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     await prisma.project.delete({ where: { id: req.project!.id } });

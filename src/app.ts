@@ -2,7 +2,6 @@ import "express-async-errors";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import cookieParser from "cookie-parser";
 import { router } from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { requestLogger } from "./middleware/requestLogger";
@@ -16,9 +15,6 @@ export function createApp() {
   // final error handler) needs the request id already in context.
   app.use(requestLogger);
   app.use(helmet());
-  // credentials: true + an explicit origin (not "*") is required for the
-  // httpOnly refresh-token cookie in src/routes/auth.routes.ts to work
-  // cross-origin from the dashboard frontend.
   app.use(
     cors({
       origin: FRONTEND_ORIGIN,
@@ -26,7 +22,7 @@ export function createApp() {
     })
   );
   app.use(express.json());
-  app.use(cookieParser());
+  // app.use(cookieParser());
   app.use(router);
   app.use(errorHandler);
 

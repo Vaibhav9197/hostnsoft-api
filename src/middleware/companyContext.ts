@@ -1,27 +1,31 @@
 import type { Request, Response, NextFunction } from "express";
-import { prisma } from "../lib/prisma";
+import { isCompanyMember } from "../lib/msg91";
 
-// Loads the caller's membership for :companyId and attaches req.company /
-// req.membership. Must run after requireAuth. A user with no membership
-// row for this company gets a 404 rather than 403, so as not to confirm
-// the company's existence to non-members.
+// Authorizes the caller for :companyId (a proxy company id) by asking proxy
+// for membership. Must run after requireProxyToken, which sets req.userId.
+// Membership is the only check — proxy has no per-user role, so any member
+// may do anything here.
+//
+// Non-members get 404, not 403, so the company's existence isn't confirmed
+// to outsiders. A proxy outage throws instead, surfacing as 503.
+//
+// The URL's company may differ from proxy's "current" company; scope comes
+// from the URL every request. POST /auth/switch-company exists only to keep
+// the proxy embed in step with the dashboard.
 export async function loadCompanyContext(
   req: Request,
   res: Response,
   next: NextFunction
 ) {
   const { companyId } = req.params;
-
-  const membership = await prisma.companyMembership.findUnique({
-    where: { userId_companyId: { userId: req.userId!, companyId } },
-    include: { company: true },
-  });
-
-  if (!membership) {
+  if (!companyId) {
     return res.status(404).json({ error: "Company not found" });
   }
 
-  req.company = membership.company;
-  req.membership = membership;
+  if (!(await isCompanyMember(req.userId!, companyId))) {
+    return res.status(404).json({ error: "Company not found" });
+  }
+
+  req.company = { id: companyId };
   next();
 }

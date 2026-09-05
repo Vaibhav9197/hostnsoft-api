@@ -10,7 +10,7 @@ const validateSchema = z.object({
 
 // Called by hostnsoft-deploy (server-to-server, not by end users) on
 // every deploy request to check whether the caller's Authorization token
-// is a live, non-revoked deploy token. Deliberately no requireAuth here —
+// is a live, non-revoked deploy token. Deliberately no requireProxyToken here —
 // knowing the raw token (a 256-bit secret, see src/lib/deployTokens.ts)
 // already is the credential; this just confirms it against the DB.
 // Returns the token's own companyId — the token IS the company identity,

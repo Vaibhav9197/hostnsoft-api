@@ -1,8 +1,8 @@
 # hostnsoft-api
 
-Multi-tenant management API — users, companies, projects, deploy tokens, env
-vars, deployment history — sitting in front of the existing
-`hostnsoft-deploy` service. See `docs/CLAUDE.md` for the full project
+Multi-tenant management API — projects, deploy tokens, env vars, deployment
+history, scoped to companies whose users and membership live on MSG91 proxy —
+sitting in front of the existing `hostnsoft-deploy` service. See `docs/CLAUDE.md` for the full project
 brief and open architectural questions; read it before extending this
 scaffold.
 
@@ -24,14 +24,14 @@ scaffold.
 
 ```bash
 npm install
-cp .env.example .env          # fill in JWT_SECRET at minimum
+cp .env.example .env          # fill in PROXY_* and INTERNAL_API_SECRET at minimum
 npm run prisma:migrate -- --name init
 npm run dev                    # http://localhost:4100
 ```
 
-No live MSG91 widget/token to test against? Mint a local session without
-one: `npm run dev:session -- you@example.com` prints an access token you
-can use directly against every other route.
+There is no local session or JWT: every dashboard request carries the MSG91
+`proxy_auth_token` header, so testing needs a real PAT from the widget and
+`PROXY_ADMIN_TOKEN` / `PROXY_*` set.
 
 ## Structure
 
@@ -40,17 +40,20 @@ src/
 ├── server.ts              entry point
 ├── app.ts                 express app assembly (helmet, cors w/ credentials, cookies)
 ├── lib/                   prisma client, JWT (access token), refresh tokens,
-│                          deploy-token hashing, slug generation
-├── middleware/             requireAuth, loadCompanyContext, requireRole, errorHandler
-├── services/               audit log writer, company-admin-floor check
+│                          deploy-token hashing, slug generation, msg91.ts (the
+│                          MSG91 proxy client + in-process TTL cache)
+├── middleware/             requireAuth, loadCompanyContext (proxy membership),
+│                          requireProxyToken (PAT for user-key proxy calls), errorHandler
+├── services/               audit log writer, deploy-token auth, project claim
 ├── routes/                one file per resource (auth, companies, projects, tokens, ...)
-└── types/                 Role union, Express Request augmentation
+└── types/                 Express Request augmentation
 ```
 
 Request pipeline for a company-scoped route:
-`requireAuth` → `loadCompanyContext` (loads the caller's `CompanyMembership` for
-`:companyId`) → `requireRole(minimum)`. Any route that *also* has a
-`:projectId` param needs `loadProjectContext` too (after
+`requireAuth` → `loadCompanyContext` (asks MSG91 proxy whether the caller is a
+member of `:companyId`; cached ~60s, positives only; 404 if not). There are
+no roles — any member may do anything in the company. Any route that *also*
+has a `:projectId` param needs `loadProjectContext` too (after
 `loadCompanyContext`) — see the security note below.
 
 ## Auth flow implemented here
@@ -79,21 +82,22 @@ Two independent things, per `docs/CLAUDE.md`:
 
    Either way, this API:
    - verifies the token against MSG91 (`src/lib/msg91.ts`, calls
-     `generateAuthToken` with the account-level `MSG91_AUTHKEY` — **server-side
+     `generateAuthToken` with the account-level `PROXY_ADMIN_TOKEN` — **server-side
      only**, never expose that key to a browser — and decodes the returned
      JWT's `user`/`company` claims) — never trusts the widget's token
      unverified;
-   - finds-or-creates the local `User` keyed by `msg91Id`, falling back
-     to linking by email for a member a company_admin invited before their
-     first login (`src/services/msg91Login.ts`);
-   - **maps MSG91's `currentCompany` to an Embarko `Company`**
-     (`Company.msg91Id`): first person from that company creates the
-     company as `company_admin`; later logins from the same company join as
-     `viewer` (promotable via the existing member-role endpoint);
-   - activates any `invited` memberships for that email;
+   - creates **nothing** locally — there is no user or company table; the
+     proxy user id becomes the subject of our session;
    - issues this API's own short-lived access token plus an httpOnly
      refresh-token cookie. `POST /auth/refresh` rotates it; `POST
      /auth/logout` revokes it.
+
+   The dashboard must **keep the `proxy_auth_token`** it got from the widget:
+   `GET /companies` and `POST /auth/switch-company` act as the user against
+   proxy and need it back in a `proxy_auth_token` header
+   (`src/middleware/proxyToken.ts` also checks it belongs to the same user as
+   the bearer token). Company create/rename/delete and member management are
+   done through the proxy embed, not this API.
 2. **Agent bootstrap** — not implemented here at all, deliberately. The
    agent-side `hostnsoft-deploy` skill package is responsible for telling
    a first-time user to create a token via this dashboard and paste it
@@ -145,7 +149,7 @@ mount at `/`.
 Every `:projectId`-scoped route used to look projects up by bare `id`
 (`prisma.project.update({ where: { id: req.params.projectId } })`, etc.)
 with no check that the project actually belonged to `:companyId`. A
-`project_admin` (or even `viewer`, for reads) in **any** company could
+a member of **any** company could
 read, rename, delete, or read/write the env vars of **any other**
 company's project just by knowing or guessing a project id — env vars
 included real secrets in the shape shown in this doc's examples. Fixed
@@ -173,8 +177,12 @@ implemented, per the project brief's "don't guess silently":
 - **Live health / logs** — `GET .../projects/:id` returns `health:
   "unknown"`; there's no log retrieval endpoint yet (open question #4:
   pull from Nomad/Docker on demand vs. a centralized log sink).
-- **`project_admin` scope** (open question #6) — currently company-wide, per
-  the data model (`CompanyMembership` only, no per-project grant table).
+- **Per-role / per-project access** — none. Proxy exposes no readable roles,
+  so any company member can manage every project, env var and deploy token
+  in it. A finer model would need a new local grant table keyed by proxy ids.
+- **Orphaned rows on proxy-side company delete** — nothing tells this API
+  when a company is deleted on proxy; its `Project`/`DeployToken` rows stay,
+  and existing deploy tokens keep working. Needs a webhook or reconciliation.
 - **`app-registry.js`** on `hostnsoft-deploy` still exists as its own
   stopgap — this API's `Project`/`Deployment` tables are meant to
   eventually absorb it, but no migration/backfill from that JSON file has

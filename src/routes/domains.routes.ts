@@ -1,10 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
+import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
-import { requireRole } from "../middleware/rbac";
 import { logAudit } from "../services/audit";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { classifyDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
@@ -17,7 +16,7 @@ import { EDGE_HOSTNAME, ORIGIN_SERVER_IP } from "../lib/customDomainConfig";
 // tokens, env-vars) is unprefixed, so this follows that existing
 // convention instead of introducing a one-off inconsistency.
 export const domainsRouter = Router();
-domainsRouter.use(requireAuth);
+domainsRouter.use(requireProxyToken);
 
 function dnsInstructionsFor(domain: string, type: DomainType) {
   return type === "apex"
@@ -30,7 +29,6 @@ const registerSchema = z.object({ domain: z.string().min(1) });
 domainsRouter.post(
   "/companies/:companyId/projects/:projectId/domains",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const { domain: rawDomain } = registerSchema.parse(req.body);
@@ -89,7 +87,6 @@ domainsRouter.get(
 domainsRouter.post(
   "/companies/:companyId/projects/:projectId/domains/:domain/verify",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const domain = await prisma.domain.findFirst({
@@ -134,7 +131,6 @@ domainsRouter.post(
 domainsRouter.delete(
   "/companies/:companyId/projects/:projectId/domains/:domain",
   loadCompanyContext,
-  requireRole("project_admin"),
   loadProjectContext,
   async (req, res) => {
     const domain = await prisma.domain.findFirst({

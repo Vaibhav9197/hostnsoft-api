@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { logger } from "../lib/logger";
+import { ProxyError } from "../lib/msg91";
 
 export function errorHandler(
   err: unknown,
@@ -18,9 +19,18 @@ export function errorHandler(
     });
   }
 
-  // body-parser's malformed-JSON error (and similar http-errors-style
-  // objects) already carries the right client-error status — honor it
-  // instead of flattening every non-Zod error to 500.
+  // Proxy failures carry their own status and client-safe message, so routes
+  // don't translate them individually. Rejected credentials are routine
+  // (warn); outages are not (error).
+  if (err instanceof ProxyError) {
+    const line = `[errorHandler] ${req.method} ${req.path} -> ${err.status}: ${err.message}`;
+    if (err.status >= 500) logger.error(line);
+    else logger.warn(line);
+    return res.status(err.status).json({ error: err.publicMessage, code: err.code });
+  }
+
+  // body-parser's malformed-JSON error (and similar http-errors objects)
+  // already carries the right client-error status — honor it.
   const knownStatus = (err as { statusCode?: unknown; status?: unknown } | null)
     ?.statusCode as number | undefined;
   const status = knownStatus ?? (err as { status?: number } | null)?.status;
@@ -29,6 +39,5 @@ export function errorHandler(
   }
 
   logger.error(`[errorHandler] ${req.method} ${req.path} ->`, err);
-  const message = err instanceof Error ? err.message : "Internal server error";
-  res.status(500).json({ error: message });
+  res.status(500).json({ error: "Internal server error" });
 }
