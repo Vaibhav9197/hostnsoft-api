@@ -38,12 +38,34 @@ for the EU region or a self-hosted instance.
 All routes require `proxy_auth_token`; company-scoped ones also require
 membership (`loadCompanyContext`, non-members get 404).
 
+## When the customer gets created
+
+Three places, all through `ensureBillingForCompany`
+(`src/services/billingCustomer.ts`), which is idempotent (Lago customer
+exists → done, cached 24h in Redis), best effort (never throws; a
+Stripe/Lago failure logs and yields `"pending"`) and skips when no email is
+known:
+
+1. **`POST /companies`** — right after the company exists on proxy. Email:
+   the body's `email`, else the creator's. Response carries
+   `billing: "ready" | "pending"`.
+2. **Login** (`POST /auth/msg91/exchange`, `GET /auth/msg91/callback`) — for
+   the identity's current company. This is what catches the default company
+   **proxy itself creates** for a first-time user who isn't in any company,
+   and companies made through the proxy embed; neither passes through
+   `POST /companies`. Email: the user's. Exchange returns `billing`; the
+   callback runs it fire-and-forget (it answers with a redirect).
+3. **`POST /companies/:companyId/billing/customer`** — explicit, for
+   `"pending"` or anything the above missed. 409 if already set up.
+
+An empty list from `GET /companies/:companyId/billing` also means "call 3".
+
 ## Routes
 
 | Route | Method | Description |
 |---|---|---|
 | `/billing/plans` | GET | public Lago plans only (`PUBLIC_PLAN_CODES` in `billingUtility.ts`, in that order) |
-| `/companies/:companyId/billing/customer` | POST | create Lago customer (+ Stripe customer via Lago) and subscribe to the free plan |
+| `/companies/:companyId/billing/customer` | POST | set up billing explicitly (repair path; `POST /companies` does it automatically) |
 | `/companies/:companyId/billing/customer` | GET | the company's Lago customer |
 | `/companies/:companyId/billing/payment-methods` | GET | saved payment methods, direct from Stripe |
 | `/companies/:companyId/billing/payment-methods/:paymentMethodId` | DELETE | detach a saved card (must belong to the company's Stripe customer) |

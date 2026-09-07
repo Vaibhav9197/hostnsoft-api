@@ -1,5 +1,6 @@
 import { logger } from "../lib/logger";
-import { createLagoCustomer, subscribeToFreePlan } from "../lib/lago";
+import { TtlCache } from "../lib/ttlCache";
+import { createLagoCustomer, getLagoCustomer, subscribeToFreePlan } from "../lib/lago";
 import type { CreateLagoCustomerInput, LagoCustomer, LagoSubscription } from "../lib/lago";
 import {
   createStripeCustomer,
@@ -56,4 +57,50 @@ export async function setUpBillingForCompany(
 
   const subscription = await subscribeToFreePlan(companyId);
   return { customer, subscription };
+}
+
+export type BillingReadiness = "ready" | "pending";
+
+// Companies known to have a Lago customer. Only positive answers are cached
+// (a customer is never deleted from this API), so ensureBillingForCompany
+// costs nothing on repeat logins yet still repairs a company the moment it
+// is actually missing.
+const BILLING_READY_TTL_MS = 24 * 60 * 60 * 1000;
+const billingReady = new TtlCache<boolean>("billingReady", BILLING_READY_TTL_MS);
+
+// Idempotent, best-effort "make sure this company has billing". Used
+// wherever a company may be seen for the first time WITHOUT having gone
+// through POST /companies — chiefly login, because proxy creates a default
+// company itself for a user who isn't in any yet, and that company never
+// passes through this API otherwise. Also the POST /companies path.
+//
+// Never throws: a Stripe/Lago outage must not break login or company
+// creation. Returns "pending" instead, and the caller/dashboard falls back
+// to POST /companies/:companyId/billing/customer (docs/billing.md).
+export async function ensureBillingForCompany(
+  companyId: string,
+  input: { name: string; email: string | null }
+): Promise<BillingReadiness> {
+  try {
+    if (await billingReady.get(companyId)) return "ready";
+
+    if (await getLagoCustomer(companyId)) {
+      await billingReady.getOrLoad(companyId, async () => true);
+      return "ready";
+    }
+
+    // Lago requires an email; without one there's nothing to do but wait for
+    // the explicit endpoint, which validates one in.
+    if (!input.email) {
+      logger.warn(`[billing] no email for company ${companyId}; billing setup deferred`);
+      return "pending";
+    }
+
+    await setUpBillingForCompany(companyId, { name: input.name, email: input.email });
+    await billingReady.getOrLoad(companyId, async () => true);
+    return "ready";
+  } catch (err) {
+    logger.error(`[billing] ensureBillingForCompany failed for ${companyId}:`, err);
+    return "pending";
+  }
 }
