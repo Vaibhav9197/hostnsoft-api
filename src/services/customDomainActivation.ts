@@ -56,6 +56,14 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
     select: { key: true, value: true },
   });
 
+  // Defensive floor, on top of internalDeployments.routes.ts now keeping
+  // Project.memoryMb itself up to date on every successful deploy: a
+  // project that hasn't redeployed since that fix landed can still have
+  // a stale (too-low) Project.memoryMb while its actual running task is
+  // already at a higher, floor-adjusted memory (latestSuccess.memoryMb).
+  // Never send less than whichever of the two is higher.
+  const effectiveMemoryMb = Math.max(project.memoryMb, latestSuccess.memoryMb ?? 0);
+
   let response: Response;
   try {
     response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
@@ -66,7 +74,7 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
       },
       body: JSON.stringify({
         imageTag: latestSuccess.imageTag,
-        memoryMb: project.memoryMb,
+        memoryMb: effectiveMemoryMb,
         customDomains: activeDomains.map((d) => d.domain),
         envVars,
       }),

@@ -96,5 +96,24 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
     finishedAt: new Date(),
   });
 
+  // body.memoryMb here is hostnsoft-deploy's actual applied taskMemory —
+  // already floor-adjusted for embedded-DB apps (see server.js's
+  // Math.max(autoDetectedMemory, ...)). Project.memoryMb previously only
+  // ever changed via the explicit PATCH .../memory endpoint, so an
+  // embedded-DB app that never touched that setting stayed stuck at the
+  // schema default (256) in the DB forever despite actually running at
+  // 512 — which customDomainActivation.ts's pushCustomDomainConfig would
+  // then read as gospel and use to shrink the running app back down.
+  // Persisting the real applied value here (never downward — an
+  // explicit higher configured value must never be undercut by a lower
+  // auto-detected one) keeps Project.memoryMb a source of truth instead
+  // of a stale default.
+  if (body.status === "success" && typeof body.memoryMb === "number" && body.memoryMb > claim.project.memoryMb) {
+    await prisma.project.update({
+      where: { id: claim.project.id },
+      data: { memoryMb: body.memoryMb },
+    });
+  }
+
   res.status(201).json(deployment);
 });
