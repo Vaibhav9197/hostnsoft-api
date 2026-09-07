@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { logger } from "../lib/logger";
 import { ProxyError } from "../lib/msg91";
+import { BillingError } from "../lib/billingUtility";
 
 export function errorHandler(
   err: unknown,
@@ -19,10 +20,10 @@ export function errorHandler(
     });
   }
 
-  // Proxy failures carry their own status and client-safe message, so routes
-  // don't translate them individually. Rejected credentials are routine
-  // (warn); outages are not (error).
-  if (err instanceof ProxyError) {
+  // Proxy and billing (Lago/Stripe) failures carry their own status and
+  // client-safe message, so routes don't translate them individually.
+  // Rejected credentials are routine (warn); outages are not (error).
+  if (err instanceof ProxyError || err instanceof BillingError) {
     const line = `[errorHandler] ${req.method} ${req.path} -> ${err.status}: ${err.message}`;
     if (err.status >= 500) logger.error(line);
     else logger.warn(line);
