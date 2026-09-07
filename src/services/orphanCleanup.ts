@@ -13,26 +13,8 @@
  */
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
-import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
+import { tearDownApp } from "./appTeardown";
 import { ORPHAN_CLEANUP_INTERVAL_MS } from "../lib/orphanConfig";
-
-async function tearDownApp(slug: string): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${slug}`, {
-      method: "DELETE",
-      headers: { "X-Internal-Secret": INTERNAL_API_SECRET },
-    });
-  } catch (e) {
-    logger.error(`[orphanCleanup] could not reach hostnsoft-deploy tearing down "${slug}": ${(e as Error).message}`);
-    return;
-  }
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "<unreadable response body>");
-    logger.error(`[orphanCleanup] hostnsoft-deploy returned HTTP ${response.status} tearing down "${slug}": ${bodyText}`);
-  }
-}
 
 async function cleanupExpiredOrphans(): Promise<void> {
   const expired = await prisma.project.findMany({
