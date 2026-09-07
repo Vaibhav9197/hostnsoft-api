@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { getCompanyById, listMyCompanies, createCompany } from "../lib/msg91";
+import { ensureBillingForCompany } from "../services/billingCustomer";
 
 export const companiesRouter = Router();
 
@@ -30,9 +31,26 @@ const createCompanySchema = z.object({
 });
 
 // The creator becomes a member and proxy switches them into it.
+//
+// Billing (Stripe + Lago customer, free plan) is set up right after, best
+// effort: the company already exists on proxy at that point, so a Stripe/
+// Lago outage must not turn into a 5xx that makes the dashboard think the
+// company wasn't created. Failure is reported as `billing: "pending"`; the
+// dashboard then calls POST /companies/:companyId/billing/customer.
+// Companies that never pass here (proxy's auto-created default company,
+// the proxy embed) are picked up at login instead — see auth.routes.ts.
 companiesRouter.post("/companies", requireProxyToken, async (req, res) => {
-  const company = createCompanySchema.parse(req.body);
-  res.status(201).json(await createCompany(req.proxyAuthToken!, company));
+  const input = createCompanySchema.parse(req.body);
+  const company = await createCompany(req.proxyAuthToken!, input);
+
+  // Lago requires an email; the company's own is optional in proxy, so the
+  // creator's is the fallback — they're the one who'll get invoices anyway.
+  const billing = await ensureBillingForCompany(company.id, {
+    name: company.name,
+    email: input.email ?? req.proxyIdentity?.email ?? null,
+  });
+
+  res.status(201).json({ ...company, billing });
 });
 
 companiesRouter.get("/companies/:companyId", requireProxyToken, loadCompanyContext, async (req, res) => {

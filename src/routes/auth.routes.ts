@@ -12,6 +12,8 @@ import { requireProxyToken } from "../middleware/proxyToken";
 import { logAudit } from "../services/audit";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { logger } from "../lib/logger";
+import { ensureBillingForCompany } from "../services/billingCustomer";
+import type { Msg91Identity } from "../lib/msg91";
 
 export const authRouter = Router();
 
@@ -25,6 +27,20 @@ export const authRouter = Router();
 
 const exchangeSchema = z.object({ token: z.string().min(1) });
 
+// Login is where a company created BY PROXY first becomes visible to us: a
+// user who isn't in any company yet gets a default one made by proxy on
+// first login, and it never passes through POST /companies. So every login
+// makes sure the current company has billing. Cheap on repeat logins (a
+// Redis hit), never throws, and the company's contact email is the user's —
+// the only one we have for a proxy-made company.
+function ensureBillingForCurrentCompany(identity: Msg91Identity) {
+  if (!identity.company) return Promise.resolve("pending" as const);
+  return ensureBillingForCompany(identity.company.id, {
+    name: identity.company.name,
+    email: identity.email,
+  });
+}
+
 // Token-exchange flow ("Option B"): the widget's success callback fires
 // in-page and the client POSTs the token here itself.
 //
@@ -35,11 +51,14 @@ authRouter.post("/auth/msg91/exchange", async (req, res) => {
 
   // A rejected token propagates as ProxyError -> 401 via errorHandler.
   const identity = await verifyProxyAuthToken(token);
+  const billing = await ensureBillingForCurrentCompany(identity);
 
   res.json({
     user: { id: identity.id, email: identity.email, name: identity.name },
     // Proxy's current company; the full list is GET /companies.
     currentCompany: identity.company,
+    // "pending" -> dashboard calls POST /companies/:id/billing/customer.
+    billing,
   });
 });
 
@@ -69,8 +88,9 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
 
   // The one place proxy failures are caught by hand: this response is a
   // redirect, so errorHandler's JSON body would be useless to the browser.
+  let identity: Msg91Identity;
   try {
-    await verifyProxyAuthToken(token);
+    identity = await verifyProxyAuthToken(token);
   } catch (err) {
     if (err instanceof ProxyError && err.code === "PROXY_TOKEN_REJECTED") {
       logger.warn(`[auth.msg91.callback] rejected: ${err.message}`);
@@ -82,6 +102,10 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
     }
     throw err;
   }
+
+  // Not awaited: the browser is being redirected and can't use the result;
+  // the dashboard learns readiness from GET /companies/:id/billing.
+  void ensureBillingForCurrentCompany(identity);
 
   res.redirect(`${FRONTEND_ORIGIN}${next}`);
 });

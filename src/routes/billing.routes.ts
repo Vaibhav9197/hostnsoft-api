@@ -33,9 +33,12 @@ billingRouter.get("/billing/plans", async (_req, res) => {
 
 // Creates the Stripe customer (product-tagged) and the Lago customer that
 // points at it, then puts the company on the free plan — see
-// services/billingCustomer.ts for ordering and rollback. Create-only: a
-// second call is a 409 rather than an upsert, so billing details can't be
-// overwritten from here by accident.
+// services/billingCustomer.ts for ordering and rollback. POST /companies
+// already does this on creation; this endpoint is the repair path for when
+// that best-effort step failed (`billing: "pending"`) and for companies
+// created through the proxy embed, which never pass through this API.
+// Create-only: a second call is a 409 rather than an upsert, so billing
+// details can't be overwritten from here by accident.
 billingRouter.post(
   "/companies/:companyId/billing/customer",
   loadCompanyContext,
