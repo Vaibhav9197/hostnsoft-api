@@ -10,6 +10,7 @@ import { projectsRouter } from "./projects.routes";
 import { deploymentsRouter } from "./deployments.routes";
 import { envVarsRouter } from "./envVars.routes";
 import { domainsRouter } from "./domains.routes";
+import { billingRouter } from "./billing.routes";
 
 export const router = Router();
 
@@ -31,3 +32,4 @@ router.use(projectsRouter);
 router.use(deploymentsRouter);
 router.use(envVarsRouter);
 router.use(domainsRouter);
+router.use(billingRouter);
