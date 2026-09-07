@@ -11,7 +11,7 @@
  */
 import { FRONTEND_ORIGIN } from "./frontendOrigin";
 
-export const ORPHAN_LOGIN_URL = `${FRONTEND_ORIGIN}/login`;
+export const ORPHAN_LOGIN_URL = `${FRONTEND_ORIGIN}/app`;
 
 export function buildOrphanMessage(expiresAt: Date): string {
   const iso = expiresAt.toISOString();

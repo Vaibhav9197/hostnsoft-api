@@ -1,0 +1,1358 @@
+<title>Embarko API Reference</title>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --ground: #F4F6F9;
+    --surface: #FFFFFF;
+    --surface-2: #EDF0F4;
+    --surface-3: #E4E9EF;
+    --ink: #16202C;
+    --ink-dim: #57657A;
+    --ink-faint: #8595A8;
+    --border: #D8DEE6;
+    --border-soft: #E4E9EF;
+    --accent: #B87A1F;
+    --accent-ink: #FFFFFF;
+    --accent-soft: #F3E6D2;
+    --accent-soft-ink: #8A5A12;
+
+    --get: #1D6FB8;      --get-bg: #E3F0FA;
+    --post: #1C7A4B;     --post-bg: #E1F5EA;
+    --patch: #7A4FBE;    --patch-bg: #F1E9FB;
+    --delete: #C13B3B;   --delete-bg: #FBEAEA;
+    --internal: #57657A; --internal-bg: #EDF0F4;
+
+    --ok: #1C7A4B; --ok-bg: #E1F5EA;
+    --warn: #A8631A; --warn-bg: #FBF0DF;
+    --err: #C13B3B; --err-bg: #FBEAEA;
+
+    --shadow: 0 1px 2px rgba(22,32,44,0.06), 0 4px 16px rgba(22,32,44,0.05);
+    --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0F1620;
+      --surface: #161F2B;
+      --surface-2: #1C2733;
+      --surface-3: #232F3D;
+      --ink: #E7ECF2;
+      --ink-dim: #8D99A8;
+      --ink-faint: #5E6B7C;
+      --border: #2A3644;
+      --border-soft: #212C39;
+      --accent: #E3A542;
+      --accent-ink: #17120A;
+      --accent-soft: #2B2416;
+      --accent-soft-ink: #E3A542;
+
+      --get: #6FB4E8;      --get-bg: #1B2A38;
+      --post: #6FCB8F;     --post-bg: #172A20;
+      --patch: #C9A6E8;    --patch-bg: #241B33;
+      --delete: #E88080;   --delete-bg: #301C1C;
+      --internal: #8D99A8; --internal-bg: #1C2733;
+
+      --ok: #6FCB8F; --ok-bg: #172A20;
+      --warn: #E3A542; --warn-bg: #2B2416;
+      --err: #E88080; --err-bg: #301C1C;
+
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0F1620;
+    --surface: #161F2B;
+    --surface-2: #1C2733;
+    --surface-3: #232F3D;
+    --ink: #E7ECF2;
+    --ink-dim: #8D99A8;
+    --ink-faint: #5E6B7C;
+    --border: #2A3644;
+    --border-soft: #212C39;
+    --accent: #E3A542;
+    --accent-ink: #17120A;
+    --accent-soft: #2B2416;
+    --accent-soft-ink: #E3A542;
+
+    --get: #6FB4E8;      --get-bg: #1B2A38;
+    --post: #6FCB8F;     --post-bg: #172A20;
+    --patch: #C9A6E8;    --patch-bg: #241B33;
+    --delete: #E88080;   --delete-bg: #301C1C;
+    --internal: #8D99A8; --internal-bg: #1C2733;
+
+    --ok: #6FCB8F; --ok-bg: #172A20;
+    --warn: #E3A542; --warn-bg: #2B2416;
+    --err: #E88080; --err-bg: #301C1C;
+
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  code, .mono { font-family: var(--font-mono); }
+
+  h1, h2, h3, h4 { text-wrap: balance; font-weight: 600; margin: 0; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* ---------- shell layout ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 264px minmax(0, 1fr);
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 40px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand-name .dim { color: var(--ink-faint); font-weight: 500; }
+  .brand-tag { font-size: 12.5px; color: var(--ink-dim); }
+
+  .navgroup { display: flex; flex-direction: column; gap: 2px; }
+  .navgroup-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 10px 10px 6px;
+  }
+  .navlink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    color: var(--ink-dim);
+    text-decoration: none;
+    font-size: 13.5px;
+    transition: background-color .12s ease, color .12s ease;
+  }
+  .navlink:hover { background: var(--surface-2); color: var(--ink); }
+  .navlink.active { background: var(--accent-soft); color: var(--accent-soft-ink); font-weight: 500; }
+  .navlink .chip {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+  }
+
+  main { min-width: 0; padding: 44px 40px 120px; }
+  @media (max-width: 640px) { main { padding: 32px 18px 100px; } }
+
+  .content { max-width: 760px; }
+  .content-wide { max-width: 100%; }
+
+  /* ---------- top header ---------- */
+  .page-head { max-width: 760px; margin-bottom: 40px; }
+  .page-head h1 { font-size: 32px; letter-spacing: -0.015em; margin-top: 8px; }
+  .page-head .lede { color: var(--ink-dim); font-size: 15.5px; margin-top: 10px; max-width: 62ch; }
+
+  .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 500;
+    padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--ink-dim);
+  }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+
+  .base-urls {
+    margin-top: 22px; display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .base-url-card {
+    border: 1px solid var(--border); background: var(--surface);
+    border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .base-url-card .label { font-size: 11.5px; color: var(--ink-faint); font-family: var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+  .base-url-card .url { font-family: var(--font-mono); font-size: 14px; margin-top: 5px; word-break: break-all; }
+  .base-url-card .note { font-size: 12.5px; color: var(--ink-dim); margin-top: 6px; }
+
+  /* ---------- sections ---------- */
+  section.resource { max-width: 760px; margin: 64px 0 0; scroll-margin-top: 24px; }
+  section.resource:first-of-type { margin-top: 48px; }
+  .resource-head { margin-bottom: 6px; }
+  .resource-head h2 { font-size: 22px; letter-spacing: -0.01em; }
+  .resource-intro { color: var(--ink-dim); font-size: 14.5px; margin-top: 8px; max-width: 62ch; }
+
+  hr.rule { border: none; border-top: 1px solid var(--border); margin: 56px 0; max-width: 760px; }
+
+  /* ---------- endpoint block ---------- */
+  .endpoint {
+    margin-top: 34px;
+    scroll-margin-top: 24px;
+  }
+  .endpoint-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .method {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+    padding: 3px 8px; border-radius: 5px; letter-spacing: 0.02em;
+  }
+  .method.get { color: var(--get); background: var(--get-bg); }
+  .method.post { color: var(--post); background: var(--post-bg); }
+  .method.patch { color: var(--patch); background: var(--patch-bg); }
+  .method.delete { color: var(--delete); background: var(--delete-bg); }
+  .method.put { color: var(--post); background: var(--post-bg); }
+  .path { font-family: var(--font-mono); font-size: 14.5px; font-weight: 500; }
+  .role-chip {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px; border: 1px solid var(--border);
+    color: var(--ink-dim); margin-left: auto;
+  }
+  .role-chip.open { color: var(--post); border-color: transparent; background: var(--post-bg); }
+  .role-chip.new { color: var(--accent-soft-ink); border-color: transparent; background: var(--accent-soft); }
+
+  .endpoint-desc { font-size: 14px; color: var(--ink-dim); margin-top: 8px; max-width: 62ch; }
+  .endpoint-note {
+    margin-top: 10px; font-size: 13px; padding: 9px 12px;
+    border-radius: 8px; background: var(--warn-bg); color: var(--warn);
+    border-left: 3px solid var(--warn);
+  }
+  .endpoint-note.info { background: var(--internal-bg); color: var(--ink-dim); border-left-color: var(--ink-faint); }
+  .endpoint-note strong { color: inherit; }
+
+  .panels {
+    display: grid; gap: 12px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .panel {
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); overflow: hidden; box-shadow: var(--shadow);
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+    background: var(--surface-2);
+  }
+  .panel-head .label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); }
+  .copy-btn {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-dim);
+    background: transparent; border: 1px solid var(--border); border-radius: 5px;
+    padding: 2px 7px; cursor: pointer; transition: color .12s ease, border-color .12s ease;
+  }
+  .copy-btn:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .panel pre {
+    margin: 0; padding: 13px 14px; overflow-x: auto;
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65;
+    font-variant-numeric: tabular-nums;
+  }
+  .panel .status-line { padding: 8px 14px 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint); }
+
+  .tok-key { color: var(--patch); }
+  .tok-str { color: var(--post); }
+  .tok-num { color: var(--get); }
+  .tok-bool { color: var(--accent); }
+  .tok-punc { color: var(--ink-faint); }
+  .tok-comment { color: var(--ink-faint); font-style: italic; }
+
+  .fields { margin-top: 4px; }
+  .fields table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .fields th { text-align: left; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .fields td { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  .fields tr:last-child td { border-bottom: none; }
+  .fields .fname { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
+  .fields .ftype { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent-soft-ink); white-space: nowrap; }
+  .fields .fdesc { color: var(--ink-dim); }
+  .req-star { color: var(--delete); }
+
+  /* ---------- generic content blocks ---------- */
+  .prose p { max-width: 68ch; color: var(--ink-dim); }
+  .prose strong { color: var(--ink); }
+  .callout {
+    border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    background: var(--surface); border-radius: 0 10px 10px 0;
+    padding: 14px 16px; margin: 18px 0; box-shadow: var(--shadow);
+  }
+  .callout .eyebrow { color: var(--accent-soft-ink); }
+  .callout p { margin: 6px 0 0; font-size: 13.5px; }
+
+  .role-table, .status-table, .model-table {
+    width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13.5px;
+  }
+  .role-table th, .status-table th, .model-table th {
+    text-align: left; font-family: var(--font-mono); font-size: 10.5px;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint);
+    padding: 8px 12px; border-bottom: 1px solid var(--border); font-weight: 500;
+  }
+  .role-table td, .status-table td, .model-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border-soft); color: var(--ink-dim);
+  }
+  .role-table td:first-child, .status-table td:first-child { font-family: var(--font-mono); color: var(--ink); font-weight: 500; white-space: nowrap; }
+  .status-table .code { font-family: var(--font-mono); font-weight: 600; }
+  .status-table .code.ok { color: var(--ok); }
+  .status-table .code.warn { color: var(--warn); }
+  .status-table .code.err { color: var(--err); }
+
+  .model-card {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    box-shadow: var(--shadow); margin-top: 22px; overflow: hidden;
+  }
+  .model-card-head { padding: 12px 16px; border-bottom: 1px solid var(--border-soft); background: var(--surface-2); }
+  .model-card-head .name { font-family: var(--font-mono); font-weight: 600; font-size: 14px; }
+  .model-card-head .desc { font-size: 12.5px; color: var(--ink-dim); margin-top: 2px; }
+  .model-card table { width: 100%; border-collapse: collapse; }
+  .model-card th { text-align: left; font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 16px; border-bottom: 1px solid var(--border); font-weight: 500; }
+  .model-card td { padding: 8px 16px; border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+  .model-card tr:last-child td { border-bottom: none; }
+  .model-card .fname { font-family: var(--font-mono); }
+  .model-card .ftype { font-family: var(--font-mono); color: var(--ink-faint); }
+
+  .gap-list { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  .gap-item {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .gap-item .gap-title { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .gap-item .gap-title .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+  .gap-item p { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-dim); }
+
+  footer.doc-footer {
+    max-width: 760px; margin-top: 80px; padding-top: 20px;
+    border-top: 1px solid var(--border); font-size: 12.5px; color: var(--ink-faint);
+  }
+</style>
+
+<div class="shell">
+  <nav class="sidebar" aria-label="API sections">
+    <div class="brand">
+      <div class="brand-name">Embarko<span class="dim"> API</span></div>
+      <div class="brand-tag">Companies / projects / deploys / billing</div>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Start here</div>
+      <a class="navlink" href="#overview">Overview</a>
+      <a class="navlink" href="#auth-model">Auth model</a>
+      <a class="navlink" href="#errors">Errors</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Auth</div>
+      <a class="navlink" href="#ep-msg91-exchange"><span class="chip method post" style="background:none;padding:0;color:var(--post)">POST</span> msg91/exchange</a>
+      <a class="navlink" href="#ep-msg91-callback"><span class="chip method get" style="background:none;padding:0;color:var(--get)">GET</span> msg91/callback</a>
+      <a class="navlink" href="#ep-logout"><span class="chip method post" style="background:none;padding:0;color:var(--post)">POST</span> logout</a>
+      <a class="navlink" href="#ep-me"><span class="chip method get" style="background:none;padding:0;color:var(--get)">GET</span> me</a>
+      <a class="navlink" href="#ep-switch-company"><span class="chip method post" style="background:none;padding:0;color:var(--post)">POST</span> switch-company</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Companies</div>
+      <a class="navlink" href="#ep-companies-list">List mine</a>
+      <a class="navlink" href="#ep-companies-create">Create</a>
+      <a class="navlink" href="#ep-companies-get">Get one</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Projects</div>
+      <a class="navlink" href="#ep-projects-create">Create</a>
+      <a class="navlink" href="#ep-projects-list">List</a>
+      <a class="navlink" href="#ep-projects-get">Get one</a>
+      <a class="navlink" href="#ep-projects-rename">Rename</a>
+      <a class="navlink" href="#ep-projects-memory">Set memory</a>
+      <a class="navlink" href="#ep-projects-delete">Delete</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Deployments</div>
+      <a class="navlink" href="#ep-deployments-list">List history</a>
+      <a class="navlink" href="#ep-deployments-rollback">Rollback <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Env vars</div>
+      <a class="navlink" href="#ep-envvars-list">List</a>
+      <a class="navlink" href="#ep-envvars-put">Set (bulk)</a>
+      <a class="navlink" href="#ep-envvars-delete">Delete one</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Deploy tokens</div>
+      <a class="navlink" href="#ep-tokens-create">Create</a>
+      <a class="navlink" href="#ep-tokens-list">List</a>
+      <a class="navlink" href="#ep-tokens-revoke">Revoke</a>
+      <a class="navlink" href="#ep-tokens-rotate">Rotate</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Custom domains</div>
+      <a class="navlink" href="#ep-domains-register">Register</a>
+      <a class="navlink" href="#ep-domains-list">List</a>
+      <a class="navlink" href="#ep-domains-verify">Verify</a>
+      <a class="navlink" href="#ep-domains-remove">Remove</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Billing</div>
+      <a class="navlink" href="#ep-billing-plans">List plans</a>
+      <a class="navlink" href="#ep-billing-customer-create">Create customer</a>
+      <a class="navlink" href="#ep-billing-customer-get">Get customer</a>
+      <a class="navlink" href="#ep-billing-status">Get subscription</a>
+      <a class="navlink" href="#ep-billing-subscription-put">Change plan</a>
+      <a class="navlink" href="#ep-billing-subscription-delete">Cancel (→ free)</a>
+      <a class="navlink" href="#ep-billing-checkout-url">Checkout URL</a>
+      <a class="navlink" href="#ep-billing-pm-list">List payment methods</a>
+      <a class="navlink" href="#ep-billing-pm-delete">Remove payment method</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Reference</div>
+      <a class="navlink" href="#models">Data models</a>
+      <a class="navlink" href="#gaps">Known gaps</a>
+    </div>
+  </nav>
+
+  <main>
+    <div class="page-head">
+      <div class="eyebrow" id="overview">API Reference · v0.3</div>
+      <h1>Embarko API</h1>
+      <p class="lede">
+        The multi-tenant management API: companies, projects, deployments, environment
+        variables, deploy tokens, custom domains and billing, sitting in front of the
+        separate <code>hostnsoft-deploy</code> build/deploy service. This is what the
+        dashboard frontend talks to for every screen except the actual
+        "deploy is running" build log.
+      </p>
+
+      <div class="badge-row">
+        <span class="badge">JSON over HTTPS</span>
+        <span class="badge">Single credential: <code>proxy_auth_token</code> header</span>
+        <span class="badge warn">Pre-launch — no public URL yet</span>
+      </div>
+
+      <div class="base-urls">
+        <div class="base-url-card">
+          <div class="label">Local dev</div>
+          <div class="url">http://localhost:4100</div>
+          <div class="note">Default <code>PORT</code> from <code>.env.example</code>.</div>
+        </div>
+        <div class="base-url-card">
+          <div class="label">Production</div>
+          <div class="url">not yet public</div>
+          <div class="note">Runs on the deploy server, reachable only over <code>127.0.0.1</code> today. Needs a real subdomain (e.g. <code>api.hostnsoft.com</code>) routed through Traefik before the frontend can reach it outside a VPN/tunnel — flag this to backend if you need a staging URL.</div>
+        </div>
+      </div>
+    </div>
+
+    <section class="resource" id="auth-model">
+      <div class="resource-head"><h2>Auth model</h2></div>
+      <div class="prose">
+        <p><strong>This changed since the last version of this doc</strong> — there is no longer a local JWT/refresh-token session, and no local Company/Member/role model. Identity, sessions, and company membership are entirely owned by <a href="https://docs.msg91.com/otp-widget" target="_blank" rel="noopener">MSG91's hosted proxy-auth widget</a>. This API stores none of that itself.</p>
+      </div>
+
+      <div class="panels" style="grid-template-columns: 1fr;">
+        <div class="panel">
+          <div class="panel-head"><span class="label">The one credential you'll use</span></div>
+          <div style="padding:14px 16px;">
+            <p style="margin:0 0 10px;color:var(--ink-dim);font-size:13.5px;">
+              The MSG91 widget hands the frontend a <strong><code>proxy_auth_token</code></strong> (PAT) directly. That PAT <em>is</em> the session — send it as a raw header (not <code>Authorization: Bearer</code>) on every authenticated request:
+            </p>
+            <pre class="mono" style="margin:0 0 10px;font-size:12.5px;background:var(--surface-2);padding:9px 12px;border-radius:6px;">proxy_auth_token: &lt;token from the MSG91 widget&gt;</pre>
+            <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
+              There is no refresh flow, no cookie, and no in-memory access token to juggle — hold onto the PAT itself for the life of the session (same place you'd have kept an access token before) and send it on every call, including <code>GET /auth/me</code> and every <code>/companies/...</code> route. A missing header is <code>400</code>; a rejected/expired PAT is <code>401</code> with <code>code: "PROXY_TOKEN_REJECTED"</code> — send the user back through the MSG91 widget in both cases.
+            </p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="label">Deploy tokens (unrelated, not for the frontend to auth with)</span></div>
+          <div style="padding:14px 16px;">
+            <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
+              Created and listed through this API (see <a href="#ep-tokens-create">Deploy tokens</a>) so a member can manage them in the dashboard — but the raw token itself is only ever used by <code>hostnsoft-deploy</code>, as a header on <em>its own</em> <code>POST /apps</code> endpoint. The frontend's job is CRUD on token metadata, never using a deploy token to call this API.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="eyebrow">No more roles</div>
+        <p>There is no <code>company_admin</code> / <code>project_admin</code> / <code>viewer</code> distinction anymore. MSG91 proxy reports membership as a yes/no count, not a role — so <strong>any member of a company can do anything scoped to it</strong> (create/rename/delete projects, manage tokens, change billing, invite/remove members via the MSG91 embed itself). Don't build role-gated UI against this API; there's nothing here to check.</p>
+      </div>
+
+      <div class="callout">
+        <div class="eyebrow">Membership &amp; invites live on MSG91, not here</div>
+        <p>There is no <code>/companies/:id/members</code> endpoint in this API anymore. Inviting, listing, and removing members happens through the MSG91 proxy embed the dashboard already hosts for login — this API only reads the resulting membership (via <a href="#ep-companies-list">GET /companies</a> and the 404-for-non-members behavior described below), it doesn't manage it.</p>
+      </div>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="errors">
+      <div class="resource-head"><h2>Errors</h2></div>
+      <p class="resource-intro">Every error is JSON. Validation failures follow one predictable shape everywhere; most other errors carry a stable <code>code</code> string too — prefer branching on <code>code</code> over the human-readable <code>error</code> message where one is present.</p>
+
+      <div class="panels" style="grid-template-columns: 1fr;">
+        <div class="panel">
+          <div class="panel-head"><span class="label">400 · validation failed</span><button class="copy-btn" data-copy>Copy</button></div>
+          <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"Validation failed"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"details"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+    <span class="tok-punc">{</span> <span class="tok-key">"path"</span><span class="tok-punc">:</span> <span class="tok-str">"email"</span><span class="tok-punc">,</span> <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"Invalid email"</span> <span class="tok-punc">}</span>
+  <span class="tok-punc">]</span>
+<span class="tok-punc">}</span></code></pre>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="label">everything else (proxy / billing / auth errors)</span><button class="copy-btn" data-copy>Copy</button></div>
+          <pre><code><span class="tok-punc">{</span> <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"Add a payment method before choosing a paid plan"</span><span class="tok-punc">,</span> <span class="tok-key">"code"</span><span class="tok-punc">:</span> <span class="tok-str">"BILLING_PAYMENT_METHOD_REQUIRED"</span> <span class="tok-punc">}</span></code></pre>
+        </div>
+      </div>
+
+      <table class="status-table">
+        <thead><tr><th>Status</th><th>Meaning here</th></tr></thead>
+        <tbody>
+          <tr><td class="code ok">200 / 201</td><td>Success. 201 on every <code>POST</code> that creates a row.</td></tr>
+          <tr><td class="code ok">204</td><td>Success, empty body — every <code>DELETE</code>, plus <code>logout</code>.</td></tr>
+          <tr><td class="code warn">400</td><td>Body failed validation (see shape above), a missing/malformed header, or a code-level reject (e.g. rollback target has no image).</td></tr>
+          <tr><td class="code warn">401</td><td>Missing/invalid/expired <code>proxy_auth_token</code> — <code>code: "PROXY_TOKEN_MISSING"</code> (well, that one's actually 400 — see below) or <code>"PROXY_TOKEN_REJECTED"</code>.</td></tr>
+          <tr><td class="code warn">402</td><td>Billing only — a paid plan was requested with no payment method on file (<code>BILLING_PAYMENT_METHOD_REQUIRED</code>).</td></tr>
+          <tr><td class="code warn">404</td><td>The company/project/token/domain/deployment doesn't exist, <em>or</em> you're not a member of that company — the API intentionally doesn't distinguish those two, so it never confirms a company's existence to a non-member.</td></tr>
+          <tr><td class="code warn">409</td><td>Conflict — e.g. a project-name slug that's already taken, a domain already registered elsewhere, billing customer already exists, or already on the requested plan.</td></tr>
+          <tr><td class="code warn">422</td><td>Understood the request, semantically can't do it — e.g. rolling back to a deployment that never succeeded, or a custom domain's DNS not yet pointing at the platform.</td></tr>
+          <tr><td class="code warn">502 / 503</td><td>An upstream (hostnsoft-deploy, MSG91 proxy, Lago, or Stripe) failed or was unreachable. Worth a retry; not something the caller did wrong.</td></tr>
+          <tr><td class="code err">500</td><td>Something broke server-side. Not expected in normal use; worth reporting with the request that triggered it.</td></tr>
+        </tbody>
+      </table>
+      <div class="endpoint-note info"><code>PROXY_TOKEN_MISSING</code> (no <code>proxy_auth_token</code> header at all) is actually <strong>400</strong>, not 401 — a deliberate distinction so a misconfigured client sees "you forgot to send the header" rather than "your login expired." Only a header that's present-but-rejected is 401.</div>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="auth-endpoints">
+      <div class="resource-head"><h2>Auth</h2></div>
+      <p class="resource-intro">Login is the MSG91 widget, not a form this API renders. The frontend embeds MSG91's widget and gets a <code>proxy_auth_token</code> one of two ways — pick <strong>one</strong> of the two flows below, not both. Either way, the PAT the widget gives you is the thing you hold onto and send on every request afterward (see <a href="#auth-model">Auth model</a>).</p>
+
+      <article class="endpoint" id="ep-msg91-exchange">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/auth/msg91/exchange</span>
+          <span class="role-chip open">token in body, no header needed</span>
+        </div>
+        <p class="endpoint-desc">Verifies a freshly-obtained <code>proxy_auth_token</code> against MSG91 and makes sure the user's current company has billing set up (best-effort — see <code>billing</code> in the response). Doesn't issue any credential of its own: the PAT you already have <em>is</em> what you use from here on, this endpoint is really just "confirm this PAT works and warm things up."</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"&lt;proxy_auth_token from the MSG91 widget&gt;"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"user"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"rita@acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Rita Sharma"</span> <span class="tok-punc">}</span><span class="tok-punc">,</span>
+  <span class="tok-key">"currentCompany"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span><span class="tok-punc">,</span> <span class="tok-comment">// or null</span>
+  <span class="tok-key">"billing"</span><span class="tok-punc">:</span> <span class="tok-str">"ready"</span> <span class="tok-comment">// or "pending" -&gt; call POST .../billing/customer</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">The frontend keeps using the <em>same</em> <code>proxy_auth_token</code> it POSTed here as its session credential going forward. This endpoint doesn't mint a separate access token.</div>
+      </article>
+
+      <article class="endpoint" id="ep-msg91-callback">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/auth/msg91/callback</span>
+          <span class="role-chip open">no auth required</span>
+        </div>
+        <p class="endpoint-desc">The redirect-flow counterpart to <a href="#ep-msg91-exchange">exchange</a> — MSG91 redirects the browser here directly with the token in the query string. Verifies it (so bad logins surface as <code>auth_error</code>) and redirects onward. <strong>There is no JSON to read</strong> — a client on this flow gets its PAT from the proxy embed it already hosts client-side, not from this response.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Query params</span></div>
+            <div class="fields" style="padding:10px 14px 12px;">
+              <table><thead><tr><th>Param</th><th>Type</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="fname">proxy_auth_token</td><td class="ftype">string</td><td class="fdesc">appended by MSG91 itself</td></tr>
+                  <tr><td class="fname">next</td><td class="ftype">string, optional</td><td class="fdesc">where to land after login — a <strong>path only</strong> (e.g. <code>/dashboard</code>); anything off-origin silently falls back to <code>/</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">302 Redirect (success)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-key">Location:</span> <span class="tok-str">&lt;FRONTEND_ORIGIN&gt;/dashboard</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">302 Redirect (bad/missing token)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-key">Location:</span> <span class="tok-str">&lt;FRONTEND_ORIGIN&gt;/dashboard?auth_error=invalid_token</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-logout">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/auth/logout</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">No body. Drops this API's own identity cache for the PAT so a revoked token isn't served stale from the cache. <strong>The frontend must also revoke the PAT against MSG91 itself</strong> — this endpoint alone doesn't invalidate it there. <code>204</code> on success.</p>
+      </article>
+
+      <article class="endpoint" id="ep-me">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/auth/me</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">The logged-in user's full MSG91 identity, merged with their own fuller record. Good for app-boot.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"usr_9f2..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"rita@acme.dev"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Rita Sharma"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"company"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span> <span class="tok-comment">// proxy's "current" company, or null</span>
+  <span class="tok-comment">// ...plus any other fields MSG91 sends on this identity</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">For the <strong>full list</strong> of companies this user belongs to (not just proxy's "current" one), call <a href="#ep-companies-list">GET /companies</a> instead.</div>
+      </article>
+
+      <article class="endpoint" id="ep-switch-company">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/auth/switch-company</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Moves MSG91 proxy's notion of "current company" for this PAT, so the proxy embed (which renders whatever proxy thinks is current) agrees with what the dashboard is showing. <strong>This API never reads "current company" itself</strong> — every <code>/companies/:companyId/...</code> route scopes from the URL, not from this — so calling it isn't required for the API to work, only for the embed's own UI to stay in sync.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">404 if the caller isn't a member of that company — same membership check every scoped route uses.</div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="companies">
+      <div class="resource-head"><h2>Companies</h2></div>
+      <p class="resource-intro">A Company is the account/workspace boundary, owned entirely by MSG91 proxy — this API has no local Company table. Every project and deploy token sits under exactly one company id (a plain proxy id string). Rename, delete, and member management all happen through the MSG91 proxy embed, not through this API.</p>
+
+      <article class="endpoint" id="ep-companies-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Every company the current user belongs to, straight from proxy.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">[</span>
+  <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span>
+<span class="tok-punc">]</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">No role or member-status field on each entry — see <a href="#auth-model">Auth model</a>, there's no role concept left. Membership is binary.</div>
+      </article>
+
+      <article class="endpoint" id="ep-companies-create">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Creates a company on proxy directly, sets up billing (Stripe + Lago customer, free plan) right after, best-effort. Most users won't hit this directly — proxy auto-creates a default company on first login (see <a href="#ep-msg91-exchange">exchange</a>), which already gets billing bootstrapped the same way.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"billing@acme.dev"</span> <span class="tok-comment">// optional — falls back to your own email for billing</span>
+<span class="tok-punc">}</span></code></pre>
+            <div class="fields" style="padding:0 14px 12px;">
+              <table><thead><tr><th>Field</th><th>Type</th></tr></thead>
+                <tbody>
+                  <tr><td class="fname">name<span class="req-star">*</span></td><td class="ftype">string, min 1</td></tr>
+                  <tr><td class="fname">email</td><td class="ftype">string, optional</td></tr>
+                  <tr><td class="fname">meta, timezone, timeZoneName</td><td class="ftype">optional, passed through to proxy as-is</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"billing"</span><span class="tok-punc">:</span> <span class="tok-str">"ready"</span> <span class="tok-comment">// or "pending" -&gt; call POST .../billing/customer to retry</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-companies-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">One company's detail, plus this API's own project count.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span><span class="tok-punc">,</span> <span class="tok-key">"projectCount"</span><span class="tok-punc">:</span> <span class="tok-num">2</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">404, not 403, if you're not a member — see <a href="#errors">Errors</a>.</div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="projects">
+      <div class="resource-head"><h2>Projects</h2></div>
+      <p class="resource-intro">One Project == one deployed app on <code>hostnsoft-deploy</code>. <code>slug</code> is derived from <code>name</code> at creation and is immutable — it's the live subdomain and the <code>X-App-Name</code> a deploy uses, unique platform-wide.</p>
+
+      <article class="endpoint" id="ep-projects-create">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Creates a project row. This doesn't deploy anything by itself — an app becomes live the first time a deploy token for this company is used against <code>hostnsoft-deploy</code>'s <code>POST /apps</code> with a matching <code>X-App-Name</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"orphanExpiresAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:00:00.000Z"</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">409 if the slug is already taken — slugs are unique <strong>platform-wide</strong>, not just within a company.</div>
+      </article>
+
+      <article class="endpoint" id="ep-projects-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Every project in the company. Doesn't include live <code>health</code> (see get-one below) — this is the list/table view, keep it cheap.</p>
+      </article>
+
+      <article class="endpoint" id="ep-projects-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">One project's row, plus a live <code>health</code> field fetched from <code>hostnsoft-deploy</code>'s real Nomad allocation status — good for a project detail/status page.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+  <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"running"</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="fields" style="margin-top:14px;">
+          <table><thead><tr><th>health value</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="fname">running</td><td class="fdesc">Healthy, actively serving traffic.</td></tr>
+              <tr><td class="fname">starting</td><td class="fdesc">Just deployed / redeploying, allocation not placed yet.</td></tr>
+              <tr><td class="fname">crashed</td><td class="fdesc">Allocation failed or was lost — needs attention.</td></tr>
+              <tr><td class="fname">stopped</td><td class="fdesc">Job exists but isn't running (rare in normal use).</td></tr>
+              <tr><td class="fname">not_deployed</td><td class="fdesc">No Nomad job for this slug at all yet — normal before the first deploy.</td></tr>
+              <tr><td class="fname">unknown</td><td class="fdesc">Couldn't reach <code>hostnsoft-deploy</code> to check — never blocks this request, just falls back.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-projects-rename">
+        <div class="endpoint-head">
+          <span class="method patch">PATCH</span>
+          <span class="path">/companies/:companyId/projects/:projectId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Display name only — <code>slug</code> never changes after creation.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Marketing Site (prod)"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-projects-memory">
+        <div class="endpoint-head">
+          <span class="method patch">PATCH</span>
+          <span class="path">/companies/:companyId/projects/:projectId/memory</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Sets the project's memory override (MB). <code>hostnsoft-deploy</code> never provisions below the app's own auto-detected technical minimum (e.g. 512MB for an embedded-DB app) even if you set a lower value here — this is a floor-adjustable override, not a hard cap.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">512</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">Takes effect on the <strong>next deploy or rollback</strong> for this project, not instantly on a currently-running app — see <a href="#gaps">Known gaps</a>.</div>
+      </article>
+
+      <article class="endpoint" id="ep-projects-delete">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/projects/:projectId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Tears down the running app on <code>hostnsoft-deploy</code> (Nomad job, Traefik routing, Docker image) <strong>before</strong> deleting the project row and cascading its deployments/env vars/domains. Best-effort on the teardown call — a <code>hostnsoft-deploy</code> outage never blocks the project from being deletable; a failed teardown is logged for manual follow-up, not surfaced as a failure to the caller.</p>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="deployments">
+      <div class="resource-head"><h2>Deployments</h2></div>
+      <p class="resource-intro">Populated by <code>hostnsoft-deploy</code> calling back into this API after every deploy attempt concludes — this is the actual deploy history, not something triggered from here (except rollback, below).</p>
+
+      <article class="endpoint" id="ep-deployments-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId/deployments</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Full deploy history for the project, newest first — build number, image, memory, status, who/what triggered it.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">[</span>
+  <span class="tok-punc">{</span>
+    <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_p9q..."</span><span class="tok-punc">,</span> <span class="tok-key">"version"</span><span class="tok-punc">:</span> <span class="tok-str">"v5"</span><span class="tok-punc">,</span> <span class="tok-key">"appVersion"</span><span class="tok-punc">:</span> <span class="tok-str">"2"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"imageTag"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site:2"</span><span class="tok-punc">,</span> <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">512</span><span class="tok-punc">,</span>
+    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-key">"errorDetail"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+    <span class="tok-key">"triggeredBy"</span><span class="tok-punc">:</span> <span class="tok-str">"rollback:usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-comment">// or a deploy token label, for a real build</span>
+    <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:44.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"finishedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:44.000Z"</span>
+  <span class="tok-punc">}</span>
+<span class="tok-punc">]</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">A rollback (below) shows up here too, as a normal new version — <code>triggeredBy</code> starting with <code>rollback:</code> is the only tell. Use that prefix if the UI wants to badge rollback entries distinctly.</div>
+      </article>
+
+      <article class="endpoint" id="ep-deployments-rollback">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects/:projectId/deployments/:deploymentId/rollback</span>
+          <span class="role-chip new">new</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">One-click rollback: re-points the live app at a <strong>past successful deployment's</strong> image, with <strong>no rebuild</strong> — a "pointer flip" that reuses the same no-rebuild config-push path custom domains already use, so it's fast (seconds, not a full build). The project's <em>current</em> custom domains and env vars are kept exactly as they are today — a rollback only changes what code is running, never live config. Recorded as a brand-new deployment with its own next version number, so it shows up in history rather than rewriting it (see the note above).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request</span></div>
+            <pre><code><span class="tok-comment">// no body — :deploymentId in the URL is the target to roll back to</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-comment">// the newly-created Deployment row — same shape as GET .../deployments</span>
+<span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span> <span class="tok-key">"version"</span><span class="tok-punc">:</span> <span class="tok-str">"v6"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-key">"triggeredBy"</span><span class="tok-punc">:</span> <span class="tok-str">"rollback:usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-comment">/* ... */</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="fields" style="margin-top:14px;">
+          <table><thead><tr><th>Status</th><th>When</th></tr></thead>
+            <tbody>
+              <tr><td class="fname">404</td><td class="fdesc"><code>:deploymentId</code> doesn't belong to this project.</td></tr>
+              <tr><td class="fname">422</td><td class="fdesc">Target deployment never succeeded, or has no recorded image — nothing to roll back to.</td></tr>
+              <tr><td class="fname">502</td><td class="fdesc">Reached <code>hostnsoft-deploy</code>, but it refused — most commonly the target image is no longer on disk (very old version, or the host was rebuilt since). The error message names the missing image explicitly.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="endpoint-note info">Memory is floored against whichever is higher: the project's current configured <code>memoryMb</code>, or what that specific past deployment actually needed (its own recorded <code>memoryMb</code>) — an old version that needed an embedded-DB memory floor gets that floor back on rollback, even if the project's memory setting has since drifted lower.</div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="envvars">
+      <div class="resource-head"><h2>Env vars</h2></div>
+      <p class="resource-intro">Baked into the container's env block on every deploy, rollback, or custom-domain config push — see the note on <a href="#ep-projects-memory">memory</a>, same "next apply, not instant" caveat applies here too.</p>
+
+      <article class="endpoint" id="ep-envvars-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId/env-vars</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">All env vars for the project, values included in plaintext (there's no secrets-masking layer here today).</p>
+      </article>
+
+      <article class="endpoint" id="ep-envvars-put">
+        <div class="endpoint-head">
+          <span class="method put">PUT</span>
+          <span class="path">/companies/:companyId/projects/:projectId/env-vars</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Bulk upsert. Keys must be a valid identifier (letters/digits/underscore, can't start with a digit) — enforced because the key is embedded unquoted into generated Nomad job-spec HCL.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"vars"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span> <span class="tok-punc">{</span> <span class="tok-key">"key"</span><span class="tok-punc">:</span> <span class="tok-str">"API_URL"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-str">"https://api.acme.dev"</span> <span class="tok-punc">}</span> <span class="tok-punc">]</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-envvars-delete">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/projects/:projectId/env-vars/:key</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Removes one env var by key.</p>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="tokens">
+      <div class="resource-head"><h2>Deploy tokens</h2></div>
+      <p class="resource-intro">Company-wide scope: a token authenticates as "any project in this company" against <code>hostnsoft-deploy</code>'s own <code>POST /apps</code>. The raw token is shown exactly once, at creation or rotation — never again.</p>
+
+      <article class="endpoint" id="ep-tokens-create">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/tokens</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span> <span class="tok-comment">// shown once</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-tokens-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/tokens</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Metadata only (<code>label</code>, <code>prefix</code>, timestamps, <code>revokedAt</code>) — the raw token itself is never retrievable after creation.</p>
+      </article>
+
+      <article class="endpoint" id="ep-tokens-revoke">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/tokens/:tokenId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Revokes immediately — sets <code>revokedAt</code> to now.</p>
+      </article>
+
+      <article class="endpoint" id="ep-tokens-rotate">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/tokens/:tokenId/rotate</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Issues a replacement under the same label. The old token gets a <strong>1-hour grace period</strong> before it actually stops working, so an in-flight CI run doesn't break the instant you rotate.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_new..."</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_..."</span><span class="tok-punc">,</span> <span class="tok-key">"oldTokenValidUntil"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T10:30:00.000Z"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="domains">
+      <div class="resource-head"><h2>Custom domains</h2></div>
+      <p class="resource-intro">A client-owned domain (or subdomain) attached to a project. <code>domain</code> is unique platform-wide.</p>
+
+      <article class="endpoint" id="ep-domains-register">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects/:projectId/domains</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Registers a domain in <code>pending_dns</code> status and returns the DNS record to create — doesn't verify or activate anything yet.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"domain"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"domain"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"pending_dns"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"instructions"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"CNAME"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-str">"edge.hostnsoft.com"</span> <span class="tok-punc">}</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">Apex domains (no subdomain, e.g. <code>acme.dev</code>) get an <code>A</code> record instead of <code>CNAME</code> — classification is automatic from the domain shape.</div>
+      </article>
+
+      <article class="endpoint" id="ep-domains-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId/domains</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-domains-verify">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects/:projectId/domains/:domain/verify</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Checks DNS live and, if it resolves correctly, activates routing immediately (pushes a Traefik router + TLS cert config with no rebuild). Safe to call repeatedly while DNS is propagating.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response (activated)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"domain"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"active"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">422 (DNS not ready yet)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"domain"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"failed"</span><span class="tok-punc">,</span> <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"instructions"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-comment">/* same shape as register */</span> <span class="tok-punc">}</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-domains-remove">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/projects/:projectId/domains/:domain</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Removes the domain and pushes the project's remaining active domains, so this one's router and certificate are actually torn down — never touches the project's default platform subdomain.</p>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="billing">
+      <div class="resource-head"><h2>Billing</h2></div>
+      <p class="resource-intro"><strong>Entirely new section</strong> — this wasn't documented before. Per-company, backed by Lago (subscriptions/invoicing) and Stripe (payment methods only, reached through the Stripe customer id Lago records). Nothing billing-related is stored locally — every read here is a live call out.</p>
+
+      <article class="endpoint" id="ep-billing-plans">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/billing/plans</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">The plan catalogue — org-wide in Lago, not per company, so this sits outside <code>/companies/:companyId</code>. Any signed-in user can see it (it's what a pricing page shows).</p>
+      </article>
+
+      <article class="endpoint" id="ep-billing-customer-create">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/billing/customer</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Creates the Stripe + Lago customer and puts the company on the free plan. <code>POST /companies</code> and login already do this automatically, best-effort — this is the <strong>repair path</strong> for when that step failed (<code>billing: "pending"</code>) or for companies that were created directly through the MSG91 embed (which never passes through this API). Create-only: a second call is <code>409</code>, not an upsert.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span><span class="tok-punc">,</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"billing@acme.dev"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"country"</span><span class="tok-punc">:</span> <span class="tok-str">"US"</span><span class="tok-punc">,</span> <span class="tok-key">"currency"</span><span class="tok-punc">:</span> <span class="tok-str">"USD"</span> <span class="tok-comment">// + optional address/tax fields, see fields below</span>
+<span class="tok-punc">}</span></code></pre>
+            <div class="fields" style="padding:0 14px 12px;">
+              <table><thead><tr><th>Field</th><th>Type</th></tr></thead>
+                <tbody>
+                  <tr><td class="fname">name<span class="req-star">*</span></td><td class="ftype">string</td></tr>
+                  <tr><td class="fname">email<span class="req-star">*</span></td><td class="ftype">string, email format</td></tr>
+                  <tr><td class="fname">address_line1/2, city, state, zipcode, legal_name, tax_identification_number, timezone</td><td class="ftype">string, all optional</td></tr>
+                  <tr><td class="fname">country, currency</td><td class="ftype">2/3-letter ISO code, optional</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"customer"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-comment">/* raw Lago customer object */</span> <span class="tok-punc">}</span><span class="tok-punc">,</span> <span class="tok-key">"subscription"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-comment">/* raw Lago subscription, free plan */</span> <span class="tok-punc">}</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-billing-customer-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/billing/customer</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Raw Lago customer object. <code>404</code> (<code>BILLING_CUSTOMER_NOT_FOUND</code>) if billing was never set up for this company.</p>
+      </article>
+
+      <article class="endpoint" id="ep-billing-status">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/billing</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">The company's live subscription(s), each with its full plan attached. A <code>pending</code> entry alongside <code>active</code> means a downgrade is scheduled for end-of-period. An empty list means billing isn't set up yet — no separate 404 here, check <code>subscriptions.length</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"subscriptions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span> <span class="tok-punc">{</span> <span class="tok-key">"plan_code"</span><span class="tok-punc">:</span> <span class="tok-str">"free"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"active"</span><span class="tok-punc">,</span> <span class="tok-key">"plan"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-comment">/* full plan object, or null */</span> <span class="tok-punc">}</span> <span class="tok-punc">}</span> <span class="tok-punc">]</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-billing-subscription-put">
+        <div class="endpoint-head">
+          <span class="method put">PUT</span>
+          <span class="path">/companies/:companyId/billing/subscription</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Changes plan. Only public/whitelisted plan codes can be chosen here (<code>400</code> otherwise). A paid plan requires a saved card first — <code>402 BILLING_PAYMENT_METHOD_REQUIRED</code>, send the user through <a href="#ep-billing-checkout-url">checkout-url</a>. Lago decides immediate (upgrade) vs. end-of-period (downgrade).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"plan_code"</span><span class="tok-punc">:</span> <span class="tok-str">"pro"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">409 if already on that plan.</div>
+      </article>
+
+      <article class="endpoint" id="ep-billing-subscription-delete">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/billing/subscription</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">"Cancel" = move to the free plan. The subscription itself is never terminated — a company always has <em>an</em> active plan. <code>409</code> if already on free (not a silent no-op, so the UI doesn't show "canceled" twice).</p>
+      </article>
+
+      <article class="endpoint" id="ep-billing-checkout-url">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/billing/checkout-url</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">A short-lived, single-use Stripe-hosted page (via Lago) for adding/updating a payment method. Generate fresh on every use — never cache it.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"checkoutUrl"</span><span class="tok-punc">:</span> <span class="tok-str">"https://checkout.stripe.com/..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-billing-pm-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/billing/payment-methods</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Saved cards straight from Stripe. <code>409 BILLING_PROVIDER_NOT_LINKED</code> if Lago hasn't finished linking the Stripe customer yet (async, usually settles within seconds of customer creation) — distinct from an empty list, so the UI can tell "no cards yet" from "not ready yet".</p>
+      </article>
+
+      <article class="endpoint" id="ep-billing-pm-delete">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/billing/payment-methods/:paymentMethodId</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Detaches a saved card from the company's Stripe customer.</p>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="models">
+      <div class="resource-head"><h2>Data models</h2></div>
+      <p class="resource-intro">Only what's local to this API. <strong>There is no User, Company, or CompanyMembership table</strong> — every <code>userId</code>/<code>companyId</code> below is a plain proxy id string with no foreign key, since the row it refers to isn't ours.</p>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">Project</div><div class="desc">One deployed app.</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">companyId</td><td class="ftype">string | null</td><td class="fdesc">null only for an unclaimed orphan (anonymous) deploy</td></tr>
+            <tr><td class="fname">slug</td><td class="ftype">string</td><td class="fdesc">immutable, unique platform-wide</td></tr>
+            <tr><td class="fname">name</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">memoryMb</td><td class="ftype">int</td><td class="fdesc">default 256, floor-adjustable override</td></tr>
+            <tr><td class="fname">isOrphan / orphanExpiresAt</td><td class="ftype">bool / date|null</td><td class="fdesc">anonymous-deploy state</td></tr>
+            <tr><td class="fname">health</td><td class="ftype">string</td><td class="fdesc">only on GET one — see <a href="#ep-projects-get">Get one</a>, not a stored column</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">Deployment</div><div class="desc">One deploy attempt (including rollbacks).</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id, projectId</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">version</td><td class="ftype">string</td><td class="fdesc">this project's own sequence: "v1", "v2", ...</td></tr>
+            <tr><td class="fname">appVersion</td><td class="ftype">string</td><td class="fdesc">informational, not unique — whatever X-App-Version was, or a timestamp fallback</td></tr>
+            <tr><td class="fname">imageTag, memoryMb</td><td class="ftype">string|null, int|null</td></tr>
+            <tr><td class="fname">status</td><td class="ftype">"success" | "failed" | "in_progress"</td></tr>
+            <tr><td class="fname">errorDetail</td><td class="ftype">string | null</td></tr>
+            <tr><td class="fname">triggeredBy</td><td class="ftype">string | null</td><td class="fdesc">a deploy token label, or <code>rollback:&lt;userId&gt;</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">EnvVar</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id, projectId, key, value</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">createdBy, updatedBy</td><td class="ftype">string</td><td class="fdesc">proxy user ids</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">Domain</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id, projectId, domain</td><td class="ftype">string</td><td class="fdesc"><code>domain</code> unique platform-wide</td></tr>
+            <tr><td class="fname">type</td><td class="ftype">"apex" | "subdomain"</td></tr>
+            <tr><td class="fname">status</td><td class="ftype">"pending_dns" | "active" | "failed"</td></tr>
+            <tr><td class="fname">lastVerifiedAt</td><td class="ftype">date | null</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">DeployToken</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id, companyId, label, tokenPrefix</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">revokedAt, lastUsedAt</td><td class="ftype">date | null</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="gaps">
+      <div class="resource-head"><h2>Known gaps</h2></div>
+      <p class="resource-intro">Real, current limitations worth knowing before you build UI that assumes otherwise.</p>
+
+      <div class="gap-list">
+        <div class="gap-item">
+          <div class="gap-title"><span class="dot"></span>Memory &amp; env-var changes apply on the next deploy/rollback, not instantly</div>
+          <p><code>PATCH .../memory</code> and <code>PUT/DELETE .../env-vars</code> persist the desired state immediately, but a currently-running app only picks it up the next time something regenerates its job spec — a new deploy, a rollback, or any custom-domain activity on that project (which happens to resync the whole config as a side effect). There's no "apply now" button today.</p>
+        </div>
+        <div class="gap-item">
+          <div class="gap-title"><span class="dot"></span>No rate limiting on internal (deploy-service-facing) endpoints</div>
+          <p><code>/internal/*</code> routes (not listed in this doc — they're for <code>hostnsoft-deploy</code>, not the dashboard) have no rate limiting and aren't network-restricted to just that service's host yet.</p>
+        </div>
+        <div class="gap-item">
+          <div class="gap-title"><span class="dot"></span>Env var values aren't masked</div>
+          <p><code>GET .../env-vars</code> returns raw values including anything a user pasted as a "secret." No separate secrets tier exists yet — treat every value here as visible to anyone with company access.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      Embarko API Reference · generated from <code>src/routes/*.ts</code> in <code>hostnsoft-api</code> · last refreshed 2026-09-07 · flag anything stale to backend rather than guessing.
+    </footer>
+  </main>
+</div>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.panel').querySelector('pre');
+      var text = pre ? pre.innerText : '';
+      navigator.clipboard && navigator.clipboard.writeText(text).then(function () {
+        var original = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = original; }, 1200);
+      });
+    });
+  });
+
+  var links = document.querySelectorAll('.navlink');
+  var sections = Array.prototype.map.call(links, function (l) {
+    var id = l.getAttribute('href').slice(1);
+    return { link: l, el: document.getElementById(id) };
+  }).filter(function (s) { return s.el; });
+
+  function updateActive() {
+    var y = window.scrollY + 90;
+    var current = sections[0];
+    sections.forEach(function (s) {
+      if (s.el.offsetTop <= y) current = s;
+    });
+    links.forEach(function (l) { l.classList.remove('active'); });
+    if (current) current.link.classList.add('active');
+  }
+  document.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+</script>
