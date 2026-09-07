@@ -13,6 +13,7 @@
  * codebase, hence the separate INTERNAL_API_SECRET rather than reusing
  * the per-company deploy-token mechanism, which is scoped the other way.
  */
+import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
@@ -20,6 +21,48 @@ import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeploy
 interface PushResult {
   pushed: boolean;
   error?: string;
+}
+
+interface AppConfig {
+  imageTag: string;
+  memoryMb: number;
+  customDomains: string[];
+  envVars: { key: string; value: string }[];
+}
+
+// Low-level call into hostnsoft-deploy's config-push endpoint — pushes a
+// full desired app config (image, memory, domains, env vars) and applies
+// it WITHOUT a rebuild. Shared by pushCustomDomainConfig below (always
+// the project's current image) and deployments.routes.ts's rollback
+// endpoint (a past image, current everything else) — both are "resync
+// the whole job spec from a known-good state" operations, just with a
+// different imageTag source.
+export async function pushAppConfig(project: Project, config: AppConfig): Promise<PushResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Secret": INTERNAL_API_SECRET,
+      },
+      body: JSON.stringify(config),
+    });
+  } catch (e) {
+    const message = (e as Error).message;
+    logger.error(`[pushAppConfig] could not reach hostnsoft-deploy for project ${project.slug}: ${message}`);
+    return { pushed: false, error: message };
+  }
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "<unreadable response body>");
+    logger.error(
+      `[pushAppConfig] hostnsoft-deploy returned HTTP ${response.status} for project ${project.slug}: ${bodyText}`
+    );
+    return { pushed: false, error: bodyText || `hostnsoft-deploy returned HTTP ${response.status}` };
+  }
+
+  return { pushed: true };
 }
 
 export async function pushCustomDomainConfig(projectId: string): Promise<PushResult> {
@@ -30,11 +73,11 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
     orderBy: { createdAt: "desc" },
   });
 
-  if (!latestSuccess) {
-    // Nothing has ever deployed successfully — there's no running Nomad
-    // job to update. Not a failure: the project's first deploy already
-    // picks up active domains itself (see
-    // hostnsoft-deploy/claim-project.js and
+  if (!latestSuccess || !latestSuccess.imageTag) {
+    // Nothing has ever deployed successfully (or that deployment somehow
+    // has no image tag) — there's no running Nomad job to update. Not a
+    // failure: the project's first deploy already picks up active
+    // domains itself (see hostnsoft-deploy/claim-project.js and
     // src/routes/internalProjects.routes.ts), so this domain will be
     // wired in automatically once that happens.
     return { pushed: true };
@@ -64,36 +107,12 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
   // Never send less than whichever of the two is higher.
   const effectiveMemoryMb = Math.max(project.memoryMb, latestSuccess.memoryMb ?? 0);
 
-  let response: Response;
-  try {
-    response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Internal-Secret": INTERNAL_API_SECRET,
-      },
-      body: JSON.stringify({
-        imageTag: latestSuccess.imageTag,
-        memoryMb: effectiveMemoryMb,
-        customDomains: activeDomains.map((d) => d.domain),
-        envVars,
-      }),
-    });
-  } catch (e) {
-    const message = (e as Error).message;
-    logger.error(`[pushCustomDomainConfig] could not reach hostnsoft-deploy for project ${project.slug}: ${message}`);
-    return { pushed: false, error: message };
-  }
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "<unreadable response body>");
-    logger.error(
-      `[pushCustomDomainConfig] hostnsoft-deploy returned HTTP ${response.status} for project ${project.slug}: ${bodyText}`
-    );
-    return { pushed: false, error: `hostnsoft-deploy returned HTTP ${response.status}` };
-  }
-
-  return { pushed: true };
+  return pushAppConfig(project, {
+    imageTag: latestSuccess.imageTag,
+    memoryMb: effectiveMemoryMb,
+    customDomains: activeDomains.map((d) => d.domain),
+    envVars,
+  });
 }
 
 interface ActivateResult {
