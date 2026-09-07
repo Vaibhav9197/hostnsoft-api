@@ -7,6 +7,7 @@ import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 import { tearDownApp } from "../services/appTeardown";
+import { fetchAppHealth } from "../services/appHealth";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -58,10 +59,8 @@ projectsRouter.get(
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
-    // TODO: fetch live health from hostnsoft-deploy (Nomad allocation
-    // status) once that integration point is designed — see
-    // docs/CLAUDE.md "Required capabilities".
-    res.json({ ...req.project, health: "unknown" });
+    const health = await fetchAppHealth(req.project!.slug);
+    res.json({ ...req.project, health });
   }
 );
 
