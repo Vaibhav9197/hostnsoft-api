@@ -6,6 +6,7 @@ import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
+import { tearDownApp } from "../services/appTeardown";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -117,16 +118,19 @@ projectsRouter.patch(
   }
 );
 
-// TODO: hostnsoft-deploy has no "stop/decommission an app" endpoint today
-// (open question #7) — this deletes the DB row only. The Nomad job for
-// this project's app keeps running, orphaned, until that endpoint exists.
-// Flag this to whoever owns hostnsoft-deploy rather than silently
-// accepting the orphaned-job risk.
+// Tears down the running app on hostnsoft-deploy (Nomad job + the
+// Traefik routing that comes with it, plus any Docker image — see
+// appTeardown.ts) before removing the DB row. Best-effort on the
+// teardown call, same as orphan cleanup's use of the same helper: a
+// hostnsoft-deploy outage must never block the project from actually
+// being deletable, so a failed teardown is logged, not retried
+// indefinitely or surfaced as a failure to the caller.
 projectsRouter.delete(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
+    await tearDownApp(req.project!.slug);
     await prisma.project.delete({ where: { id: req.project!.id } });
     await logAudit({
       actorUserId: req.userId,
