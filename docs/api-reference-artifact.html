@@ -473,8 +473,7 @@
       <h1>Embarko API</h1>
       <p class="lede">
         The multi-tenant management API: companies, projects, deployments, environment
-        variables, deploy tokens, custom domains, billing, and analytics, sitting in
-        front of the separate <code>hostnsoft-deploy</code> build/deploy service. This is
+        variables, deploy tokens, custom domains, billing, and analytics. This is
         what the dashboard frontend talks to for every screen except the actual
         "deploy is running" build log.
       </p>
@@ -489,12 +488,11 @@
         <div class="base-url-card">
           <div class="label">Local dev</div>
           <div class="url">http://localhost:4100</div>
-          <div class="note">Default <code>PORT</code> from <code>.env.example</code>.</div>
         </div>
         <div class="base-url-card">
           <div class="label">Production</div>
-          <div class="url">not yet public</div>
-          <div class="note">Runs on the deploy server, reachable only over <code>127.0.0.1</code> today. Needs a real subdomain (e.g. <code>api.hostnsoft.com</code>) routed through Traefik before the frontend can reach it outside a VPN/tunnel — flag this to backend if you need a staging URL.</div>
+          <div class="url">api.embarko.ai (not yet public)</div>
+          <div class="note">Not yet reachable from outside — flag to backend if you need a staging URL.</div>
         </div>
       </div>
     </div>
@@ -522,7 +520,7 @@
           <div class="panel-head"><span class="label">Deploy tokens (unrelated, not for the frontend to auth with)</span></div>
           <div style="padding:14px 16px;">
             <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
-              Created and listed through this API (see <a href="#ep-tokens-create">Deploy tokens</a>) so a member can manage them in the dashboard — but the raw token itself is only ever used by <code>hostnsoft-deploy</code>, as a header on <em>its own</em> <code>POST /apps</code> endpoint. The frontend's job is CRUD on token metadata, never using a deploy token to call this API.
+              Created and listed through this API (see <a href="#ep-tokens-create">Deploy tokens</a>) so a member can manage them in the dashboard — but the raw token itself is only ever used against the separate deploy endpoint at <code>ship.embarko.ai/apps</code>. The frontend's job is CRUD on token metadata, never using a deploy token to call this API.
             </p>
           </div>
         </div>
@@ -572,7 +570,7 @@
           <tr><td class="code warn">404</td><td>The company/project/token/domain/deployment doesn't exist, <em>or</em> you're not a member of that company — the API intentionally doesn't distinguish those two, so it never confirms a company's existence to a non-member.</td></tr>
           <tr><td class="code warn">409</td><td>Conflict — e.g. a project-name slug that's already taken, a domain already registered elsewhere, billing customer already exists, or already on the requested plan.</td></tr>
           <tr><td class="code warn">422</td><td>Understood the request, semantically can't do it — e.g. rolling back to a deployment that never succeeded, or a custom domain's DNS not yet pointing at the platform.</td></tr>
-          <tr><td class="code warn">502 / 503</td><td>An upstream (hostnsoft-deploy, MSG91 proxy, Lago, or Stripe) failed or was unreachable. Worth a retry; not something the caller did wrong.</td></tr>
+          <tr><td class="code warn">502 / 503</td><td>An upstream service (identity, billing, or the deploy pipeline) failed or was unreachable. Worth a retry; not something the caller did wrong.</td></tr>
           <tr><td class="code err">500</td><td>Something broke server-side. Not expected in normal use; worth reporting with the request that triggered it.</td></tr>
         </tbody>
       </table>
@@ -770,7 +768,7 @@
 
     <section class="resource" id="projects">
       <div class="resource-head"><h2>Projects</h2></div>
-      <p class="resource-intro">One Project == one deployed app on <code>hostnsoft-deploy</code>. <code>slug</code> is derived from <code>name</code> at creation and is immutable — it's the live subdomain and the <code>X-App-Name</code> a deploy uses, unique platform-wide.</p>
+      <p class="resource-intro">One Project == one deployed app. <code>slug</code> is derived from <code>name</code> at creation and is immutable — it's the live subdomain and the <code>X-App-Name</code> a deploy uses, unique platform-wide.</p>
 
       <article class="endpoint" id="ep-projects-create">
         <div class="endpoint-head">
@@ -778,7 +776,7 @@
           <span class="path">/companies/:companyId/projects</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Creates a project row. This doesn't deploy anything by itself — an app becomes live the first time a deploy token for this company is used against <code>hostnsoft-deploy</code>'s <code>POST /apps</code> with a matching <code>X-App-Name</code>.</p>
+        <p class="endpoint-desc">Creates a project row. This doesn't deploy anything by itself — an app becomes live the first time a deploy token for this company is used against <code>ship.embarko.ai/apps</code> with a matching <code>X-App-Name</code>.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -812,7 +810,7 @@
           <span class="path">/companies/:companyId/projects/:projectId</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">One project's row, plus a live <code>health</code> field fetched from <code>hostnsoft-deploy</code>'s real Nomad allocation status — good for a project detail/status page.</p>
+        <p class="endpoint-desc">One project's row, plus a live <code>health</code> field reflecting the app's real running status — good for a project detail/status page.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -830,8 +828,8 @@
               <tr><td class="fname">starting</td><td class="fdesc">Just deployed / redeploying, allocation not placed yet.</td></tr>
               <tr><td class="fname">crashed</td><td class="fdesc">Allocation failed or was lost — needs attention.</td></tr>
               <tr><td class="fname">stopped</td><td class="fdesc">Job exists but isn't running (rare in normal use).</td></tr>
-              <tr><td class="fname">not_deployed</td><td class="fdesc">No Nomad job for this slug at all yet — normal before the first deploy.</td></tr>
-              <tr><td class="fname">unknown</td><td class="fdesc">Couldn't reach <code>hostnsoft-deploy</code> to check — never blocks this request, just falls back.</td></tr>
+              <tr><td class="fname">not_deployed</td><td class="fdesc">Nothing deployed under this slug yet — normal before the first deploy.</td></tr>
+              <tr><td class="fname">unknown</td><td class="fdesc">Couldn't check the app's live status — never blocks this request, just falls back.</td></tr>
             </tbody>
           </table>
         </div>
@@ -858,7 +856,7 @@
           <span class="path">/companies/:companyId/projects/:projectId/memory</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Sets the project's memory override (MB). <code>hostnsoft-deploy</code> never provisions below the app's own auto-detected technical minimum (e.g. 512MB for an embedded-DB app) even if you set a lower value here — this is a floor-adjustable override, not a hard cap.</p>
+        <p class="endpoint-desc">Sets the project's memory override (MB). The platform never provisions below the app's own auto-detected technical minimum (e.g. 512MB for an embedded-DB app) even if you set a lower value here — this is a floor-adjustable override, not a hard cap.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -874,7 +872,7 @@
           <span class="path">/companies/:companyId/projects/:projectId</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Tears down the running app on <code>hostnsoft-deploy</code> (Nomad job, Traefik routing, Docker image) <strong>before</strong> deleting the project row and cascading its deployments/env vars/domains. Best-effort on the teardown call — a <code>hostnsoft-deploy</code> outage never blocks the project from being deletable; a failed teardown is logged for manual follow-up, not surfaced as a failure to the caller.</p>
+        <p class="endpoint-desc">Tears down the running app (compute, routing, and its built image) <strong>before</strong> deleting the project row and cascading its deployments/env vars/domains. Best-effort on the teardown — an outage in the deploy pipeline never blocks the project from being deletable; a failed teardown is logged for manual follow-up, not surfaced as a failure to the caller.</p>
       </article>
     </section>
 
@@ -882,7 +880,7 @@
 
     <section class="resource" id="deployments">
       <div class="resource-head"><h2>Deployments</h2></div>
-      <p class="resource-intro">Populated by <code>hostnsoft-deploy</code> calling back into this API after every deploy attempt concludes — this is the actual deploy history, not something triggered from here (except rollback, below).</p>
+      <p class="resource-intro">Populated automatically after every deploy attempt concludes — this is the actual deploy history, not something triggered from here (except rollback, below).</p>
 
       <article class="endpoint" id="ep-deployments-list">
         <div class="endpoint-head">
@@ -932,7 +930,7 @@
             <tbody>
               <tr><td class="fname">404</td><td class="fdesc"><code>:deploymentId</code> doesn't belong to this project.</td></tr>
               <tr><td class="fname">422</td><td class="fdesc">Target deployment never succeeded, or has no recorded image — nothing to roll back to.</td></tr>
-              <tr><td class="fname">502</td><td class="fdesc">Reached <code>hostnsoft-deploy</code>, but it refused — most commonly the target image is no longer on disk (very old version, or the host was rebuilt since). The error message names the missing image explicitly.</td></tr>
+              <tr><td class="fname">502</td><td class="fdesc">The deploy pipeline refused the rollback — most commonly the target version's build is no longer available (very old version, or the host was rebuilt since). The error message names it explicitly.</td></tr>
             </tbody>
           </table>
         </div>
@@ -961,7 +959,7 @@
           <span class="path">/companies/:companyId/projects/:projectId/env-vars</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Bulk upsert. Keys must be a valid identifier (letters/digits/underscore, can't start with a digit) — enforced because the key is embedded unquoted into generated Nomad job-spec HCL.</p>
+        <p class="endpoint-desc">Bulk upsert. Keys must be a valid identifier (letters/digits/underscore, can't start with a digit) — strictly enforced, since it's baked directly into how the running container's environment is generated.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -984,7 +982,7 @@
 
     <section class="resource" id="tokens">
       <div class="resource-head"><h2>Deploy tokens</h2></div>
-      <p class="resource-intro">Company-wide scope: a token authenticates as "any project in this company" against <code>hostnsoft-deploy</code>'s own <code>POST /apps</code>. The raw token is shown exactly once, at creation or rotation — never again.</p>
+      <p class="resource-intro">Company-wide scope: a token authenticates as "any project in this company" against <code>ship.embarko.ai/apps</code>. The raw token is shown exactly once, at creation or rotation — never again.</p>
 
       <article class="endpoint" id="ep-tokens-create">
         <div class="endpoint-head">
@@ -1060,7 +1058,7 @@
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"domain"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"pending_dns"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"instructions"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"CNAME"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-str">"edge.hostnsoft.com"</span> <span class="tok-punc">}</span>
+  <span class="tok-key">"instructions"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"CNAME"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"app.acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-str">"edge.embarko.ai"</span> <span class="tok-punc">}</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
@@ -1081,7 +1079,7 @@
           <span class="path">/companies/:companyId/projects/:projectId/domains/:domain/verify</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Checks DNS live and, if it resolves correctly, activates routing immediately (pushes a Traefik router + TLS cert config with no rebuild). Safe to call repeatedly while DNS is propagating.</p>
+        <p class="endpoint-desc">Checks DNS live and, if it resolves correctly, activates routing and TLS immediately — no rebuild needed. Safe to call repeatedly while DNS is propagating.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response (activated)</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1238,11 +1236,11 @@
 
     <section class="resource" id="analytics">
       <div class="resource-head"><h2>Analytics <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
-      <p class="resource-intro">Traffic, errors, latency, and CPU/memory usage, derived from Traefik's own access log and Nomad's stats API on the deploy host — not something this API computes itself. Every range below is one of <code>24h</code>, <code>7d</code>, <code>30d</code>, <code>90d</code>, or <code>all</code> (default <code>24h</code> if omitted); an unrecognized value is a <code>400</code> validation error, same shape as everywhere else.</p>
+      <p class="resource-intro">Traffic, errors, latency, and CPU/memory usage for a deployed app, tracked continuously by the platform — not computed on demand. Every range below is one of <code>24h</code>, <code>7d</code>, <code>30d</code>, <code>90d</code>, or <code>all</code> (default <code>24h</code> if omitted); an unrecognized value is a <code>400</code> validation error, same shape as everywhere else.</p>
 
       <div class="callout">
         <div class="eyebrow">"Unavailable" is not "zero traffic"</div>
-        <p>hostnsoft-deploy's analytics pipeline has its own optional infra behind it (Traefik's JSON access log, a local per-app database) and can be disabled or unreachable independently of everything else working. When that happens, these endpoints return <strong><code>503</code></strong>, not a fabricated empty result — render that as "analytics temporarily unavailable," not as "this app has no traffic."</p>
+        <p>The analytics pipeline is separate optional infrastructure and can be disabled or unreachable independently of everything else working. When that happens, these endpoints return <strong><code>503</code></strong>, not a fabricated empty result — render that as "analytics temporarily unavailable," not as "this app has no traffic."</p>
       </div>
 
       <article class="endpoint" id="ep-analytics-project">
@@ -1300,7 +1298,7 @@
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note">Fans out to hostnsoft-deploy once per project, in parallel — fine at this platform's per-company project counts. <strong>Never 503s as a whole</strong>: a single project's analytics being unavailable shows up as <code>{"available": false}</code> in its own <code>projects[]</code> entry (contributing 0 to every total) rather than failing the entire rollup — one bad app shouldn't hide every other project's numbers.</div>
+        <div class="endpoint-note">Fetches every project's analytics in parallel — fine at this platform's per-company project counts. <strong>Never 503s as a whole</strong>: a single project's analytics being unavailable shows up as <code>{"available": false}</code> in its own <code>projects[]</code> entry (contributing 0 to every total) rather than failing the entire rollup — one bad app shouldn't hide every other project's numbers.</div>
       </article>
     </section>
 
@@ -1382,11 +1380,7 @@
       <div class="gap-list">
         <div class="gap-item">
           <div class="gap-title"><span class="dot"></span>Memory &amp; env-var changes apply on the next deploy/rollback, not instantly</div>
-          <p><code>PATCH .../memory</code> and <code>PUT/DELETE .../env-vars</code> persist the desired state immediately, but a currently-running app only picks it up the next time something regenerates its job spec — a new deploy, a rollback, or any custom-domain activity on that project (which happens to resync the whole config as a side effect). There's no "apply now" button today.</p>
-        </div>
-        <div class="gap-item">
-          <div class="gap-title"><span class="dot"></span>No rate limiting on internal (deploy-service-facing) endpoints</div>
-          <p><code>/internal/*</code> routes (not listed in this doc — they're for <code>hostnsoft-deploy</code>, not the dashboard) have no rate limiting and aren't network-restricted to just that service's host yet.</p>
+          <p><code>PATCH .../memory</code> and <code>PUT/DELETE .../env-vars</code> persist the desired state immediately, but a currently-running app only picks it up the next time it's redeployed — a new deploy, a rollback, or any custom-domain activity on that project (which resyncs the whole config as a side effect). There's no "apply now" button today.</p>
         </div>
         <div class="gap-item">
           <div class="gap-title"><span class="dot"></span>Env var values aren't masked</div>
@@ -1394,7 +1388,7 @@
         </div>
         <div class="gap-item">
           <div class="gap-title"><span class="dot"></span>Analytics "all" range is really "since ~100 days ago"</div>
-          <p>hostnsoft-deploy stores raw per-request rows (not pre-aggregated buckets) and prunes anything older than 100 days to bound disk growth. There's no separate long-term rollup, so a project's true lifetime history beyond that window isn't available — don't render <code>all</code> as literally "since this app was first deployed."</p>
+          <p>Raw analytics history is pruned past 100 days to bound storage — there's no separate long-term rollup, so a project's true lifetime history beyond that window isn't available. Don't render <code>all</code> as literally "since this app was first deployed."</p>
         </div>
         <div class="gap-item">
           <div class="gap-title"><span class="dot"></span>Analytics resource-usage history only exists from when this feature shipped</div>
@@ -1404,7 +1398,7 @@
     </section>
 
     <footer class="doc-footer">
-      Embarko API Reference · generated from <code>src/routes/*.ts</code> in <code>hostnsoft-api</code> · last refreshed 2026-09-08 · flag anything stale to backend rather than guessing.
+      Embarko API Reference · last refreshed 2026-09-08 · flag anything stale to backend rather than guessing.
     </footer>
   </main>
 </div>
