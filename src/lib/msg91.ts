@@ -20,9 +20,11 @@ for (const name of ["PROXY_ADMIN_TOKEN", "PROXY_BASE_URL", "PROXY_USER_REFERENCE
 }
 const PROXY_ADMIN_TOKEN: string = process.env.PROXY_ADMIN_TOKEN!;
 const PROXY_BASE_URL: string = process.env.PROXY_BASE_URL!.replace(/\/+$/, "");
+// Doubles as the `feature_id` createCUsers expects (docs/create-user-and-company.md).
 const PROXY_USER_REFERENCE_ID: string = process.env.PROXY_USER_REFERENCE_ID!;
 
 const ADMIN_BASE = `${PROXY_BASE_URL}/${PROXY_USER_REFERENCE_ID}`;
+const ADMIN_BASE_WITHOUT_REF_ID = `${PROXY_BASE_URL}`;
 const USER_BASE = `${PROXY_BASE_URL}/c`;
 
 const IDENTITY_TTL_MS = 5 * 60 * 1000;
@@ -41,6 +43,9 @@ export class ProxyError extends Error {
     super(message);
   }
 }
+
+// See proxyRequest's 402 branch.
+export const PROXY_USER_LIMIT_CODE = "PROXY_USER_LIMIT";
 
 function authError(message: string) {
   return new ProxyError(message, 401, "Authentication failed", "PROXY_TOKEN_REJECTED");
@@ -105,6 +110,16 @@ async function proxyRequest<T>(
     }
     throw authError("proxy rejected the proxy_auth_token");
   }
+  if (response.status === 402) {
+    // createCUsers: the workspace's user quota is exhausted. Every new-email
+    // request fails this way until the plan changes, so it gets its own code.
+    throw new ProxyError(
+      `proxy returned 402 (user limit) on ${path}`,
+      502,
+      "Identity service user limit reached",
+      PROXY_USER_LIMIT_CODE
+    );
+  }
   if (!response.ok) {
     throw rejectedError(`proxy returned ${response.status} on ${path}`);
   }
@@ -121,6 +136,14 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function adminRequest<T>(path: string, init: RequestInit = {}) {
   return proxyRequest<T>(`${ADMIN_BASE}${path}`, "admin", {
+    ...init,
+    headers: { ...JSON_HEADERS, authkey: PROXY_ADMIN_TOKEN, ...(init.headers ?? {}) },
+  });
+}
+
+
+function adminRequestWithoutRefId<T>(path: string, init: RequestInit = {}) {
+  return proxyRequest<T>(`${ADMIN_BASE_WITHOUT_REF_ID}${path}`, "admin", {
     ...init,
     headers: { ...JSON_HEADERS, authkey: PROXY_ADMIN_TOKEN, ...(init.headers ?? {}) },
   });
@@ -350,4 +373,111 @@ export async function createCompany(
 // only to drop the cached identity so a revoked PAT isn't served from cache.
 export async function evictProxyAuthToken(proxyAuthToken: string): Promise<void> {
   await identityByPat.delete(proxyAuthToken);
+}
+
+// ---------------------------------------------------------------------------
+// Admin-key calls for the public email-based deploy-token endpoint — see
+// src/services/publicTokenRequest.ts. No PAT exists in that flow, so all of
+// these act on the workspace with the server's admin key.
+
+// GET /{ref}/getDetails?user_email= — lookup by email. Same envelope as
+// getUserById. `null` when unknown (or on an unexpected shape, logged).
+export async function getUserByEmail(email: string): Promise<ProxyUser | null> {
+  const params = new URLSearchParams({ user_email: email });
+  const body = await adminRequest<RawUser>(`/getDetails?${params}`);
+  if (body.hasError) {
+    throw rejectedError(`proxy refused getDetails by email: ${body.message ?? "unknown"}`);
+  }
+  // Fail closed: only a row whose email matches counts, whatever the shape.
+  const rows = body.data?.data;
+  if (!Array.isArray(rows)) return null;
+  return rows.map(toUser).find((u) => u?.email?.toLowerCase() === email.toLowerCase()) ?? null;
+}
+
+export interface CreatedUserAndCompany {
+  user: ProxyUser;
+  company: ProxyCompany;
+  isNewUser: boolean;
+  isNewCompany: boolean;
+}
+
+// POST /{ref}/createCUsers?feature_id= (docs/create-user-and-company.md).
+// Proxy matches an existing user by Cuser.email and an existing company by
+// EXACT company.name — so callers must pass a name that is unique per user
+// (the email itself), or a stranger could be linked into someone else's
+// company. Returns is_new_* so the caller can assert its expectation.
+export async function createUserWithCompany(input: {
+  email: string;
+  name?: string;
+  companyName: string;
+}): Promise<CreatedUserAndCompany> {
+  const params = new URLSearchParams({ feature_id: PROXY_USER_REFERENCE_ID });
+  // Single-object envelope (like createCompany), so the list-shaped generic
+  // on adminRequest doesn't apply — cast once at the boundary.
+  const body = (await adminRequestWithoutRefId(`/createCUsers?${params}`, {
+    method: "POST",
+    body: JSON.stringify({
+      Cuser: { email: input.email, ...(input.name ? { name: input.companyName } : {}) },
+      company: { name: input.companyName },
+      role_id: 2
+    }),
+  })) as ProxySingleEnvelope<{
+    user?: RawUser;
+    company?: RawCompany;
+    is_new_user?: boolean;
+    is_new_company?: boolean;
+  }>;
+
+  if (body.hasError) {
+    throw rejectedError(`proxy refused createCUsers: ${body.message ?? "unknown"}`);
+  }
+  const user = toUser(body.data?.user);
+  const company = toCompany(body.data?.company);
+  if (!user || !company) {
+    throw rejectedError("proxy did not return both user and company from createCUsers");
+  }
+  await Promise.all([userCache.delete(user.id), companyCache.delete(company.id)]);
+  return {
+    user,
+    company,
+    isNewUser: body.data?.is_new_user === true,
+    isNewCompany: body.data?.is_new_company === true,
+  };
+}
+
+// Every company in the workspace, paged. Stopgap building block for
+// listCompaniesForUser until proxy exposes a per-user admin listing.
+async function listAllCompanies(): Promise<ProxyCompany[]> {
+  const pageSize = 100;
+  const out: ProxyCompany[] = [];
+  for (let pageNo = 1; pageNo <= 1000; pageNo++) {
+    const params = new URLSearchParams({ pageNo: String(pageNo), itemsPerPage: String(pageSize) });
+    const body = await adminRequest<RawCompany>(`/getCompanies?${params}`);
+    if (body.hasError) {
+      throw rejectedError(`proxy refused getCompanies: ${body.message ?? "unknown"}`);
+    }
+    const page = (body.data?.data ?? []).map(toCompany).filter((c): c is ProxyCompany => c !== null);
+    out.push(...page);
+    const total = Number(body.data?.totalEntityCount);
+    const done = page.length < pageSize || (Number.isFinite(total) && out.length >= total);
+    if (done) break;
+  }
+  return out;
+}
+
+// Companies `userId` belongs to, using only the admin key: list every
+// company, then ask membership for each (bounded concurrency). O(companies)
+// per call — acceptable for now; swap the body for the per-user endpoint
+// when proxy ships it. A membership check failing propagates (no partial
+// answers) so the caller never mails a subset believing it is the whole.
+export async function listCompaniesForUser(userId: string): Promise<ProxyCompany[]> {
+  const all = await listAllCompanies();
+  const member: ProxyCompany[] = [];
+  const concurrency = 5;
+  for (let i = 0; i < all.length; i += concurrency) {
+    const batch = all.slice(i, i + concurrency);
+    const flags = await Promise.all(batch.map((c) => isCompanyMember(userId, c.id)));
+    member.push(...batch.filter((_, idx) => flags[idx]));
+  }
+  return member;
 }

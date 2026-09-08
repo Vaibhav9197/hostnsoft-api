@@ -27,6 +27,9 @@ model DeployToken {
   updatedAt   DateTime  @updatedAt
   revokedAt   DateTime?
   lastUsedAt  DateTime?
+  // Where the token was minted: "dashboard" (a person in the UI) or
+  // "agent" (the public email endpoint). String, not enum — SQLite.
+  source      String    @default("dashboard")
 
   @@index([companyId])
 }

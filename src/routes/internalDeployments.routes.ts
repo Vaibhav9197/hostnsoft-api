@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { findLiveDeployToken } from "../services/deployTokenAuth";
-import { claimProjectForCompany } from "../services/projectClaim";
 import { createDeploymentWithNextVersion } from "../services/deploymentVersioning";
+import { findLiveDeployToken, unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
+import { claimProjectForCompany } from "../services/projectClaim";
 
 export const internalDeploymentsRouter = Router();
 
@@ -53,7 +53,7 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
 
   const tokenRecord = await findLiveDeployToken(body.token);
   if (!tokenRecord) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json(unauthorizedDeployTokenBody());
   }
 
   const claim = await claimProjectForCompany(tokenRecord.companyId, body.projectSlug);

@@ -4,6 +4,11 @@ import crypto from "crypto";
 // fast SHA-256 hash (rather than bcrypt) is the right tradeoff since these
 // get checked on every hostnsoft-deploy call and can't be brute-forced from
 // the hash alone.
+// Who minted a token. Stored on DeployToken.source; string column (SQLite
+// has no enums) so this union is the single source of truth.
+export const DEPLOY_TOKEN_SOURCES = ["dashboard", "agent"] as const;
+export type DeployTokenSource = (typeof DEPLOY_TOKEN_SOURCES)[number];
+
 export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }

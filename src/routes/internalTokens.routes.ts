@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
+import { buildInvalidTokenGuidance, buildTokenSteps } from "../lib/orphanMessage";
 
 export const internalTokensRouter = Router();
 
@@ -24,7 +25,11 @@ internalTokensRouter.post("/internal/deploy-tokens/validate", async (req, res) =
 
   const record = await findLiveDeployToken(token);
   if (!record) {
-    return res.json({ valid: false });
+    // `guidance` is for hostnsoft-deploy to relay in its own 401 body so an
+    // agent learns how to obtain a token (dashboard or public email
+    // endpoint) — see src/lib/orphanMessage.ts. Wiring it into that repo's
+    // response is a follow-up there.
+    return res.json({ valid: false, guidance: buildInvalidTokenGuidance(), howToGetToken: buildTokenSteps() });
   }
 
   res.json({ valid: true, companyId: record.companyId, tokenId: record.id, label: record.label });

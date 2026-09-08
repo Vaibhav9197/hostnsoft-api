@@ -4,7 +4,10 @@ import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { logAudit } from "../services/audit";
-import { generateDeployToken } from "../lib/deployTokens";
+import { generateDeployToken, type DeployTokenSource } from "../lib/deployTokens";
+
+// Everything in this router is a logged-in person acting in the UI.
+const SOURCE: DeployTokenSource = "dashboard";
 
 export const tokensRouter = Router();
 tokensRouter.use(requireProxyToken);
@@ -28,7 +31,7 @@ tokensRouter.post(
     const { token, prefix, tokenHash } = generateDeployToken();
 
     const record = await prisma.deployToken.create({
-      data: { companyId: req.company!.id, createdBy: req.userId!, label, tokenHash, tokenPrefix: prefix },
+      data: { companyId: req.company!.id, createdBy: req.userId!, label, tokenHash, tokenPrefix: prefix, source: SOURCE },
     });
 
     await logAudit({
@@ -61,6 +64,7 @@ tokensRouter.get(
         createdAt: true,
         revokedAt: true,
         lastUsedAt: true,
+        source: true,
       },
     });
     res.json(tokens);
@@ -115,7 +119,8 @@ tokensRouter.post(
         },
       }),
       prisma.deployToken.create({
-        data: { companyId: req.company!.id, createdBy: req.userId!, label: old.label, tokenHash, tokenPrefix: prefix },
+        // A rotation is a UI action even when the old token came from an agent.
+        data: { companyId: req.company!.id, createdBy: req.userId!, label: old.label, tokenHash, tokenPrefix: prefix, source: SOURCE },
       }),
     ]);
 

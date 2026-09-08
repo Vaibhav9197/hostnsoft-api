@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { hashToken } from "../lib/deployTokens";
 import type { DeployToken } from "@prisma/client";
+import { buildInvalidTokenGuidance, buildTokenSteps } from "../lib/orphanMessage";
 
 // Shared by every internal (server-to-server, hostnsoft-deploy-facing)
 // endpoint that needs to confirm a deploy token is real and live — see
@@ -23,4 +24,11 @@ export async function findLiveDeployToken(token: string): Promise<DeployToken | 
     where: { id: record!.id },
     data: { lastUsedAt: new Date() },
   });
+}
+
+// The 401 body every internal endpoint returns for a present-but-invalid
+// deploy token. `guidance` tells an agent how to obtain a working one —
+// hostnsoft-deploy relays it in its own 401 (follow-up in that repo).
+export function unauthorizedDeployTokenBody() {
+  return { error: "Unauthorized", guidance: buildInvalidTokenGuidance(), howToGetToken: buildTokenSteps() };
 }
