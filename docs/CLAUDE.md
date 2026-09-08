@@ -71,11 +71,17 @@ the `:companyId` in the URL, checked against proxy membership per request.
 **The agent never logs in as the person, and never holds a session on
 their behalf.** It only ever needs one thing: a company-scoped **Deploy
 Token** (already specced below). Getting that token the first time is a
-one-time manual bootstrap through the dashboard, not something the agent
-orchestrates. This replaces an earlier, more complex design (device-code
-polling + agent-submitted email + magic links) that was solving a problem
-that doesn't actually exist here — the agent doesn't need to *act as* the
-person at all.
+one-time bootstrap: either through the dashboard, or — **added 2026-09-08** —
+by the agent calling the open, rate-limited
+`POST /public/deploy-tokens/request {email}`, which emails the person a
+**new deploy token** for every company they belong to (creating the proxy user
+and a company named after the email first when none exist). The response is
+always the same 202 so the endpoint never confirms which emails have
+accounts. See `docs/plans/2026-09-08-001-feat-email-deploy-token-api-plan.md`
+and `src/services/publicTokenRequest.ts`. This replaces an earlier, more
+complex design (device-code polling + agent-submitted email + magic links)
+that was solving a problem that doesn't actually exist here — the agent
+doesn't need to *act as* the person at all.
 
 ### 1. Dashboard login (person, via browser) — MSG91 proxy-auth
 
@@ -236,9 +242,16 @@ it has an endpoint here (removed 2026-09-04).
 | Endpoint | Permission | Notes |
 |---|---|---|
 | `POST /companies/:companyId/tokens` `{label}` | any member | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. Response: `{id, label, token, created_at}`. |
-| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, created_at, last_used_at, revoked_at}` — **never** the secret itself, not even truncated/partial, past this one-time creation response. |
+| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, created_at, last_used_at, revoked_at, source}` (`source` is `dashboard` or `agent`, i.e. minted in the UI vs. by the public email endpoint) — **never** the secret itself, not even truncated/partial, past this one-time creation response. |
 | `DELETE /companies/:companyId/tokens/:tokenId` | any member | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
 | `POST /companies/:companyId/tokens/:tokenId/rotate` | any member | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
+
+**Public email endpoint tokens (added 2026-09-08).** There is no special
+"default" token. Each `POST /public/deploy-tokens/request` mints a brand-new
+ordinary token per company (label `email <timestamp> UTC`, see
+`src/services/emailToken.ts`) and never rotates or revokes anything, so a
+service still deploying with an older token keeps working. Members revoke
+unwanted ones from the dashboard like any other token.
 
 Conceptual rules carried over from the earlier design (still apply):
 - Multiple tokens per company, each independently labeled, so revocation
