@@ -95,3 +95,21 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
       : {}),
   });
 });
+
+const lookupSchema = z.object({ slug: z.string().min(1).regex(/^[a-z0-9-]+$/) });
+
+// Read-only — unlike POST .../claim above, this never creates or adopts
+// a project. Backs hostnsoft-deploy's GET /apps/:appName/status and
+// .../logs, which need to know "does this app exist, is it orphan, and
+// which company owns it" to authorize the request, WITHOUT the side
+// effect claiming would have (silently adopting an orphan into the
+// caller's company, or creating a phantom project row for a
+// never-deployed/mistyped app name, just from checking its status).
+internalProjectsRouter.post("/internal/projects/lookup", async (req, res) => {
+  const { slug } = lookupSchema.parse(req.body);
+  const project = await prisma.project.findUnique({ where: { slug } });
+  if (!project) {
+    return res.json({ exists: false });
+  }
+  res.json({ exists: true, companyId: project.companyId, isOrphan: project.isOrphan });
+});
