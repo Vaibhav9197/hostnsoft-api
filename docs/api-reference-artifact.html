@@ -432,6 +432,7 @@
       <a class="navlink" href="#ep-tokens-list">List</a>
       <a class="navlink" href="#ep-tokens-revoke">Revoke</a>
       <a class="navlink" href="#ep-tokens-rotate">Rotate</a>
+      <a class="navlink" href="#ep-public-token-request">Request via email <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
     </div>
 
     <div class="navgroup">
@@ -459,6 +460,12 @@
       <div class="navgroup-label">Analytics</div>
       <a class="navlink" href="#ep-analytics-project">Per-project</a>
       <a class="navlink" href="#ep-analytics-account">Account-wide</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Feature requests <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
+      <a class="navlink" href="#ep-feature-requests-dashboard">Submit (dashboard)</a>
+      <a class="navlink" href="#ep-feature-requests-public">Submit (public)</a>
     </div>
 
     <div class="navgroup">
@@ -1040,6 +1047,26 @@
           </div>
         </div>
       </article>
+
+      <article class="endpoint" id="ep-public-token-request">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/public/deploy-tokens/request</span>
+          <span class="role-chip open">no auth required</span>
+        </div>
+        <p class="endpoint-desc">An agent's own bootstrap path to a deploy token, no dashboard visit required — emails a <strong>brand-new</strong> token for every company the address belongs to (creating a proxy user and a company named after the email first, if neither exists yet). Always responds <code>202</code> with the same message, whether or not the email actually has an account — this endpoint never confirms which emails exist. Rate-limited (per-email, per-IP, global rolling windows).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"you@example.com"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">202 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"If this email address is valid, a deploy token for each of your companies has been sent to it. ..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">Doesn't rotate or revoke anything — every call mints a fresh token under a new label (<code>email &lt;timestamp&gt; UTC</code>); older tokens keep working. Revoke unwanted ones from the dashboard like any other token.</div>
+      </article>
     </section>
 
     <hr class="rule" />
@@ -1347,6 +1374,56 @@
         </div>
         <div class="endpoint-note info"><code>status</code> is the most recent deployment's own status, not a separate computed field — <code>"no_deployments"</code> covers a project row that exists (e.g. claimed) but hasn't completed a deploy attempt yet. <code>memoryMb</code> is the project's current allocation, not necessarily the most recent deployment's — it only ever moves upward automatically (see Projects), so it reflects the real applied ceiling even after a since-reverted deploy.</div>
       </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="feature-requests">
+      <div class="resource-head"><h2>Feature requests &amp; feedback <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">One <code>type</code> (<code>"feature"</code> or <code>"feedback"</code>) and a <code>message</code> — submitted through three independent paths that all feed the same store. Submission only; there's no read/list endpoint in this pass.</p>
+
+      <article class="endpoint" id="ep-feature-requests-dashboard">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/feature-requests</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">Logged-in dashboard user. <strong>Never send an <code>email</code> field</strong> — it's read straight off the already-verified proxy identity, same as <a href="#ep-me">GET /auth/me</a>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"feature"</span><span class="tok-punc">,</span> <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-feature-requests-public">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/public/feature-requests</span>
+          <span class="role-chip open">no auth required</span>
+        </div>
+        <p class="endpoint-desc">Anonymous visitor, no session at all — <code>email</code> is required in the body here since there's no proxy identity to read it from. Same open+rate-limited shape as <a href="#ep-public-token-request">POST /public/deploy-tokens/request</a>, its own independent rolling-window counters (per-email, per-IP, global) — a burst of feedback never affects deploy-token requests or vice versa.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"feedback"</span><span class="tok-punc">,</span> <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"you@example.com"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">429 (rate limited)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"Too many feature requests for this email address: limit is 10 per 60 minutes. Try again in 2143 seconds."</span><span class="tok-punc">,</span> <span class="tok-key">"code"</span><span class="tok-punc">:</span> <span class="tok-str">"RATE_LIMITED"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <div class="callout">
+        <div class="eyebrow">Third path lives on the deploy endpoint, not here</div>
+        <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request or piece of feedback about the app it's deploying — <code>POST /apps/:appName/feature-requests</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Same auth shape as that endpoint's <code>.../status</code> and <code>.../logs</code>: <code>Authorization: Bearer &lt;deploy token&gt;</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token directly (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards it here internally.</p>
+      </div>
     </section>
 
     <hr class="rule" />
