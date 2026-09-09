@@ -61,6 +61,7 @@ curl "https://ship.hostnsoft.com/apps/my-app/status" -H "Authorization: Bearer $
 
 Wait for `deploy.status` to be `"success"` (or `"failed"` — check `.../logs`
 if so). Once successful, your app is live at `https://my-app.app.hostnsoft.com`.
+Full details on both endpoints: [Checking deploy status & logs](#status-and-logs).
 
 ## [Your app's requirements](#your-apps-requirements)
 
@@ -143,6 +144,66 @@ curl -X POST "https://ship.hostnsoft.com/apps" \
 
 Redeploying picks up your **current** env vars and memory allocation (see
 below) automatically — you don't need to resend them.
+
+## [Checking deploy status & logs](#status-and-logs)
+
+These live on the **deploy API** (`ship.hostnsoft.com`), not the platform
+API — same host as `POST /apps`, so an agent or script that only ever talks
+to the deploy API (never the dashboard) can still check on its own deploy
+without a separate set of credentials.
+
+**Auth model, same for both**: while a project is still an unclaimed
+("orphan") anonymous deploy, no token is needed at all — anyone can check
+it. Once claimed, a token for the owning company is required; a missing or
+wrong one gets a `404` (never confirming the app exists to a caller who
+doesn't own it), not a `401`.
+
+### [Status](#status)
+
+```bash
+curl "https://ship.hostnsoft.com/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
+```
+
+```json
+{
+  "appName": "my-app",
+  "deploy": {
+    "status": "success",
+    "appVersion": "v1.2.0",
+    "startedAt": "2026-09-09T10:00:00.000Z",
+    "finishedAt": "2026-09-09T10:01:32.000Z",
+    "errorDetail": null
+  },
+  "health": { "...": "live Nomad allocation status" }
+}
+```
+
+`deploy.status` is `"in_progress"`, `"success"`, or `"failed"` — this is
+what `POST /apps`'s `statusUrl` is for: poll this after the `202`
+until it's no longer `"in_progress"`. `deploy` reflects the **most recent
+deploy attempt this process has seen** (in-memory, not a durable history —
+use `GET /companies/:companyId/projects/:projectId/deployments` on the
+platform API for durable history). `health` reflects the app's actual
+current Nomad allocation state, independent of the last deploy's outcome.
+
+### [Logs](#logs)
+
+```bash
+curl "https://ship.hostnsoft.com/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.hostnsoft.com/apps/my-app/logs?stream=stderr" -H "Authorization: Bearer $DEPLOY_TOKEN"
+```
+
+```json
+{ "available": true, "allocId": "b457e652-...", "stream": "stdout", "logs": "...tail of recent output..." }
+```
+
+`?stream=stderr` is optional (default `stdout`). This is a **snapshot of
+the tail of the most recent allocation's logs at the moment you call it**
+— not a live stream — poll it if you need to watch output as it happens.
+Always the most recent allocation regardless of whether it's currently
+healthy, since the most common reason to check logs is a build/runtime
+failure. If nothing's deployed yet: `{"available": false, "reason": "No
+allocation has ever been created for this app yet"}`.
 
 ## [Environment variables](#environment-variables)
 
@@ -325,7 +386,7 @@ curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "
 # Full deployment history
 curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
 
-# Recent logs (a snapshot, not a live stream — poll if you need to watch it happen)
+# Recent logs — see Checking deploy status & logs (#status-and-logs) for the full endpoint details
 curl "https://ship.hostnsoft.com/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
 
 # Traffic + resource usage over time
