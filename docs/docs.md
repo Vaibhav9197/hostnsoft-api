@@ -6,21 +6,21 @@ Embarko deploys apps from source to a live URL, and gives each company a
 dashboard/API to manage what's running: environment variables, memory
 allocation, deployment history, rollback, and custom domains.
 
-Two APIs work together:
-- **Deploy API** (`https://ship.hostnsoft.com`) — the low-level "take this
-  tarball, build it, run it" service. This is the only thing an agent or CI
-  pipeline needs to call to ship code.
-- **Platform API** (`https://api.hostnsoft.com` — replace with your actual
-  API host) — companies, projects, deploy tokens, env vars, memory, rollback,
-  custom domains. This is what a dashboard (or a script managing an app after
-  it's deployed) calls.
+Two APIs, same host — `ship.embarko.ai` — split by path:
+- **Deploy API** (`https://ship.embarko.ai/apps...`) — the low-level "take
+  this tarball, build it, run it" service, plus its own status/logs. This is
+  the only thing an agent or CI pipeline needs to ship and check on code.
+- **Platform API** (`https://ship.embarko.ai/api/...`) — companies, projects,
+  deploy tokens, env vars, memory, rollback, custom domains. This is what a
+  dashboard (or a script managing an app after it's deployed) calls; the
+  `/api` prefix is stripped before it reaches the platform API itself.
 
 A few things that apply everywhere below:
 - **Projects auto-create on first deploy.** No dashboard step is required
   beforehand — the first deploy of a new app name creates its project under
   your token's company automatically.
 - **App names are unique platform-wide**, not just within your company — an
-  app name is also its live subdomain (`<app-name>.app.hostnsoft.com`). If
+  app name is also its live subdomain (`<app-name>.app.embarko.ai`). If
   another company already used the exact name you're deploying,
   `code: "app_name_taken"`.
 - **Every non-2xx response has a `code` field.** Branch on `code`, not on the
@@ -39,7 +39,7 @@ For every error/edge case and known platform constraint, see
 ```bash
 tar -czf /tmp/my-app.tar.gz --exclude=node_modules --exclude=.git -C /path/to/app .
 
-curl -X POST "https://ship.hostnsoft.com/apps" \
+curl -X POST "https://ship.embarko.ai/apps" \
   -H "Authorization: Bearer $DEPLOY_TOKEN" \
   -H "X-App-Name: my-app" \
   -H "X-App-Version: $(git rev-parse --short HEAD)" \
@@ -50,17 +50,17 @@ You'll get a `202` immediately — the build/deploy itself continues in the
 background:
 
 ```json
-{ "accepted": true, "statusUrl": "https://ship.hostnsoft.com/apps/my-app/status", "logsUrl": "https://ship.hostnsoft.com/apps/my-app/logs" }
+{ "accepted": true, "statusUrl": "https://ship.embarko.ai/apps/my-app/status", "logsUrl": "https://ship.embarko.ai/apps/my-app/logs" }
 ```
 
 **3. Poll until it's live:**
 
 ```bash
-curl "https://ship.hostnsoft.com/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
 ```
 
 Wait for `deploy.status` to be `"success"` (or `"failed"` — check `.../logs`
-if so). Once successful, your app is live at `https://my-app.app.hostnsoft.com`.
+if so). Once successful, your app is live at `https://my-app.app.embarko.ai`.
 Full details on both endpoints: [Checking deploy status & logs](#status-and-logs).
 
 ## [Your app's requirements](#your-apps-requirements)
@@ -89,8 +89,8 @@ Every deploy is authenticated one of two ways:
 Authorization: Bearer <token>
 ```
 
-1. Go to `https://hostnsoft.com/login` and sign in (or create an account).
-2. Open your company's **Deploy tokens** page (`https://hostnsoft.com/app/tokens`).
+1. Go to `https://embarko.ai/login` and sign in (or create an account).
+2. Open your company's **Deploy tokens** page (`https://embarko.ai/app/tokens`).
 3. Enter a label (e.g. `"CI pipeline"`) and click **Create token** — shown
    once, prefixed `hns_`, and cannot be retrieved again.
 4. `export DEPLOY_TOKEN="..."` (or store it in a local credentials file,
@@ -135,7 +135,7 @@ just upload new source under the same `X-App-Name`):
 Body: multipart, field `source`, a `.tar.gz` of your app's source.
 
 ```bash
-curl -X POST "https://ship.hostnsoft.com/apps" \
+curl -X POST "https://ship.embarko.ai/apps" \
   -H "Authorization: Bearer $DEPLOY_TOKEN" \
   -H "X-App-Name: my-app" \
   -H "X-App-Version: v1.2.0" \
@@ -147,7 +147,7 @@ below) automatically — you don't need to resend them.
 
 ## [Checking deploy status & logs](#status-and-logs)
 
-These live on the **deploy API** (`ship.hostnsoft.com`), not the platform
+These live on the **deploy API** (`ship.embarko.ai`), not the platform
 API — same host as `POST /apps`, so an agent or script that only ever talks
 to the deploy API (never the dashboard) can still check on its own deploy
 without a separate set of credentials.
@@ -161,7 +161,7 @@ doesn't own it), not a `401`.
 ### [Status](#status)
 
 ```bash
-curl "https://ship.hostnsoft.com/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
 ```
 
 ```json
@@ -189,8 +189,8 @@ current Nomad allocation state, independent of the last deploy's outcome.
 ### [Logs](#logs)
 
 ```bash
-curl "https://ship.hostnsoft.com/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
-curl "https://ship.hostnsoft.com/apps/my-app/logs?stream=stderr" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/logs?stream=stderr" -H "Authorization: Bearer $DEPLOY_TOKEN"
 ```
 
 ```json
@@ -214,12 +214,12 @@ already-running container on their own (see
 
 ```bash
 # 1. Set them
-curl -X PUT "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" \
+curl -X PUT "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" \
   -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"vars":[{"key":"STRIPE_KEY","value":"sk_live_..."},{"key":"FEATURE_FLAG_X","value":"true"}]}'
 
 # 2. Redeploy (new source or the same source again) so the app actually sees them
-curl -X POST "https://ship.hostnsoft.com/apps" \
+curl -X POST "https://ship.embarko.ai/apps" \
   -H "Authorization: Bearer $DEPLOY_TOKEN" -H "X-App-Name: my-app" -F "source=@/tmp/my-app.tar.gz"
 ```
 
@@ -227,10 +227,10 @@ Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`. Other operations:
 
 ```bash
 # List current env vars
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" -H "proxy_auth_token: $TOKEN"
 
 # Remove one
-curl -X DELETE "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars/STRIPE_KEY" -H "proxy_auth_token: $TOKEN"
+curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars/STRIPE_KEY" -H "proxy_auth_token: $TOKEN"
 ```
 
 ## [Memory allocation](#memory-allocation)
@@ -239,7 +239,7 @@ Default is 256MB (512MB if an embedded DB like PGlite is auto-detected).
 Override it, then apply it the same way as an env var change:
 
 ```bash
-curl -X PATCH "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/memory" \
+curl -X PATCH "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/memory" \
   -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"memoryMb": 1024}'
 ```
@@ -258,10 +258,10 @@ at the time of that old deploy):
 
 ```bash
 # 1. Find the deployment id you want
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
 
 # 2. Roll back to it
-curl -X POST "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments/$DEPLOYMENT_ID/rollback" \
+curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments/$DEPLOYMENT_ID/rollback" \
   -H "proxy_auth_token: $TOKEN"
 ```
 
@@ -274,12 +274,12 @@ target image was cleaned from the host.
 ## [Custom domain mapping](#custom-domains)
 
 Point your own domain at a deployed app, instead of (or alongside) its
-default `<app-name>.app.hostnsoft.com` URL.
+default `<app-name>.app.embarko.ai` URL.
 
 **1. Register intent** — get back the exact DNS record to create:
 
 ```bash
-curl -X POST "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" \
+curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" \
   -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"domain": "app.yourdomain.com"}'
 ```
@@ -288,7 +288,7 @@ curl -X POST "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_
 {
   "domain": "app.yourdomain.com",
   "status": "pending_dns",
-  "instructions": { "type": "CNAME", "name": "app.yourdomain.com", "value": "edge.hostnsoft.com" }
+  "instructions": { "type": "CNAME", "name": "app.yourdomain.com", "value": "edge.embarko.ai" }
 }
 ```
 
@@ -307,7 +307,7 @@ Cloudflare, make sure it's set to **DNS only** (grey cloud), not **Proxied**
 **3. Verify** — safe to retry repeatedly until DNS propagates:
 
 ```bash
-curl -X POST "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com/verify" \
+curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com/verify" \
   -H "proxy_auth_token: $TOKEN"
 ```
 
@@ -315,14 +315,14 @@ Routing only activates once this confirms DNS actually resolves correctly —
 nothing is activated at step 1. Once active, `status` becomes `"active"` in:
 
 ```bash
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" -H "proxy_auth_token: $TOKEN"
 ```
 
 **Removing a domain** tears down just that domain's routing/certificate —
-your app's default `*.app.hostnsoft.com` URL is never affected:
+your app's default `*.app.embarko.ai` URL is never affected:
 
 ```bash
-curl -X DELETE "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com" \
+curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com" \
   -H "proxy_auth_token: $TOKEN"
 ```
 
@@ -330,17 +330,18 @@ Custom domains require port 80 reachable for certificate issuance — see
 [`troubleshoot.md`](troubleshoot.md#custom-domain-activation-requires-port-80-reachable)
 if verification never completes despite correct DNS.
 
-## [Feature requests & feedback](#feature-requests)
+## [Customer queries: feature requests & feedback](#feature-requests)
 
-Three ways to send a feature request or piece of feedback to the platform,
-depending on who's sending it. `type` is always `"feature"` or `"feedback"`;
-`message` is required (max 5000 characters). All three return
+**Renamed 2026-09-09** from `.../feature-requests` to `.../customer-query` on
+all three paths below — same data/behavior either way. Three ways to send
+one, depending on who's sending it. `type` is `"feature"`, `"feedback"`, or
+`"other"`; `message` is required (max 5000 characters). All three return
 `{"id": "..."}` on success (`201`).
 
 ### [From the dashboard (logged in)](#feature-requests-dashboard)
 
 ```bash
-curl -X POST "https://api.hostnsoft.com/companies/$COMPANY_ID/feature-requests" \
+curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/customer-query" \
   -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"type": "feature", "message": "Would love a staging environment per project"}'
 ```
@@ -355,7 +356,7 @@ same auth as `.../status`/`.../logs` (a token is required once the app is
 claimed, optional while it's still an anonymous orphan):
 
 ```bash
-curl -X POST "https://ship.hostnsoft.com/apps/my-app/feature-requests" \
+curl -X POST "https://ship.embarko.ai/apps/my-app/customer-query" \
   -H "Authorization: Bearer $DEPLOY_TOKEN" \
   -H "X-Agent-Name: Claude Code" \
   -H "Content-Type: application/json" \
@@ -363,12 +364,14 @@ curl -X POST "https://ship.hostnsoft.com/apps/my-app/feature-requests" \
 ```
 
 `X-Agent-Name` is required — free text, so any current or future agent can
-identify itself without needing a platform change to be recognized.
+identify itself without needing a platform change to be recognized. Note
+this one is on the **deploy API** host (`ship.embarko.ai`, no `/api` prefix)
+— it's the same host `POST /apps` uses, unlike the other two paths here.
 
 ### [Anonymous, no account at all](#feature-requests-public)
 
 ```bash
-curl -X POST "https://api.hostnsoft.com/public/feature-requests" \
+curl -X POST "https://ship.embarko.ai/api/public/customer-query" \
   -H "Content-Type: application/json" \
   -d '{"type": "feedback", "message": "...", "email": "you@example.com"}'
 ```
@@ -381,16 +384,16 @@ since it requires no authentication at all.
 
 ```bash
 # Current health + latest deployment + memory allocation
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
 
 # Full deployment history
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
 
 # Recent logs — see Checking deploy status & logs (#status-and-logs) for the full endpoint details
-curl "https://ship.hostnsoft.com/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
 
 # Traffic + resource usage over time
-curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/analytics?range=7d" -H "proxy_auth_token: $TOKEN"
+curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/analytics?range=7d" -H "proxy_auth_token: $TOKEN"
 ```
 
 `range` accepts `24h`, `7d`, `30d`, `90d`, or `all`.
@@ -398,7 +401,7 @@ curl "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID/analy
 ## [Deleting a project](#deleting-a-project)
 
 ```bash
-curl -X DELETE "https://api.hostnsoft.com/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
+curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
 ```
 
 Tears down the running app (Nomad job, Traefik routing, Docker image) as

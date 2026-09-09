@@ -250,8 +250,10 @@ than assuming stronger guarantees than what's listed here.
   not stream. Poll it if you need to watch logs as they happen.
 
 ### Public, unauthenticated endpoints are rate-limited
-- `POST /public/deploy-tokens/request` and `POST /public/feature-requests` are capped per-email, per-IP,
-  and globally (defaults: 5/hour per email, 10/hour per IP for token requests; 10/email, 20/IP, 500/global
-  per hour for feature requests). Both always return the same generic success response regardless of
+- `POST /public/deploy-tokens/request` and `POST /public/customer-query` (see "Customer queries" above —
+  renamed 2026-09-09 from `/public/feature-requests`) are capped per-email, per-IP, and globally
+  (defaults: 5/hour per email,
+  10/hour per IP for token requests; 10/email, 20/IP, 500/global per hour for customer queries). Both
+  always return the same generic success response regardless of
   whether the rate limit was hit or the email exists — retries beyond the limit are silently no-ops, not
   errors, so don't loop on a missing email without waiting.
