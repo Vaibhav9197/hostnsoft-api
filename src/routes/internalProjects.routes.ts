@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { findLiveDeployToken } from "../services/deployTokenAuth";
+import { findLiveDeployToken, unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
-import { buildOrphanMessage, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
+import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 
 export const internalProjectsRouter = Router();
 
@@ -39,7 +39,7 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     : { unauthorized: false as const, claim: await claimOrphanProject(slug) };
 
   if (result.unauthorized) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json(unauthorizedDeployTokenBody());
   }
 
   if (result.claim.conflict) {
@@ -91,6 +91,7 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
           orphanExpiresAt: project.orphanExpiresAt.toISOString(),
           orphanMessage: buildOrphanMessage(project.orphanExpiresAt),
           orphanLoginUrl: ORPHAN_LOGIN_URL,
+          howToGetToken: buildTokenSteps(),
         }
       : {}),
   });

@@ -16,9 +16,12 @@ scaffold.
 - Deploy tokens are **company-wide** (confirmed decision — see
   `docs/CLAUDE.md` "Open questions" #1).
 - Auth is **dashboard-only, via MSG91 proxy-auth** (`proxy.msg91.com`) —
-  the agent never logs in as a person; it only ever uses a
-  manually-bootstrapped company Deploy Token. See `docs/CLAUDE.md` "Auth flow",
+  the agent never logs in as a person; it only ever uses a company Deploy
+  Token, bootstrapped either from the dashboard or via the open
+  `POST /public/deploy-tokens/request {email}` endpoint, which emails a
+  freshly created token per company (existing tokens are never touched). See `docs/CLAUDE.md` "Auth flow",
   `docs/msg91-proxy-auth.md`, and `docs/auth.md` for the full reasoning.
+
 
 ## Setup
 

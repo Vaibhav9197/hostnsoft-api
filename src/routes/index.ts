@@ -3,6 +3,7 @@ import { healthRouter } from "./health.routes";
 import { internalTokensRouter } from "./internalTokens.routes";
 import { internalProjectsRouter } from "./internalProjects.routes";
 import { internalDeploymentsRouter } from "./internalDeployments.routes";
+import { publicTokensRouter } from "./publicTokens.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
 import { tokensRouter } from "./tokens.routes";
@@ -16,7 +17,7 @@ import { adminRouter } from "./admin.routes";
 
 export const router = Router();
 
-// healthRouter and every internal*Router carry no auth requirement and
+// healthRouter, every internal*Router and publicTokensRouter carry no auth requirement and
 // MUST stay mounted before any router below — each of those calls
 // `.use(requireProxyToken)` unconditionally on itself, and since every router
 // here mounts at "/", that blanket check runs (and can short-circuit the
@@ -26,6 +27,7 @@ router.use(healthRouter);
 router.use(internalTokensRouter);
 router.use(internalProjectsRouter);
 router.use(internalDeploymentsRouter);
+router.use(publicTokensRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);
