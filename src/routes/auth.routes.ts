@@ -14,6 +14,7 @@ import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { logger } from "../lib/logger";
 import { ensureBillingForCompany } from "../services/billingCustomer";
 import type { Msg91Identity } from "../lib/msg91";
+import { isSuperAdmin } from "../lib/superAdmin";
 
 export const authRouter = Router();
 
@@ -51,10 +52,17 @@ authRouter.post("/auth/msg91/exchange", async (req, res) => {
 
   // A rejected token propagates as ProxyError -> 401 via errorHandler.
   const identity = await verifyProxyAuthToken(token);
-  const billing = await ensureBillingForCurrentCompany(identity);
+  const [billing, isAdmin] = await Promise.all([
+    ensureBillingForCurrentCompany(identity),
+    isSuperAdmin(identity.id),
+  ]);
 
   res.json({
-    user: { id: identity.id, email: identity.email, name: identity.name },
+    // isSuperAdmin: see docs/admin-panel.md — sent so the dashboard can
+    // show its admin-only routes conditionally. The /admin/* API routes
+    // are the actual enforcement point regardless of what the client does
+    // with this.
+    user: { id: identity.id, email: identity.email, name: identity.name, isSuperAdmin: isAdmin },
     // Proxy's current company; the full list is GET /companies.
     currentCompany: identity.company,
     // "pending" -> dashboard calls POST /companies/:id/billing/customer.
@@ -124,8 +132,14 @@ authRouter.post("/auth/logout", requireProxyToken, async (req, res) => {
 // full record straight from their PAT — no id lookup needed, unlike the
 // admin-key getUserById. Its result wins on overlap since it's fuller.
 authRouter.get("/auth/me", requireProxyToken, async (req, res) => {
-  const details = await getMyDetails(req.proxyAuthToken!);
-  res.json({ ...req.proxyIdentity, ...details });
+  const [details, isAdmin] = await Promise.all([
+    getMyDetails(req.proxyAuthToken!),
+    isSuperAdmin(req.userId!),
+  ]);
+  // isSuperAdmin last so it always wins over anything of the same name
+  // proxy might incidentally return in req.proxyIdentity/details — this
+  // is OUR flag, not proxy's, see docs/admin-panel.md.
+  res.json({ ...req.proxyIdentity, ...details, isSuperAdmin: isAdmin });
 });
 
 const switchCompanySchema = z.object({ companyId: z.string().min(1) });
