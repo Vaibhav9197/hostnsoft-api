@@ -260,6 +260,7 @@
   }
   .role-chip.open { color: var(--post); border-color: transparent; background: var(--post-bg); }
   .role-chip.new { color: var(--accent-soft-ink); border-color: transparent; background: var(--accent-soft); }
+  .role-chip.admin { color: var(--warn); border-color: transparent; background: var(--warn-bg); }
 
   .endpoint-desc { font-size: 14px; color: var(--ink-dim); margin-top: 8px; max-width: 62ch; }
   .endpoint-note {
@@ -458,6 +459,11 @@
       <div class="navgroup-label">Analytics</div>
       <a class="navlink" href="#ep-analytics-project">Per-project</a>
       <a class="navlink" href="#ep-analytics-account">Account-wide</a>
+    </div>
+
+    <div class="navgroup">
+      <div class="navgroup-label">Admin <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
+      <a class="navlink" href="#ep-admin-apps">List all apps</a>
     </div>
 
     <div class="navgroup">
@@ -1299,6 +1305,47 @@
           </div>
         </div>
         <div class="endpoint-note">Fetches every project's analytics in parallel — fine at this platform's per-company project counts. <strong>Never 503s as a whole</strong>: a single project's analytics being unavailable shows up as <code>{"available": false}</code> in its own <code>projects[]</code> entry (contributing 0 to every total) rather than failing the entire rollup — one bad app shouldn't hide every other project's numbers.</div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="admin">
+      <div class="resource-head"><h2>Admin <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">Platform-internal only — every app across every company, for whoever operates the platform itself. Not part of the dashboard's normal surface and not scoped to any one company.</p>
+
+      <div class="callout">
+        <div class="eyebrow">Access is DB-only, on purpose</div>
+        <p>There's no endpoint to grant or check admin access, and never will be — it's an internal flag set directly at the database level by whoever administers the system. A non-admin calling any route below gets a plain <strong><code>404</code></strong>, identical to hitting a URL that doesn't exist at all — never <code>401</code>/<code>403</code>, which would confirm the route exists and that they're specifically being blocked from it. Don't build UI that renders this 404 any differently from a generic not-found page.</p>
+      </div>
+
+      <article class="endpoint" id="ep-admin-apps">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/admin/apps</span>
+          <span class="role-chip admin">proxy_auth_token · admin only</span>
+        </div>
+        <p class="endpoint-desc">Every app on the platform, across every company (including unclaimed orphan deploys), newest first. One flat list — no per-company grouping, no pagination.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">[</span>
+  <span class="tok-punc">{</span>
+    <span class="tok-key">"appSlug"</span><span class="tok-punc">:</span> <span class="tok-str">"my-app"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span> <span class="tok-comment">// "Unclaimed (orphan)" for an orphan deploy</span>
+    <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-08-01T12:00:00.000Z"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span>
+    <span class="tok-key">"deploymentCount"</span><span class="tok-punc">:</span> <span class="tok-num">14</span><span class="tok-punc">,</span>
+    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
+  <span class="tok-punc">}</span>
+<span class="tok-punc">]</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">404 (not an admin)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"Not found"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info"><code>status</code> is the most recent deployment's own status, not a separate computed field — <code>"no_deployments"</code> covers a project row that exists (e.g. claimed) but hasn't completed a deploy attempt yet. <code>memoryMb</code> is the project's current allocation, not necessarily the most recent deployment's — it only ever moves upward automatically (see Projects), so it reflects the real applied ceiling even after a since-reverted deploy.</div>
       </article>
     </section>
 
