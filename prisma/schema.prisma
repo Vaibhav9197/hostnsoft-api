@@ -143,6 +143,25 @@ model SuperAdmin {
   grantedAt DateTime @default(now())
 }
 
+// One submission from either path — see docs/request-feature-req.md.
+// source tells the three paths apart ("dashboard" | "public" | "agent");
+// which of the other optional fields are populated depends on it (see
+// that doc's field table) rather than every field always being present.
+model FeatureRequest {
+  id          String   @id @default(cuid())
+  type        String // "feature" | "feedback"
+  message     String
+  source      String // "dashboard" | "public" | "agent"
+  email       String?
+  userId      String? // proxy userId — dashboard path only
+  companyId   String? // dashboard (URL) or agent (deploy token) — null for public/orphan
+  projectSlug String? // agent path only — which app the agent was deploying
+  agentName   String? // agent path only — free text, e.g. "claude-code", "chatgpt"
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
 // Every mutating action: who, what, when. Ids are proxy ids kept as plain
 // strings so audit rows outlive anything proxy deletes.
 model AuditLog {

@@ -1,14 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import rateLimit, { type Options as RateLimitOptions } from "express-rate-limit";
-import { RedisStore } from "rate-limit-redis";
-import { redis, connectRedis } from "../lib/redis";
 import {
   PUBLIC_TOKEN_RATE_GLOBAL,
   PUBLIC_TOKEN_RATE_PER_EMAIL,
   PUBLIC_TOKEN_RATE_PER_IP,
   PUBLIC_TOKEN_RATE_WINDOW_MS,
 } from "../lib/publicTokenConfig";
+import { createLimiter, type LimitScope } from "../lib/rateLimit";
 import { handlePublicTokenRequest, normaliseEmail } from "../services/publicTokenRequest";
 
 export const publicTokensRouter = Router();
@@ -25,52 +23,8 @@ export const PUBLIC_TOKEN_ACCEPTED_MESSAGE =
 // Redis so limits are shared across processes. A rejected request still
 // counts. A Redis failure surfaces as a 500 from the store rather than
 // letting requests through — this guards an unauthenticated endpoint.
-type LimitScope = "email" | "ip" | "global";
-
-const SCOPE_DESCRIPTION: Record<LimitScope, string> = {
-  email: "this email address",
-  ip: "your IP address",
-  global: "the service as a whole",
-};
-
 function limiter(scope: LimitScope, limit: number, keyGenerator: (req: Request) => string) {
-  const options: Partial<RateLimitOptions> = {
-    windowMs: PUBLIC_TOKEN_RATE_WINDOW_MS,
-    limit,
-    keyGenerator,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    store: new RedisStore({
-      prefix: `hostnsoft-api:ratelimit:public-token:${scope}:`,
-      // The store loads its Lua scripts in its constructor, i.e. at module
-      // import — before server.ts has connected Redis. Wait for the
-      // connection instead of sending into a closed client.
-      sendCommand: async (...args: string[]) => {
-        await connectRedis();
-        return redis.sendCommand(args);
-      },
-    }),
-    handler: (req: Request, res: Response) => {
-      const resetTime = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit?.resetTime;
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil(((resetTime?.getTime() ?? Date.now()) - Date.now()) / 1000)
-      );
-      const windowMinutes = Math.round(PUBLIC_TOKEN_RATE_WINDOW_MS / 60_000);
-      res.set("Retry-After", String(retryAfterSeconds));
-      res.status(429).json({
-        error:
-          `Too many token requests for ${SCOPE_DESCRIPTION[scope]}: ` +
-          `limit is ${limit} per ${windowMinutes} minutes. Try again in ${retryAfterSeconds} seconds.`,
-        code: "RATE_LIMITED",
-        scope,
-        limit,
-        windowMinutes,
-        retryAfterSeconds,
-      });
-    },
-  };
-  return rateLimit(options);
+  return createLimiter("public-token", "token requests", scope, limit, PUBLIC_TOKEN_RATE_WINDOW_MS, keyGenerator);
 }
 
 // Validate first so the per-email limiter keys on a real, normalised address
