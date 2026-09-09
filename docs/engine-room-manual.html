@@ -1,0 +1,378 @@
+<title>Deploy Error Log</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-page:#FAF8F2;
+    --ink:#12161C;
+    --panel:#FFFFFF;
+    --panel-2:#F1EEE2;
+    --line:#E3DECE;
+    --text-hi:#1C1913;
+    --text-lo:#6E6857;
+    --beacon:#B8720A;
+    --beacon-bright:#FFB020;
+    --ok:#1F8F52;
+    --ok-bright:#5FD892;
+    --danger:#B23A2E;
+    --danger-bright:#FF6B52;
+    --term-text:#ECEAE2;
+    --tag-ok-bg:#122A1C;      --tag-ok-fg:#7FE0A8;
+    --tag-warn-bg:#3A2A10;    --tag-warn-fg:var(--beacon-bright);
+    --tag-crit-bg:#3A1712;    --tag-crit-fg:#FF8F76;
+    --sans:'Space Grotesk', sans-serif;
+    --mono:'JetBrains Mono', monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family:var(--sans);
+    background:var(--bg-page);
+    color:var(--text-hi);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;}
+  code{font-family:var(--mono);}
+
+  .wrap{max-width:880px; margin:0 auto; padding:0 32px;}
+  @media (max-width:640px){ .wrap{padding:0 20px;} }
+
+  /* ---------- MINI NAV ---------- */
+  nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(250,248,242,0.88);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-inner{ display:flex; align-items:center; justify-content:space-between; padding:16px 0; }
+  .logo{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:17px; letter-spacing:-0.01em; }
+  .logo-mark{ width:9px; height:9px; border-radius:50%; background:var(--beacon); box-shadow:0 0 0 3px rgba(255,176,32,0.18); }
+  .nav-page{ font-family:var(--mono); font-size:13px; color:var(--text-lo); }
+
+  /* ---------- HERO ---------- */
+  .hero{ padding:64px 0 56px; }
+  .eyebrow{
+    font-family:var(--mono); font-size:13px; color:var(--beacon);
+    margin-bottom:18px; display:flex; align-items:center; gap:8px; letter-spacing:0.02em;
+  }
+  .eyebrow::before{content:'●'; font-size:8px;}
+  h1{
+    font-size:44px; font-weight:600; letter-spacing:-0.02em; line-height:1.1;
+    color:var(--text-hi); margin:0 0 20px;
+  }
+  h1 .dim{color:var(--text-lo);}
+  @media (max-width:640px){ h1{font-size:32px;} }
+  p.lede{ font-size:17px; color:var(--text-lo); max-width:56ch; margin:0; line-height:1.6; }
+  p.lede code{ background:var(--panel-2); padding:1px 6px; border-radius:5px; font-size:14.5px; color:var(--text-hi); }
+
+  .legend{ display:flex; gap:10px; flex-wrap:wrap; margin-top:28px; }
+  .legend-item{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-lo); font-family:var(--mono); }
+  .pill{
+    display:inline-flex; align-items:center; font-family:var(--mono); font-weight:500;
+    font-size:11px; padding:3px 9px; border-radius:999px; letter-spacing:0.02em;
+  }
+  .pill-low{ background:var(--tag-ok-bg); color:var(--tag-ok-fg); }
+  .pill-mid{ background:var(--tag-warn-bg); color:var(--tag-warn-fg); }
+  .pill-high{ background:var(--tag-crit-bg); color:var(--tag-crit-fg); }
+
+  /* ---------- SECTION / FLOW GROUP ---------- */
+  .group{ padding:52px 0 0; }
+  .group-head{
+    display:grid; grid-template-columns:52px 1fr; gap:24px; align-items:baseline;
+    padding-bottom:24px; border-bottom:1px solid var(--line); margin-bottom:26px;
+  }
+  .group-num{ font-family:var(--mono); font-size:14px; color:var(--beacon); }
+  .group-head h2{ font-size:23px; font-weight:600; letter-spacing:-0.01em; margin:0 0 6px; }
+  .group-head p{ font-size:14.5px; color:var(--text-lo); margin:0; max-width:56ch; }
+
+  .cards{ display:flex; flex-direction:column; gap:18px; }
+
+  /* ---------- INCIDENT PANEL (mirrors the product's own deploy-log panel) ---------- */
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+  }
+  .panel-bar{
+    display:flex; align-items:center; gap:6px;
+    padding:11px 16px; border-bottom:1px solid var(--line); background:var(--panel-2);
+  }
+  .bar-dot{ width:8px; height:8px; border-radius:50%; background:#3A4353; }
+  .panel-title{ margin-left:8px; font-family:var(--mono); font-size:12px; color:var(--text-lo); }
+  .panel-sev{ margin-left:auto; }
+  .panel-body{ padding:20px; }
+
+  .incident-name{ font-size:18.5px; font-weight:600; letter-spacing:-0.005em; margin-bottom:14px; }
+
+  .readout-label{ font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-lo); margin-bottom:8px; }
+  .readout{
+    font-family:var(--mono); font-size:13px; line-height:1.75; white-space:pre-wrap; word-break:break-word;
+    background:var(--ink); border:1px solid var(--line); border-radius:9px; padding:14px 16px; color:var(--term-text);
+    overflow-x:auto;
+  }
+  .readout .arrow{ color:#5B6270; }
+
+  .fact-grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:16px; }
+  @media (max-width:560px){ .fact-grid{ grid-template-columns:1fr; } }
+  .fact-label{ font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--beacon); margin-bottom:6px; }
+  .fact-body{ font-size:14px; color:var(--text-lo); line-height:1.6; }
+  .fact-body code{ background:var(--panel-2); padding:1px 6px; border-radius:5px; font-size:12.5px; color:var(--text-hi); }
+  .fact-body.fix{ color:var(--text-hi); }
+
+  hr.rule{ border:none; border-top:1px solid var(--line); margin:64px 0 0; }
+  footer{ border-top:1px solid var(--line); padding:28px 0 60px; margin-top:36px; }
+  .footer-inner{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; font-size:13px; color:var(--text-lo); }
+</style>
+
+<nav>
+  <div class="wrap nav-inner">
+    <div class="logo"><span class="logo-mark"></span> embarko</div>
+    <div class="nav-page">deploy-errors.log</div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">TROUBLESHOOTING</div>
+    <h1>When a deploy goes sideways,<br><span class="dim">here's what actually happened.</span></h1>
+    <p class="lede">
+      Every entry below is a <strong>real</strong> failure the deploy API has thrown — not a hypothetical.
+      Each one has the exact text you'll see, what's really going on, and how to fix it. Skim it as a human
+      in two minutes, or grep it as an agent in two milliseconds: the <code>readout</code> block in every
+      panel is copy-paste-exact.
+    </p>
+    <div class="legend">
+      <div class="legend-item"><span class="pill pill-low">low</span> fixed in seconds</div>
+      <div class="legend-item"><span class="pill pill-mid">medium</span> blocks progress</div>
+      <div class="legend-item"><span class="pill pill-high">high</span> your app is down</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="group" id="build">
+    <div class="group-head">
+      <div class="group-num">01</div>
+      <div><h2>Rejected before the build starts</h2><p>Caught on arrival — nothing gets built, nothing gets wasted.</p></div>
+    </div>
+    <div class="cards">
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">422-unsupported-storage.log</span><span class="panel-sev pill pill-low">low</span></div>
+        <div class="panel-body">
+          <div class="incident-name">The Sandbox Reflex</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">"error": "Unsupported storage pattern detected"
+"detail": "This app calls window.storage, an API specific to
+Claude Artifacts' sandbox. It does not exist outside that
+environment and will fail at runtime if deployed here as-is."</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The app still reaches for <code>window.storage</code> — an API that only exists inside Claude Artifacts' own sandbox. Caught by a source scan before a single second of build time is spent.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Swap it for real persistence: SQLite for simple key/value data, or <code>@electric-sql/pglite</code> for anything relational. Redeploy once it's in.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">401-unauthorized.log</span><span class="panel-sev pill pill-low">low</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Wrong Papers at the Dock</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">{ "error": "Unauthorized", "code": "unauthorized" }</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">An <code>Authorization</code> header was sent, but the token on it is dead, wrong, or mistyped. Sending <em>no</em> header at all is fine on purpose — that's an anonymous deploy. A <em>broken</em> one is never quietly waved through as anonymous.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Confirm the token hasn't been revoked or rotated. Meant to deploy anonymously? Drop the header entirely instead of sending a bad one.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">409-app-name-taken.log</span><span class="panel-sev pill pill-low">low</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Someone's Already Standing There</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">"error": "App name \"myapp\" is already in use by a different company"</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The app name is also your live subdomain, so it has to be unique across the <em>whole</em> platform, not just your own account.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Pick a different <code>X-App-Name</code>. If it's genuinely an old orphan deploy of yours, claim it with a real token before its 24h clock runs out.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="group" id="runtime">
+    <div class="group-head">
+      <div class="group-num">02</div>
+      <div><h2>Crashes after a successful build</h2><p>The build worked. The app didn't stay up.</p></div>
+    </div>
+    <div class="cards">
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">oom-137.log</span><span class="panel-sev pill pill-high">high</span></div>
+        <div class="panel-body">
+          <div class="incident-name">The Silent Memory Hog</div>
+          <div class="readout-label">Readout <span class="arrow">— from GET .../status &amp; .../logs</span></div>
+          <div class="readout">Terminated   Exit Code: 137, Exit Message: "OOM Killed"
+Total Restarts = 2</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The app is asking for more memory than it's been allocated (256MB by default). Frequent causes: an embedded database the platform didn't auto-detect, or a <em>development</em> server accidentally shipped as the production start command — those are hungrier than they look.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix"><code>PATCH .../memory {"memoryMb": 1024}</code>, then redeploy — or roll back to the current version to push the new ceiling live with no rebuild at all.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">crash-loop.log</span><span class="panel-sev pill pill-high">high</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Stuck in the Brig</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">Not Restarting   Exceeded allowed attempts 2 in interval 30m0s</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The app crashed, restarted, and crashed again — so the platform stopped trying rather than loop forever. This line is a <em>symptom</em>, never the disease: the real cause is always logged just above it (usually an OOM kill or an uncaught startup exception).</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Pull <code>GET .../logs</code>, find what actually happened before this line, fix that. A fresh deploy resets the attempt counter.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">pull-denied.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Ghost Cargo</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">pull access denied for &lt;image&gt;, repository does not exist
+or may require 'docker login'</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">This one's on us, not you — it means the scheduler went looking for the image on a public registry instead of using the one already built locally. Shouldn't happen through normal use of the deploy API.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Nothing to do on your end — report it with the app name and timestamp.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="group" id="access">
+    <div class="group-head">
+      <div class="group-num">03</div>
+      <div><h2>Who's allowed to ask</h2><p>Ownership, tokens, and domains.</p></div>
+    </div>
+    <div class="cards">
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">404-status-check.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Who Goes There</div>
+          <div class="readout-label">Readout <span class="arrow">— from GET .../status or .../logs</span></div>
+          <div class="readout">{ "error": "Not found" }</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">These URLs answer to the token from the company that actually owns the app — or to nobody at all, but <em>only</em> while the app is still an unclaimed orphan. The instant it's claimed, the same URL starts asking for papers. A 404 here never confirms the app even exists; that's on purpose.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Send <code>Authorization: Bearer &lt;your deploy token&gt;</code> for a claimed app. Still meant to be an orphan? Send no header at all.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">422-dns-pending.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Fog Off the Coast</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">"error": "DNS does not yet point at the platform — check the
+instructions below and retry once it propagates"</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The DNS record hasn't propagated yet, or wasn't set exactly as instructed. Nothing wrong on our end.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Double-check the CNAME/A record matches what <code>POST .../domains</code> returned exactly, wait for propagation, and call <code>.../verify</code> again — safe to retry as many times as you like.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">proxied-record.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">The Cloud in the Way</div>
+          <div class="readout-label">Readout <span class="arrow">— from the domain's status pill</span></div>
+          <div class="readout">"Not resolving yet"</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">The record in your DNS dashboard looks exactly right — and still doesn't resolve to it. Usual culprit: the record is set to "proxied" at your DNS provider (Cloudflare's orange cloud is the classic one). A proxied record doesn't actually point where it says — it points at the provider's own proxy IPs instead, so there's nothing for us to verify against.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Switch the record to DNS-only / unproxied (in Cloudflare: click the orange cloud so it turns grey), then hit <code>.../verify</code> again. No real propagation wait — it's a settings change, not a DNS change, so it should pass within a minute or two.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="group" id="async">
+    <div class="group-head">
+      <div class="group-num">04</div>
+      <div><h2>Not actually broken</h2><p>The two "failures" that aren't.</p></div>
+    </div>
+    <div class="cards">
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">202-accepted.log</span><span class="panel-sev pill pill-low">low</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Where Did My App Go</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">HTTP 202
+"accepted": true
+"message": "Deployment accepted and is building in the background..."</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">Not a failure — a fresh build can take a few minutes, so the deploy API hands back an acknowledgment immediately instead of making you hold the line for it. Treating <code>202</code> as "it's live" is the actual bug here.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Poll the <code>statusUrl</code> from the response until <code>deploy.status</code> reads <code>success</code> (or <code>failed</code>). Agents especially: <code>202</code> means "keep watching," never "done."</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">524-timeout.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">The Old Complaint</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">524: A timeout occurred   (the CDN's own error page)</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">Historically this fired because the deploy endpoint waited out the <em>entire</em> build before answering, and the proxy in front of it gave up first. That's fixed — the response now comes back long before any of that.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">If it recurs, check upload size/connection first — that's the slow part now, not the build. Still happening on a normal-sized upload? Report it.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="group" id="rollback">
+    <div class="group-head">
+      <div class="group-num">05</div>
+      <div><h2>Rollback</h2><p>Digging up an old version.</p></div>
+    </div>
+    <div class="cards">
+
+      <div class="panel">
+        <div class="panel-bar"><span class="bar-dot"></span><span class="bar-dot"></span><span class="bar-dot"></span><span class="panel-title">502-rollback-failed.log</span><span class="panel-sev pill pill-mid">medium</span></div>
+        <div class="panel-body">
+          <div class="incident-name">Digging Up an Old Wreck</div>
+          <div class="readout-label">Readout</div>
+          <div class="readout">"error": "Rollback failed: Image \"myapp:1699999999\" is no
+longer available on this host"</div>
+          <div class="fact-grid">
+            <div><div class="fact-label">Diagnosis</div><div class="fact-body">You asked to roll back to a version whose build has since been cleaned off the host — usually a very old one, or one from before the host was last rebuilt.</div></div>
+            <div><div class="fact-label">Fix</div><div class="fact-body fix">Roll back to a more recent version instead, or redeploy that old source fresh if you still have it.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="rule" />
+</main>
+
+<footer>
+  <div class="wrap footer-inner">
+    <div>embarko</div>
+    <div>Docs · Status · Support</div>
+  </div>
+</footer>
