@@ -1,5 +1,11 @@
 # Embarko Deploy Troubleshooting
 
+**Superseded by [`troubleshoot.md`](troubleshoot.md)**, which covers everything below plus the rest of
+the platform (env vars, memory, rollback, custom domains, orphan deploys, and known platform-level
+constraints like `DATA_DIR`). Kept here, frozen, only so existing links to this file don't break.
+
+---
+
 Real failures the deploy API has thrown, not hypotheticals. Each entry: `match` (exact substring to
 look for in a response body or `GET .../logs` output) → `cause` → `fix`.
 
