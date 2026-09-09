@@ -1,0 +1,5 @@
+-- CreateTable
+CREATE TABLE "SuperAdmin" (
+    "userId" TEXT NOT NULL PRIMARY KEY,
+    "grantedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

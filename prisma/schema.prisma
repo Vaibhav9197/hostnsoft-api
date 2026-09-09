@@ -129,6 +129,17 @@ model EnvVar {
   @@unique([projectId, key])
 }
 
+// Internal admin flag, gating /admin/* routes — see docs/admin-panel.md.
+// Deliberately its own table, not a column on a "users" table, since there
+// is no local user table at all (proxy owns identity — see header comment).
+// Never written or read via any API/UI: the only way a row here is created
+// is a direct DB write (see scripts/grant-super-admin.ts), by design — see
+// docs/admin-panel.md Part 3 for why this stays permanently DB-only.
+model SuperAdmin {
+  userId    String   @id
+  grantedAt DateTime @default(now())
+}
+
 // Every mutating action: who, what, when. Ids are proxy ids kept as plain
 // strings so audit rows outlive anything proxy deletes.
 model AuditLog {

@@ -12,6 +12,7 @@ import { envVarsRouter } from "./envVars.routes";
 import { domainsRouter } from "./domains.routes";
 import { billingRouter } from "./billing.routes";
 import { analyticsRouter } from "./analytics.routes";
+import { adminRouter } from "./admin.routes";
 
 export const router = Router();
 
@@ -35,3 +36,4 @@ router.use(envVarsRouter);
 router.use(domainsRouter);
 router.use(billingRouter);
 router.use(analyticsRouter);
+router.use(adminRouter);
