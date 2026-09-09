@@ -471,6 +471,7 @@
     <div class="navgroup">
       <div class="navgroup-label">Admin <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
       <a class="navlink" href="#ep-admin-apps">List all apps</a>
+      <a class="navlink" href="#ep-admin-feature-requests">List feature requests</a>
     </div>
 
     <div class="navgroup">
@@ -1373,6 +1374,54 @@
           </div>
         </div>
         <div class="endpoint-note info"><code>status</code> is the most recent deployment's own status, not a separate computed field — <code>"no_deployments"</code> covers a project row that exists (e.g. claimed) but hasn't completed a deploy attempt yet. <code>memoryMb</code> is the project's current allocation, not necessarily the most recent deployment's — it only ever moves upward automatically (see Projects), so it reflects the real applied ceiling even after a since-reverted deploy.</div>
+      </article>
+
+      <article class="endpoint" id="ep-admin-feature-requests">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/admin/feature-requests</span>
+          <span class="role-chip admin">proxy_auth_token · admin only</span>
+        </div>
+        <p class="endpoint-desc">Every submission across all three <a href="#feature-requests">feature-request paths</a> (dashboard/public/agent), paginated, filterable on every stored field. Same access model as <code>GET /admin/apps</code> above — 404, never 401/403, for a non-admin.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Query params (all optional)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-comment">page</span>=1              <span class="tok-comment">// default 1</span>
+<span class="tok-comment">limit</span>=25            <span class="tok-comment">// default 25, max 100</span>
+<span class="tok-comment">type</span>=feature        <span class="tok-comment">// "feature" | "feedback", exact</span>
+<span class="tok-comment">source</span>=agent        <span class="tok-comment">// "dashboard" | "public" | "agent", exact</span>
+<span class="tok-comment">companyId</span>=...       <span class="tok-comment">// exact</span>
+<span class="tok-comment">projectSlug</span>=...     <span class="tok-comment">// exact</span>
+<span class="tok-comment">agentName</span>=claude    <span class="tok-comment">// substring</span>
+<span class="tok-comment">email</span>=@acme.com     <span class="tok-comment">// substring</span>
+<span class="tok-comment">createdFrom</span>=2026-09-01T00:00:00.000Z  <span class="tok-comment">// inclusive</span>
+<span class="tok-comment">createdTo</span>=2026-09-30T23:59:59.000Z    <span class="tok-comment">// inclusive</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"items"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+    <span class="tok-punc">{</span>
+      <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span>
+      <span class="tok-key">"type"</span><span class="tok-punc">:</span> <span class="tok-str">"feature"</span><span class="tok-punc">,</span>
+      <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span>
+      <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"agent"</span><span class="tok-punc">,</span>
+      <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+      <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+      <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span>
+      <span class="tok-key">"projectSlug"</span><span class="tok-punc">:</span> <span class="tok-str">"my-app"</span><span class="tok-punc">,</span>
+      <span class="tok-key">"agentName"</span><span class="tok-punc">:</span> <span class="tok-str">"claude-code"</span><span class="tok-punc">,</span>
+      <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-09T10:00:00.000Z"</span>
+    <span class="tok-punc">}</span>
+  <span class="tok-punc">]</span><span class="tok-punc">,</span>
+  <span class="tok-key">"page"</span><span class="tok-punc">:</span> <span class="tok-num">1</span><span class="tok-punc">,</span>
+  <span class="tok-key">"limit"</span><span class="tok-punc">:</span> <span class="tok-num">25</span><span class="tok-punc">,</span>
+  <span class="tok-key">"total"</span><span class="tok-punc">:</span> <span class="tok-num">142</span><span class="tok-punc">,</span>
+  <span class="tok-key">"totalPages"</span><span class="tok-punc">:</span> <span class="tok-num">6</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">Every field the underlying row has is returned as-is — this is the raw store, not a shaped/redacted view, since it's admin-only. Newest first (<code>createdAt</code> descending). Which fields are populated depends on which path the row came from — see the field table in <code>docs/request-feature-req.md</code>.</div>
       </article>
     </section>
 
