@@ -62,6 +62,21 @@ deploy-call errors in framework-agnostic language for an agent.
   normal use of the deploy API.
 - fix: not user-fixable; report the app name and timestamp
 
+### WebAssembly apps fail with CompileError and a blank page (fixed platform-wide)
+- match: browser console shows `CompileError` from `WebAssembly.compile`/`instantiate`, or a CSP violation
+  naming `script-src`; page itself loads (200) but renders blank
+- cause: **historical** — static-build apps (Godot/Unity/Emscripten/Rust-wasm exports have no `package.json`,
+  so they're served by Railpack's own built-in static-file server) inherited that server's default
+  Content-Security-Policy, which didn't include `'wasm-unsafe-eval'` in `script-src`. This platform sets no
+  CSP of its own at the edge before this fix, so whatever the app's own container happened to set is what a
+  browser saw.
+- fix: **no longer needed for apps deployed/redeployed after this platform update** — every app's Traefik
+  router now applies a corrected default CSP (same as before, plus `'wasm-unsafe-eval'`) at the edge, which
+  takes precedence over anything the app's own container sets. Confirm with
+  `curl -sI https://<app>.app.embarko.ai/ | grep -i content-security-policy`; if it's still missing
+  `wasm-unsafe-eval`, the app hasn't been redeployed since this fix — trigger any redeploy (even a no-op
+  rollback to the current version) to regenerate its job spec.
+
 ## Access & ownership
 
 ### 404 on status/logs endpoint
@@ -71,19 +86,23 @@ deploy-call errors in framework-agnostic language for an agent.
 - fix: send `Authorization: Bearer <deploy token>` for a claimed app; omit the header entirely if it's
   still meant to be an orphan
 
-## Feature requests & feedback
+## Customer queries (feature requests / feedback / other)
+
+**Renamed 2026-09-09**: this was `.../feature-requests` on all three paths (dashboard, public, agent);
+now `.../customer-query`. Same data, same behavior, `type` now also accepts `"other"` alongside
+`"feature"`/`"feedback"`.
 
 ### 400 "X-Agent-Name header is required"
 - match: `"X-Agent-Name header is required"`
-- cause: submitting feedback via `POST <ship host>/apps/:appName/feature-requests` (the agent-facing path)
+- cause: submitting via `POST <ship host>/apps/:appName/customer-query` (the agent-facing path)
   without the `X-Agent-Name` header
 - fix: add `X-Agent-Name: <your agent's name>` — free text, any value identifying the calling agent works
 
-### 502 from the agent feedback endpoint
-- match: HTTP 502 from `POST .../apps/:appName/feature-requests`
+### 502 from the agent customer-query endpoint
+- match: HTTP 502 from `POST .../apps/:appName/customer-query`
 - cause: hostnsoft-deploy couldn't reach hostnsoft-api to forward the request, or hostnsoft-api rejected it
 - fix: transient — safe to retry. If it persists, the message/type may be invalid (`type` must be exactly
-  `"feature"` or `"feedback"`, `message` 1–5000 characters)
+  `"feature"`, `"feedback"`, or `"other"`; `message` 1–5000 characters)
 
 ## Custom domains
 

@@ -8,8 +8,8 @@ import {
   featureRequestTypeSchema,
 } from "../services/featureRequests";
 
-export const featureRequestsRouter = Router();
-featureRequestsRouter.use(requireProxyToken);
+export const customerQueryRouter = Router();
+customerQueryRouter.use(requireProxyToken);
 
 const dashboardSchema = z.object({
   type: featureRequestTypeSchema,
@@ -18,13 +18,16 @@ const dashboardSchema = z.object({
 
 // Path A (docs/request-feature-req.md) — logged-in dashboard user. Email
 // is never asked for: it comes straight off the already-verified proxy
-// identity, same as GET /auth/me. See publicFeatureRequests.routes.ts
-// for path B (anonymous) — kept as a separate, unauthenticated router
-// rather than mixed into this one, same one-router-one-auth-model
-// convention as everywhere else (see the mount-order note in
-// routes/index.ts).
-featureRequestsRouter.post(
-  "/companies/:companyId/feature-requests",
+// identity, same as GET /auth/me. See publicCustomerQuery.routes.ts for
+// path B (anonymous) — kept as a separate, unauthenticated router rather
+// than mixed into this one, same one-router-one-auth-model convention as
+// everywhere else (see the mount-order note in routes/index.ts).
+//
+// Renamed from /feature-requests to /customer-query (2026-09-09) — same
+// underlying FeatureRequest table/type ("feature" | "feedback" | "other"),
+// this is just the external route name.
+customerQueryRouter.post(
+  "/companies/:companyId/customer-query",
   loadCompanyContext,
   async (req, res) => {
     const body = dashboardSchema.parse(req.body);

@@ -1,5 +1,18 @@
 # Requirement: Feature Requests & Feedback (dashboard + AI agent)
 
+**Updated 2026-09-09**: all three endpoints below were renamed from
+`.../feature-requests` to `.../customer-query` (same underlying
+`FeatureRequest` table, same behavior — external route name only). A
+third `type`, `"other"`, was added alongside `"feature"`/`"feedback"`
+(§1). A super-admin listing endpoint now exists —
+`GET /admin/customer-query`, paginated and filterable on every field, see
+`docs/admin-panel.md` — superseding §"Explicitly out of scope"'s original
+"no read/list endpoint" note below. Separately, `isSuperAdmin` is now
+included in user data sent to the dashboard (`GET /auth/me`,
+`POST /auth/msg91/exchange`) so admin-only UI can be shown conditionally
+— unrelated to this feature's own data, noted here only because it
+shipped in the same pass.
+
 ## Purpose
 
 Give customers — and the AI agents they deploy through — a lightweight way
@@ -29,15 +42,16 @@ internal `hostnsoft-api` endpoint to persist it — the same shape as
 
 ## Functional requirements
 
-### 1. `type`: feature request vs. feedback
+### 1. `type`: feature request vs. feedback vs. other
 
-Every submission is one of `"feature"` or `"feedback"` — a required field on
-every path, not inferred. No third type (bug reports, support requests) —
-out of scope for this pass.
+Every submission is one of `"feature"`, `"feedback"`, or `"other"` — a
+required field on every path, not inferred. `"other"` added 2026-09-09 for
+anything that doesn't cleanly fit the first two (a question, a support-ish
+query) without forcing a miscategorization.
 
 ### 2. Path A — Embarko UI, logged in
 
-`POST /companies/:companyId/feature-requests`, same auth as every other
+`POST /companies/:companyId/customer-query`, same auth as every other
 dashboard route (`proxy_auth_token` header, `loadCompanyContext`). Body is
 just `{type, message}` — **email is never asked for**, it's read off the
 already-verified proxy identity (`req.proxyIdentity.email`), exactly like
@@ -46,7 +60,7 @@ recorded too, since this path always has both.
 
 ### 3. Path B — Embarko UI, not logged in
 
-`POST /public/feature-requests` — open, unauthenticated, same shape as the
+`POST /public/customer-query` — open, unauthenticated, same shape as the
 existing `POST /public/deploy-tokens/request` (mounted before every
 `requireProxyToken` router, rate-limited the same way: per-email, per-IP,
 and global rolling windows via the existing Redis-backed limiter). Body is
@@ -56,7 +70,7 @@ have an account yet.
 
 ### 4. Path C — AI agent, during/around a deploy
 
-`POST /apps/:appName/feature-requests` on `hostnsoft-deploy` — **same auth
+`POST /apps/:appName/customer-query` on `hostnsoft-deploy` — **same auth
 shape as `GET /apps/:appName/status`**: `Authorization: Bearer <deploy
 token>` is optional; present, it must belong to the company that owns
 `appName` (else `404`, never confirming the app exists to a foreign token);
@@ -70,8 +84,8 @@ text (not a fixed enum: `claude-code`, `claude-chat`, `chatgpt`, `cursor`,
 whatever comes next — a new agent must never need a code change here to be
 recorded correctly). `hostnsoft-deploy` resolves `appName` to
 `companyId`/`isOrphan` (already does, via `project-lookup.js`, for the
-status/logs auth check) and forwards everything to `hostnsoft-api`'s new
-`POST /internal/feature-requests` — no `requireProxyToken`, same trust model
+status/logs auth check) and forwards everything to `hostnsoft-api`'s
+`POST /internal/customer-query` — no `requireProxyToken`, same trust model
 as every other `/internal/*` route (network-level trust between the two
 services, not a re-authenticated call).
 
@@ -110,10 +124,9 @@ separate rate limit for them in this pass.
 
 ## Explicitly out of scope for this pass
 
-- **No read/list endpoint.** This requirement is submission-only. Whoever
-  triages these reads the table directly (or a future admin-panel addition
-  — see `docs/admin-panel.md` for the precedent) rather than this getting a
-  new API surface now.
+- ~~**No read/list endpoint.**~~ **Added 2026-09-09**:
+  `GET /admin/customer-query`, super-admin only, paginated and filterable
+  on every field — see `docs/admin-panel.md`.
 - **No status/response workflow** (acknowledged, planned, shipped, etc.) —
   just a durable record of what was asked for for now.
 - **No attachments.** Text only.

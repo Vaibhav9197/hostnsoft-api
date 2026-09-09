@@ -69,13 +69,13 @@ const featureRequestQuerySchema = z.object({
   createdTo: z.coerce.date().optional(),
 });
 
-// GET /admin/feature-requests — every submission across every path
+// GET /admin/customer-query — every submission across every path
 // (dashboard/public/agent), paginated, filterable on every stored field.
 // See docs/request-feature-req.md for the three submission paths and
 // docs/admin-panel.md for the access model this reuses. Real data
 // throughout — reads the same FeatureRequest table every submission
 // route writes to, nothing mocked.
-adminRouter.get("/admin/feature-requests", async (req, res) => {
+adminRouter.get("/admin/customer-query", async (req, res) => {
   const query = featureRequestQuerySchema.parse(req.query);
 
   const where: Prisma.FeatureRequestWhereInput = {

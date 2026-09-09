@@ -3,9 +3,9 @@ import { healthRouter } from "./health.routes";
 import { internalTokensRouter } from "./internalTokens.routes";
 import { internalProjectsRouter } from "./internalProjects.routes";
 import { internalDeploymentsRouter } from "./internalDeployments.routes";
-import { internalFeatureRequestsRouter } from "./internalFeatureRequests.routes";
+import { internalCustomerQueryRouter } from "./internalCustomerQuery.routes";
 import { publicTokensRouter } from "./publicTokens.routes";
-import { publicFeatureRequestsRouter } from "./publicFeatureRequests.routes";
+import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
 import { tokensRouter } from "./tokens.routes";
@@ -16,7 +16,7 @@ import { domainsRouter } from "./domains.routes";
 import { billingRouter } from "./billing.routes";
 import { analyticsRouter } from "./analytics.routes";
 import { adminRouter } from "./admin.routes";
-import { featureRequestsRouter } from "./featureRequests.routes";
+import { customerQueryRouter } from "./customerQuery.routes";
 
 export const router = Router();
 
@@ -30,9 +30,9 @@ router.use(healthRouter);
 router.use(internalTokensRouter);
 router.use(internalProjectsRouter);
 router.use(internalDeploymentsRouter);
-router.use(internalFeatureRequestsRouter);
+router.use(internalCustomerQueryRouter);
 router.use(publicTokensRouter);
-router.use(publicFeatureRequestsRouter);
+router.use(publicCustomerQueryRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);
@@ -44,4 +44,4 @@ router.use(domainsRouter);
 router.use(billingRouter);
 router.use(analyticsRouter);
 router.use(adminRouter);
-router.use(featureRequestsRouter);
+router.use(customerQueryRouter);

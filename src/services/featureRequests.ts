@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 // Shared by all three submission paths — see docs/request-feature-req.md.
 // Kept as one function so the actual persistence (and its shape) can't
 // drift between the dashboard, public, and agent routes.
-export const featureRequestTypeSchema = z.enum(["feature", "feedback"]);
+export const featureRequestTypeSchema = z.enum(["feature", "feedback", "other"]);
 export const featureRequestMessageSchema = z.string().trim().min(1).max(5000);
 
 export interface CreateFeatureRequestInput {

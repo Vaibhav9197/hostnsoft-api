@@ -13,7 +13,7 @@ import {
   featureRequestTypeSchema,
 } from "../services/featureRequests";
 
-export const publicFeatureRequestsRouter = Router();
+export const publicCustomerQueryRouter = Router();
 
 // Path B (docs/request-feature-req.md) — anonymous visitor, no session at
 // all. Same open+rate-limited shape as POST /public/deploy-tokens/request
@@ -21,6 +21,9 @@ export const publicFeatureRequestsRouter = Router();
 // lib/featureRequestConfig.ts) — a burst of feedback shouldn't threaten
 // someone's ability to request a deploy token, or vice versa. Mounted
 // before every requireProxyToken router — see routes/index.ts.
+//
+// Renamed from /feature-requests to /customer-query (2026-09-09) — see
+// customerQuery.routes.ts.
 const publicSchema = z.object({
   type: featureRequestTypeSchema,
   message: featureRequestMessageSchema,
@@ -47,8 +50,8 @@ function emailOrIp(req: Request): string {
   return typeof email === "string" ? email.trim().toLowerCase() : (req.ip ?? "unknown");
 }
 
-publicFeatureRequestsRouter.post(
-  "/public/feature-requests",
+publicCustomerQueryRouter.post(
+  "/public/customer-query",
   limiter("email", FEATURE_REQUEST_RATE_PER_EMAIL, emailOrIp),
   limiter("ip", FEATURE_REQUEST_RATE_PER_IP, (req) => req.ip ?? "unknown"),
   limiter("global", FEATURE_REQUEST_RATE_GLOBAL, () => "all"),

@@ -463,7 +463,7 @@
     </div>
 
     <div class="navgroup">
-      <div class="navgroup-label">Feature requests <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
+      <div class="navgroup-label">Customer queries <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
       <a class="navlink" href="#ep-feature-requests-dashboard">Submit (dashboard)</a>
       <a class="navlink" href="#ep-feature-requests-public">Submit (public)</a>
     </div>
@@ -471,7 +471,7 @@
     <div class="navgroup">
       <div class="navgroup-label">Admin <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
       <a class="navlink" href="#ep-admin-apps">List all apps</a>
-      <a class="navlink" href="#ep-admin-feature-requests">List feature requests</a>
+      <a class="navlink" href="#ep-admin-feature-requests">List customer queries</a>
     </div>
 
     <div class="navgroup">
@@ -612,13 +612,14 @@
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"user"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"rita@acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Rita Sharma"</span> <span class="tok-punc">}</span><span class="tok-punc">,</span>
+  <span class="tok-key">"user"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"rita@acme.dev"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Rita Sharma"</span><span class="tok-punc">,</span> <span class="tok-key">"isSuperAdmin"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span> <span class="tok-punc">}</span><span class="tok-punc">,</span>
   <span class="tok-key">"currentCompany"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span><span class="tok-punc">,</span> <span class="tok-comment">// or null</span>
   <span class="tok-key">"billing"</span><span class="tok-punc">:</span> <span class="tok-str">"ready"</span> <span class="tok-comment">// or "pending" -&gt; call POST .../billing/customer</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
         <div class="endpoint-note">The frontend keeps using the <em>same</em> <code>proxy_auth_token</code> it POSTed here as its session credential going forward. This endpoint doesn't mint a separate access token.</div>
+        <div class="endpoint-note info"><code>user.isSuperAdmin</code> is <strong>this API's own flag</strong>, not MSG91's — never granted or changeable via any API (DB-only, see <a href="#admin">Admin</a>) — sent so the dashboard can show its admin-only nav/routes conditionally. The <code>/admin/*</code> routes are the actual enforcement point regardless of what a client does with this.</div>
       </article>
 
       <article class="endpoint" id="ep-msg91-callback">
@@ -674,7 +675,8 @@
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"usr_9f2..."</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">"rita@acme.dev"</span><span class="tok-punc">,</span>
   <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Rita Sharma"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"company"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span> <span class="tok-comment">// proxy's "current" company, or null</span>
+  <span class="tok-key">"company"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Robotics"</span> <span class="tok-punc">}</span><span class="tok-punc">,</span> <span class="tok-comment">// proxy's "current" company, or null</span>
+  <span class="tok-key">"isSuperAdmin"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span> <span class="tok-comment">// this API's own flag, see the exchange endpoint's note above</span>
   <span class="tok-comment">// ...plus any other fields MSG91 sends on this identity</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
@@ -1379,16 +1381,16 @@
       <article class="endpoint" id="ep-admin-feature-requests">
         <div class="endpoint-head">
           <span class="method get">GET</span>
-          <span class="path">/admin/feature-requests</span>
+          <span class="path">/admin/customer-query</span>
           <span class="role-chip admin">proxy_auth_token · admin only</span>
         </div>
-        <p class="endpoint-desc">Every submission across all three <a href="#feature-requests">feature-request paths</a> (dashboard/public/agent), paginated, filterable on every stored field. Same access model as <code>GET /admin/apps</code> above — 404, never 401/403, for a non-admin.</p>
+        <p class="endpoint-desc">Every submission across all three <a href="#feature-requests">customer-query paths</a> (dashboard/public/agent), paginated, filterable on every stored field. Same access model as <code>GET /admin/apps</code> above — 404, never 401/403, for a non-admin.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Query params (all optional)</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-comment">page</span>=1              <span class="tok-comment">// default 1</span>
 <span class="tok-comment">limit</span>=25            <span class="tok-comment">// default 25, max 100</span>
-<span class="tok-comment">type</span>=feature        <span class="tok-comment">// "feature" | "feedback", exact</span>
+<span class="tok-comment">type</span>=feature        <span class="tok-comment">// "feature" | "feedback" | "other", exact</span>
 <span class="tok-comment">source</span>=agent        <span class="tok-comment">// "dashboard" | "public" | "agent", exact</span>
 <span class="tok-comment">companyId</span>=...       <span class="tok-comment">// exact</span>
 <span class="tok-comment">projectSlug</span>=...     <span class="tok-comment">// exact</span>
@@ -1428,13 +1430,13 @@
     <hr class="rule" />
 
     <section class="resource" id="feature-requests">
-      <div class="resource-head"><h2>Feature requests &amp; feedback <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
-      <p class="resource-intro">One <code>type</code> (<code>"feature"</code> or <code>"feedback"</code>) and a <code>message</code> — submitted through three independent paths that all feed the same store. Submission only; there's no read/list endpoint in this pass.</p>
+      <div class="resource-head"><h2>Customer queries <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">One <code>type</code> (<code>"feature"</code>, <code>"feedback"</code>, or <code>"other"</code>) and a <code>message</code> — submitted through three independent paths that all feed the same store. Submission-only from here; see <a href="#ep-admin-feature-requests">the admin listing</a> to read them back. <strong>Renamed 2026-09-09</strong> from <code>.../feature-requests</code> to <code>.../customer-query</code> on all three paths — same data, same behavior.</p>
 
       <article class="endpoint" id="ep-feature-requests-dashboard">
         <div class="endpoint-head">
           <span class="method post">POST</span>
-          <span class="path">/companies/:companyId/feature-requests</span>
+          <span class="path">/companies/:companyId/customer-query</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
         <p class="endpoint-desc">Logged-in dashboard user. <strong>Never send an <code>email</code> field</strong> — it's read straight off the already-verified proxy identity, same as <a href="#ep-me">GET /auth/me</a>.</p>
@@ -1453,10 +1455,10 @@
       <article class="endpoint" id="ep-feature-requests-public">
         <div class="endpoint-head">
           <span class="method post">POST</span>
-          <span class="path">/public/feature-requests</span>
+          <span class="path">/public/customer-query</span>
           <span class="role-chip open">no auth required</span>
         </div>
-        <p class="endpoint-desc">Anonymous visitor, no session at all — <code>email</code> is required in the body here since there's no proxy identity to read it from. Same open+rate-limited shape as <a href="#ep-public-token-request">POST /public/deploy-tokens/request</a>, its own independent rolling-window counters (per-email, per-IP, global) — a burst of feedback never affects deploy-token requests or vice versa.</p>
+        <p class="endpoint-desc">Anonymous visitor, no session at all — <code>email</code> is required in the body here since there's no proxy identity to read it from. Same open+rate-limited shape as <a href="#ep-public-token-request">POST /public/deploy-tokens/request</a>, its own independent rolling-window counters (per-email, per-IP, global) — a burst of queries never affects deploy-token requests or vice versa.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1471,7 +1473,7 @@
 
       <div class="callout">
         <div class="eyebrow">Third path lives on the deploy endpoint, not here</div>
-        <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request or piece of feedback about the app it's deploying — <code>POST /apps/:appName/feature-requests</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Same auth shape as that endpoint's <code>.../status</code> and <code>.../logs</code>: <code>Authorization: Bearer &lt;deploy token&gt;</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token directly (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards it here internally.</p>
+        <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request, piece of feedback, or other query about the app it's deploying — <code>POST /apps/:appName/customer-query</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Same auth shape as that endpoint's <code>.../status</code> and <code>.../logs</code>: <code>Authorization: Bearer &lt;deploy token&gt;</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token directly (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards it here internally.</p>
       </div>
     </section>
 
