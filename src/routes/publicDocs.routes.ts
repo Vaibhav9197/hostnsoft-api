@@ -5,6 +5,16 @@ import { marked, Renderer } from "marked";
 
 export const publicDocsRouter = Router();
 
+// This app is only ever publicly reachable under ship.embarko.ai/api/...
+// — Traefik strips the /api prefix before the request reaches this
+// process (see the platform API's own base-URL note in docs.md), so
+// req.path/Express routing below correctly stays prefix-free. But any
+// link INSIDE a rendered page is followed by the browser directly
+// against the public host, which still needs the prefix — every href
+// this file generates in its OWN output HTML (nav, index list, rewritten
+// .md cross-links, the 404 page) must use this, not the bare mount path.
+const PUBLIC_PREFIX = "/api/public/docs";
+
 // hostnsoft-api/public-docs/ — see docs/request-feature-req.md's sibling,
 // docs/CLAUDE.md's note on this directory: customer-facing documentation,
 // no login required, deliberately separate from docs/ (internal/planning
@@ -92,7 +102,7 @@ function titleFor(content: string): string {
 // route's own URL shape here means the .md files never need to know
 // they're also served over HTTP under a different path.
 function rewriteMdLinks(html: string): string {
-  return html.replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, 'href="/public/docs/$1$2"');
+  return html.replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, `href="${PUBLIC_PREFIX}/$1$2"`);
 }
 
 const PAGE_STYLE = `
@@ -142,10 +152,10 @@ function pageHtml(title: string, bodyHtml: string): string {
 </head>
 <body>
 <nav class="topnav">
-  <a href="/public/docs">Embarko Docs</a>
-  <a href="/public/docs/docs">Getting started &amp; API reference</a>
-  <a href="/public/docs/troubleshoot">Troubleshooting</a>
-  <a href="/public/docs/limitations-and-recommendations">Limitations &amp; recommendations</a>
+  <a href="${PUBLIC_PREFIX}">Embarko Docs</a>
+  <a href="${PUBLIC_PREFIX}/docs">Getting started &amp; API reference</a>
+  <a href="${PUBLIC_PREFIX}/troubleshoot">Troubleshooting</a>
+  <a href="${PUBLIC_PREFIX}/limitations-and-recommendations">Limitations &amp; recommendations</a>
 </nav>
 <div class="wrap">
 ${bodyHtml}
@@ -158,14 +168,14 @@ publicDocsRouter.get("/public/docs", (_req, res) => {
   const items = DOC_ORDER.map((filename) => {
     const doc = readDoc(slugFor(filename));
     const title = doc ? titleFor(doc.content) : filename;
-    return `<li><a href="/public/docs/${slugFor(filename)}">${title}</a></li>`;
+    return `<li><a href="${PUBLIC_PREFIX}/${slugFor(filename)}">${title}</a></li>`;
   }).join("\n");
 
   res.type("html").send(
     pageHtml(
       "Embarko Docs",
       `<h1>Embarko Documentation</h1>
-       <p>Everything you need to deploy and run an app on Embarko — no login required to read any of this.</p>
+       <p>Everything you need to deploy and run an app on Embarko.</p>
        <ul class="doc-list">${items}</ul>`
     )
   );
@@ -174,7 +184,7 @@ publicDocsRouter.get("/public/docs", (_req, res) => {
 publicDocsRouter.get("/public/docs/:slug", (req, res) => {
   const doc = readDoc(req.params.slug);
   if (!doc) {
-    return res.status(404).type("html").send(pageHtml("Not found", "<h1>Not found</h1><p>No such doc. <a href=\"/public/docs\">Back to the docs index</a>.</p>"));
+    return res.status(404).type("html").send(pageHtml("Not found", `<h1>Not found</h1><p>No such doc. <a href="${PUBLIC_PREFIX}">Back to the docs index</a>.</p>`));
   }
   const rendered = rewriteMdLinks(marked.parse(doc.content, { async: false }) as string);
   res.type("html").send(pageHtml(titleFor(doc.content), rendered));
