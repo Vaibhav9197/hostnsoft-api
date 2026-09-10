@@ -164,13 +164,22 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 - fix: nothing to fix — this is expected for non-HTML apps; rely on the deploy response
   message instead of the in-app banner for those
 
-## Async deploy flow (not actual failures)
+## Async operations (not actual failures)
 
-### 202 Accepted misread as "live"
-- match: `{"accepted":true}`, HTTP 202
+### 202 Accepted misread as "live" (deploy)
+- match: `{"accepted":true}`, HTTP 202, from `POST /apps`
 - cause: not a failure — the deploy API responds immediately and the build continues in the background
 - fix: poll `statusUrl` from the response until `deploy.status` is `"success"` or `"failed"`; never treat
   `202` itself as done
+
+### 202 Accepted misread as "done" (rollback)
+- match: `{"accepted":true,"deploymentId":"...","statusUrl":"..."}`, HTTP 202, from
+  `POST .../deployments/:deploymentId/rollback`
+- cause: not a failure — the target image was confirmed to exist (that's the one check worth failing
+  fast on) and rollback is applying in the background; the app isn't necessarily running the rolled-back
+  version yet at the moment this response arrives
+- fix: poll the response's `statusUrl` (`GET .../deployments/:deploymentId`) until its `status` is no
+  longer `"in_progress"`
 
 ### 524 timeout (historical, should be rare now)
 - match: `524`, `"A timeout occurred"`
@@ -181,13 +190,20 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 ## Rollback
 
 ### Rollback target image unavailable
-- match: `"is no longer available on this host"`
-- cause: images are built locally on the platform's host and never pushed to a registry. The target
-  version's build image was cleaned from the host (very old version, or the host was rebuilt since)
-- fix: roll back to a more recent version, or redeploy the old source fresh if you still have it
+- match: HTTP 422, `"code":"rollback_image_unavailable"`, message starts with `"Cannot roll back: the
+  image is no longer available"`
+- cause: images are built locally on the platform's host and never pushed to a registry, and only the
+  most recent handful are kept (see
+  [`limitations-and-recommendations.md`](limitations-and-recommendations.md#only-the-last-n-build-images-are-kept-per-app) —
+  the response's own `retainCount` field always says exactly how many). The target version's image has
+  already been pruned.
+- fix: roll back to one of the last `retainCount` deployments instead (see `GET .../deployments`), or
+  redeploy the old source fresh if you still have it — either way, the exact number is in the error
+  response itself, not something you need to look up separately
 
-### Rollback returns 422
-- match: HTTP 422 from `POST .../deployments/:deploymentId/rollback`
+### Rollback returns 422 for a different reason
+- match: HTTP 422 from `POST .../deployments/:deploymentId/rollback`, `error` does NOT start with
+  `"Cannot roll back: the image is no longer available"`
 - cause: the target deployment either didn't succeed (`status !== "success"`) or has no recorded image tag
 - fix: pick a different deployment from `GET .../deployments` — only successful ones with an image are
   valid rollback targets

@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { createDeploymentWithNextVersion } from "../services/deploymentVersioning";
+import { createDeploymentWithNextVersion, markProjectDeploymentLive } from "../services/deploymentVersioning";
 import { findLiveDeployToken, unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
+import { requireInternalSecret } from "../middleware/requireInternalSecret";
 
 export const internalDeploymentsRouter = Router();
 
@@ -110,12 +111,62 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   // explicit higher configured value must never be undercut by a lower
   // auto-detected one) keeps Project.memoryMb a source of truth instead
   // of a stale default.
-  if (body.status === "success" && typeof body.memoryMb === "number" && body.memoryMb > claim.project.memoryMb) {
-    await prisma.project.update({
-      where: { id: claim.project.id },
-      data: { memoryMb: body.memoryMb },
-    });
+  //
+  // currentDeploymentId is set unconditionally on every success (not
+  // just when memory changed) — this is what "the version currently
+  // live" actually means, and it must move forward on this row's own
+  // success even if a later attempt for a DIFFERENT deployment id fails
+  // (deploymentId lets an in_progress row be updated in place; a stale
+  // in-flight update finishing after a newer one already succeeded is
+  // not a case this endpoint needs to guard against today).
+  if (body.status === "success") {
+    await markProjectDeploymentLive(claim.project.id, deployment.id, body.memoryMb, claim.project.memoryMb);
   }
 
   res.status(201).json(deployment);
 });
+
+const completeSchema = z.object({
+  success: z.boolean(),
+  errorDetail: z.string().optional(),
+});
+
+// Called by hostnsoft-deploy once an ASYNC config-push it accepted
+// (POST /internal/apps/:appName/config with a deploymentId — currently
+// only one-click rollback does this, see deployments.routes.ts) actually
+// finishes applying — the config-push endpoint itself now responds 202
+// the moment it's confirmed the target image exists, same "accept fast,
+// report the real outcome later" shape as a fresh deploy's own
+// POST /apps -> /internal/deployments/record round trip. Authenticated
+// with the shared INTERNAL_API_SECRET rather than a deploy token: unlike
+// a real deploy, a config-push has no per-company deploy token in hand
+// at all (hostnsoft-api called INTO hostnsoft-deploy with
+// INTERNAL_API_SECRET in the first place — see customDomainActivation.ts).
+internalDeploymentsRouter.post(
+  "/internal/deployments/:deploymentId/complete",
+  requireInternalSecret,
+  async (req, res) => {
+    const body = completeSchema.parse(req.body);
+
+    const deployment = await prisma.deployment.findUnique({ where: { id: req.params.deploymentId } });
+    if (!deployment) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+
+    const updated = await prisma.deployment.update({
+      where: { id: deployment.id },
+      data: {
+        status: body.success ? "success" : "failed",
+        errorDetail: body.errorDetail,
+        finishedAt: new Date(),
+      },
+    });
+
+    if (body.success) {
+      const project = await prisma.project.findUniqueOrThrow({ where: { id: deployment.projectId } });
+      await markProjectDeploymentLive(project.id, updated.id, updated.memoryMb, project.memoryMb);
+    }
+
+    res.json(updated);
+  }
+);

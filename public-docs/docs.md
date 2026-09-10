@@ -6,14 +6,18 @@ Embarko deploys apps from source to a live URL, and gives each company a
 dashboard/API to manage what's running: environment variables, memory
 allocation, deployment history, rollback, and custom domains.
 
-Two APIs, same host — `ship.embarko.ai` — split by path:
-- **Deploy API** (`https://ship.embarko.ai/apps...`) — the low-level "take
-  this tarball, build it, run it" service, plus its own status/logs. This is
-  the only thing an agent or CI pipeline needs to ship and check on code.
-- **Platform API** (`https://ship.embarko.ai/api/...`) — companies, projects,
-  deploy tokens, env vars, memory, rollback, custom domains. This is what a
-  dashboard (or a script managing an app after it's deployed) calls; the
-  `/api` prefix is stripped before it reaches the platform API itself.
+**Most day-to-day management — env vars, memory, rollback, custom domains,
+monitoring, deleting a project — happens directly in the dashboard**
+(`https://embarko.ai/app`), and that's what the sections below walk
+through. Deploying itself always goes through the **Deploy API**
+(`https://ship.embarko.ai/apps...`) — there's no separate
+upload-through-the-dashboard flow, so this is what an agent, CI pipeline,
+or your own script uses to actually ship code.
+
+Everything the dashboard does is also available directly as a **Platform
+API** (`https://ship.embarko.ai/api/...`) for anyone building their own
+tooling instead of using the dashboard — not the focus of this doc, since
+it walks through the dashboard, but it exists if you want it.
 
 A few things that apply everywhere below:
 - **Projects auto-create on first deploy.** No dashboard step is required
@@ -182,9 +186,10 @@ curl "https://ship.embarko.ai/apps/my-app/status" -H "Authorization: Bearer $DEP
 what `POST /apps`'s `statusUrl` is for: poll this after the `202`
 until it's no longer `"in_progress"`. `deploy` reflects the **most recent
 deploy attempt this process has seen** (in-memory, not a durable history —
-use `GET /companies/:companyId/projects/:projectId/deployments` on the
-platform API for durable history). `health` reflects the app's actual
-current running state, independent of the last deploy's outcome.
+see your project's **Deployments** tab in the dashboard, or
+[Monitoring your app](#monitoring) below, for durable history). `health`
+reflects the app's actual current running state, independent of the last
+deploy's outcome.
 
 ### [Logs](#logs)
 
@@ -207,42 +212,26 @@ allocation has ever been created for this app yet"}`.
 
 ## [Environment variables](#environment-variables)
 
-Set/update env vars through the platform API, then **redeploy** — env vars
-are baked into the app's configuration at deploy time, they don't reach an
-already-running container on their own (see
+Set through the dashboard, then **redeploy** — env vars are baked into the
+app's configuration at deploy time, they don't reach an already-running
+container on their own (see
 [`troubleshoot.md`](troubleshoot.md#env-var-changes-need-a-redeploy-to-reach-the-running-app)):
 
-```bash
-# 1. Set them
-curl -X PUT "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" \
-  -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"vars":[{"key":"STRIPE_KEY","value":"sk_live_..."},{"key":"FEATURE_FLAG_X","value":"true"}]}'
-
-# 2. Redeploy (new source or the same source again) so the app actually sees them
-curl -X POST "https://ship.embarko.ai/apps" \
-  -H "Authorization: Bearer $DEPLOY_TOKEN" -H "X-App-Name: my-app" -F "source=@/tmp/my-app.tar.gz"
-```
-
-Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`. Other operations:
-
-```bash
-# List current env vars
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars" -H "proxy_auth_token: $TOKEN"
-
-# Remove one
-curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/env-vars/STRIPE_KEY" -H "proxy_auth_token: $TOKEN"
-```
+1. Open your project in the dashboard and go to its **Environment
+   Variables** section.
+2. Add, edit, or remove a variable (key/value) — keys must match
+   `^[A-Za-z_][A-Za-z0-9_]*$`.
+3. Click **Save**.
+4. **Redeploy** the app — saving alone only stores the change; the running
+   app only picks up new values on its next deploy. If you don't have new
+   code to ship, redeploy your current source again as-is.
 
 ## [Memory allocation](#memory-allocation)
 
 Default is 256MB (512MB if an embedded DB like PGlite is auto-detected).
-Override it, then apply it the same way as an env var change:
 
-```bash
-curl -X PATCH "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/memory" \
-  -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"memoryMb": 1024}'
-```
+1. Open your project in the dashboard and go to its **Memory** section.
+2. Enter the new limit in MB and save.
 
 This only **persists** the new value — it takes effect on the next deploy,
 rollback, or custom-domain change, not immediately. If you don't have a new
@@ -256,16 +245,19 @@ One click, no rebuild — reruns a past successful build's image under the
 current config (current env vars and custom domains, not whatever they were
 at the time of that old deploy):
 
-```bash
-# 1. Find the deployment id you want
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
+1. Open your project's **Deployments** history in the dashboard.
+2. Find the past successful deployment you want.
+3. Click **Rollback** next to it.
 
-# 2. Roll back to it
-curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments/$DEPLOYMENT_ID/rollback" \
-  -H "proxy_auth_token: $TOKEN"
-```
+You'll see it confirmed right away, but **applying it takes a little
+while** — same as a regular deploy, switching the app over isn't instant.
+The dashboard shows this deployment as **in progress** until it's done,
+then updates to **success** (or **failed**, if something went wrong
+applying it — rare, since the one common failure mode, the old image
+being gone, is caught immediately, before it's even confirmed as
+started).
 
-Only deployments with `status: "success"` are valid targets. Rolling back
+Only deployments that succeeded are valid targets. Rolling back
 creates a **new** deployment history entry pointing at the old image — it
 doesn't rewrite history. See
 [`troubleshoot.md`](troubleshoot.md#rollback-target-image-unavailable) if the
@@ -276,55 +268,28 @@ target image was cleaned from the host.
 Point your own domain at a deployed app, instead of (or alongside) its
 default `<app-name>.app.embarko.ai` URL.
 
-**1. Register intent** — get back the exact DNS record to create:
+1. Open your project in the dashboard, go to **Custom Domains**, and enter
+   your domain (e.g. `app.yourdomain.com`).
+2. You'll see the exact DNS record to create. A **subdomain** (like
+   `app.yourdomain.com`) gets a `CNAME` to a dedicated platform hostname. An
+   **apex/root domain** (`yourdomain.com`, no subdomain) can't use `CNAME`
+   under standard DNS rules — you'll get an `A` record to the platform's
+   origin IP instead, which means it bypasses any CDN/proxy you'd normally
+   put in front of it (see
+   [`troubleshoot.md`](troubleshoot.md#apex-root-domains-lose-your-cdnproxy-in-front-of-them)).
+3. Create that exact DNS record with your DNS provider. If using
+   Cloudflare, make sure it's set to **DNS only** (grey cloud), not
+   **Proxied** (orange cloud) — a proxied record will never verify, see
+   [`troubleshoot.md`](troubleshoot.md#verify-stuck-on-not-resolving-yet-despite-a-correct-looking-record).
+4. Click **Verify** — safe to click repeatedly until DNS propagates.
+   Routing only activates once this confirms DNS actually resolves
+   correctly — nothing is activated at step 1.
+5. Once active, the domain shows status **Active** in the same **Custom
+   Domains** list.
 
-```bash
-curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" \
-  -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"domain": "app.yourdomain.com"}'
-```
-
-```json
-{
-  "domain": "app.yourdomain.com",
-  "status": "pending_dns",
-  "instructions": { "type": "CNAME", "name": "app.yourdomain.com", "value": "edge.embarko.ai" }
-}
-```
-
-A **subdomain** (like `app.yourdomain.com`) gets a `CNAME` to a dedicated
-platform hostname. An **apex/root domain** (`yourdomain.com`, no subdomain)
-can't use `CNAME` under standard DNS rules — you'll get an `A` record to the
-platform's origin IP instead, which means it bypasses any CDN/proxy you'd
-normally put in front of it (see
-[`troubleshoot.md`](troubleshoot.md#apex-root-domains-lose-your-cdnproxy-in-front-of-them)).
-
-**2. Create that exact DNS record** with your DNS provider. If using
-Cloudflare, make sure it's set to **DNS only** (grey cloud), not **Proxied**
-(orange cloud) — a proxied record will never verify, see
-[`troubleshoot.md`](troubleshoot.md#verify-stuck-on-not-resolving-yet-despite-a-correct-looking-record).
-
-**3. Verify** — safe to retry repeatedly until DNS propagates:
-
-```bash
-curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com/verify" \
-  -H "proxy_auth_token: $TOKEN"
-```
-
-Routing only activates once this confirms DNS actually resolves correctly —
-nothing is activated at step 1. Once active, `status` becomes `"active"` in:
-
-```bash
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains" -H "proxy_auth_token: $TOKEN"
-```
-
-**Removing a domain** tears down just that domain's routing/certificate —
-your app's default `*.app.embarko.ai` URL is never affected:
-
-```bash
-curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/domains/app.yourdomain.com" \
-  -H "proxy_auth_token: $TOKEN"
-```
+**Removing a domain** (click **Remove** next to it) tears down just that
+domain's routing/certificate — your app's default `*.app.embarko.ai` URL is
+never affected.
 
 Custom domains require port 80 reachable for certificate issuance — see
 [`troubleshoot.md`](troubleshoot.md#custom-domain-activation-requires-port-80-reachable)
@@ -332,21 +297,15 @@ if verification never completes despite correct DNS.
 
 ## [Customer queries: feature requests & feedback](#feature-requests)
 
-**Renamed 2026-09-09** from `.../feature-requests` to `.../customer-query` on
-all three paths below — same data/behavior either way. Three ways to send
-one, depending on who's sending it. `type` is `"feature"`, `"feedback"`, or
-`"other"`; `message` is required (max 5000 characters). All three return
-`{"id": "..."}` on success (`201`).
+Send a feature request, feedback, or another kind of query. Three ways to
+send one, depending on who's sending it — a message is required either way
+(max 5000 characters).
 
 ### [From the dashboard (logged in)](#feature-requests-dashboard)
 
-```bash
-curl -X POST "https://ship.embarko.ai/api/companies/$COMPANY_ID/customer-query" \
-  -H "proxy_auth_token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"type": "feature", "message": "Would love a staging environment per project"}'
-```
-
-Your email is taken from your logged-in identity — not sent in the request.
+Open **Feedback** (or **Send feedback**) in the dashboard, choose
+**Feature**, **Feedback**, or **Other**, write your message, and submit.
+Your account email is attached automatically — you never need to enter it.
 
 ### [From an AI agent, while deploying](#feature-requests-agent)
 
@@ -382,27 +341,20 @@ since it requires no authentication at all.
 
 ## [Monitoring your app](#monitoring)
 
-```bash
-# Current health + latest deployment + memory allocation
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
-
-# Full deployment history
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/deployments" -H "proxy_auth_token: $TOKEN"
-
-# Recent logs — see Checking deploy status & logs (#status-and-logs) for the full endpoint details
-curl "https://ship.embarko.ai/apps/my-app/logs" -H "Authorization: Bearer $DEPLOY_TOKEN"
-
-# Traffic + resource usage over time
-curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/analytics?range=7d" -H "proxy_auth_token: $TOKEN"
-```
-
-`range` accepts `24h`, `7d`, `30d`, `90d`, or `all`.
+Open your project in the dashboard:
+- **Overview** — current health, latest deployment, and memory allocation
+  at a glance.
+- **Deployments** — full deployment history.
+- **Logs** — recent output from the app (a snapshot, not a live stream —
+  see
+  [`limitations-and-recommendations.md`](limitations-and-recommendations.md#logs-are-a-recent-snapshot-not-a-live-stream)).
+- **Analytics** — traffic and resource usage over a chosen range (`24h`,
+  `7d`, `30d`, `90d`, or `all`).
 
 ## [Deleting a project](#deleting-a-project)
 
-```bash
-curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
-```
+Open your project in the dashboard, go to **Settings**, and click **Delete
+project**.
 
 Tears down the running app (its container, routing, and image) as
 well as the dashboard record — this is not reversible.

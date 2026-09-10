@@ -416,6 +416,7 @@
     <div class="navgroup">
       <div class="navgroup-label">Deployments</div>
       <a class="navlink" href="#ep-deployments-list">List history</a>
+      <a class="navlink" href="#ep-deployments-get">Get one <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
       <a class="navlink" href="#ep-deployments-rollback">Rollback <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
     </div>
 
@@ -922,6 +923,23 @@
         <div class="endpoint-note info">A rollback (below) shows up here too, as a normal new version — <code>triggeredBy</code> starting with <code>rollback:</code> is the only tell. Use that prefix if the UI wants to badge rollback entries distinctly.</div>
       </article>
 
+      <article class="endpoint" id="ep-deployments-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId/deployments/:deploymentId</span>
+          <span class="role-chip new">new</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">One deployment, by id — what rollback's <code>statusUrl</code> points at (below), so a caller has something to poll directly instead of re-fetching and re-scanning the full history list on every check.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-comment">// same shape as one entry in GET .../deployments above</span>
+<span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"in_progress"</span><span class="tok-punc">,</span> <span class="tok-comment">/* ... */</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
       <article class="endpoint" id="ep-deployments-rollback">
         <div class="endpoint-head">
           <span class="method post">POST</span>
@@ -929,16 +947,20 @@
           <span class="role-chip new">new</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">One-click rollback: re-points the live app at a <strong>past successful deployment's</strong> image, with <strong>no rebuild</strong> — a "pointer flip" that reuses the same no-rebuild config-push path custom domains already use, so it's fast (seconds, not a full build). The project's <em>current</em> custom domains and env vars are kept exactly as they are today — a rollback only changes what code is running, never live config. Recorded as a brand-new deployment with its own next version number, so it shows up in history rather than rewriting it (see the note above).</p>
+        <p class="endpoint-desc">One-click rollback: re-points the live app at a <strong>past successful deployment's</strong> image, with <strong>no rebuild</strong> — a "pointer flip" that reuses the same no-rebuild config-push path custom domains already use. The project's <em>current</em> custom domains and env vars are kept exactly as they are today — a rollback only changes what code is running, never live config. Recorded as a brand-new deployment with its own next version number, so it shows up in history rather than rewriting it (see the note above). <strong>Async</strong>, same shape as <a href="#deploy">POST /apps</a>: responds the moment the target image is confirmed to exist — the one thing worth failing fast on — not once it's actually applied, which can take a real, user-visible moment.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request</span></div>
             <pre><code><span class="tok-comment">// no body — :deploymentId in the URL is the target to roll back to</span></code></pre>
           </div>
           <div class="panel">
-            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-comment">// the newly-created Deployment row — same shape as GET .../deployments</span>
-<span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span> <span class="tok-key">"version"</span><span class="tok-punc">:</span> <span class="tok-str">"v6"</span><span class="tok-punc">,</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-key">"triggeredBy"</span><span class="tok-punc">:</span> <span class="tok-str">"rollback:usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-comment">/* ... */</span> <span class="tok-punc">}</span></code></pre>
+            <div class="panel-head"><span class="label">202 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"accepted"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
+  <span class="tok-key">"deploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"statusUrl"</span><span class="tok-punc">:</span> <span class="tok-str">"/companies/co_.../projects/prj_.../deployments/dep_x8r..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"Rollback started. Applying the previous version can take a little while — poll statusUrl until status is no longer \"in_progress\"."</span>
+<span class="tok-punc">}</span></code></pre>
           </div>
         </div>
         <div class="fields" style="margin-top:14px;">
@@ -946,11 +968,13 @@
             <tbody>
               <tr><td class="fname">404</td><td class="fdesc"><code>:deploymentId</code> doesn't belong to this project.</td></tr>
               <tr><td class="fname">422</td><td class="fdesc">Target deployment never succeeded, or has no recorded image — nothing to roll back to.</td></tr>
-              <tr><td class="fname">502</td><td class="fdesc">The deploy pipeline refused the rollback — most commonly the target version's build is no longer available (very old version, or the host was rebuilt since). The error message names it explicitly.</td></tr>
+              <tr><td class="fname">422</td><td class="fdesc"><code>code: "rollback_image_unavailable"</code> — the target's build image has been pruned (only the last <code>retainCount</code> images per app are kept locally — see Limitations). The response includes <code>retainCount</code> so the caller knows exactly how far back rollback currently reaches. Detected synchronously, before this ever returns <code>202</code> — an image-unavailable rollback never looks accepted-then-fails.</td></tr>
+              <tr><td class="fname">502</td><td class="fdesc">The deploy pipeline was unreachable when asked to accept the rollback. Genuinely transient/unexpected — the image-unavailable case above is the one common, expected failure and never surfaces as 502.</td></tr>
             </tbody>
           </table>
         </div>
         <div class="endpoint-note info">Memory is floored against whichever is higher: the project's current configured <code>memoryMb</code>, or what that specific past deployment actually needed (its own recorded <code>memoryMb</code>) — an old version that needed an embedded-DB memory floor gets that floor back on rollback, even if the project's memory setting has since drifted lower.</div>
+        <div class="endpoint-note">Once <code>202</code> is returned, poll <code>statusUrl</code> (<a href="#ep-deployments-get">GET one deployment</a>, below) — its <code>status</code> moves from <code>"in_progress"</code> to <code>"success"</code> or <code>"failed"</code>. A failure this late (the image existed, but applying it still failed) is rare, and <code>errorDetail</code> carries the reason.</div>
       </article>
     </section>
 
@@ -1493,6 +1517,7 @@
             <tr><td class="fname">name</td><td class="ftype">string</td></tr>
             <tr><td class="fname">memoryMb</td><td class="ftype">int</td><td class="fdesc">default 256, floor-adjustable override</td></tr>
             <tr><td class="fname">isOrphan / orphanExpiresAt</td><td class="ftype">bool / date|null</td><td class="fdesc">anonymous-deploy state</td></tr>
+            <tr><td class="fname">currentDeploymentId</td><td class="ftype">string | null</td><td class="fdesc">the Deployment currently live — set on every successful deploy and every successful rollback; null only before the project's first successful deploy</td></tr>
             <tr><td class="fname">health</td><td class="ftype">string</td><td class="fdesc">only on GET one — see <a href="#ep-projects-get">Get one</a>, not a stored column</td></tr>
           </tbody>
         </table>

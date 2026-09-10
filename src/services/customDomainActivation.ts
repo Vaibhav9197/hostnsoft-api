@@ -21,6 +21,12 @@ import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeploy
 interface PushResult {
   pushed: boolean;
   error?: string;
+  // Set when hostnsoft-deploy's response body carried a machine-readable
+  // code (currently just "image_unavailable", from the rollback path) —
+  // lets a caller like deployments.routes.ts's rollback handler branch
+  // on the specific failure instead of only having an opaque string.
+  code?: string;
+  retainCount?: number;
 }
 
 interface AppConfig {
@@ -28,6 +34,17 @@ interface AppConfig {
   memoryMb: number;
   customDomains: string[];
   envVars: { key: string; value: string }[];
+  // Present ONLY for rollback (deployments.routes.ts) — its presence is
+  // what tells hostnsoft-deploy to take the ASYNC path: respond 202 the
+  // moment the target image is confirmed to exist, apply the actual
+  // Nomad job run in the background, and report the real outcome back to
+  // POST /internal/deployments/:deploymentId/complete once it's done.
+  // Omitted for pushCustomDomainConfig below, which needs the OLD
+  // synchronous behavior preserved exactly — it marks a Domain "active"
+  // the moment this call returns pushed:true, which would be premature
+  // (active before the config is actually live) if that call ever
+  // stopped meaning "fully applied."
+  deploymentId?: string;
 }
 
 // Low-level call into hostnsoft-deploy's config-push endpoint — pushes a
@@ -37,6 +54,11 @@ interface AppConfig {
 // endpoint (a past image, current everything else) — both are "resync
 // the whole job spec from a known-good state" operations, just with a
 // different imageTag source.
+//
+// pushed:true means two DIFFERENT things depending on the caller, per
+// deploymentId above: "fully applied" (no deploymentId — custom domains)
+// vs. "accepted, applying asynchronously" (deploymentId set — rollback).
+// This is a real asymmetry, not an oversight — see AppConfig's comment.
 export async function pushAppConfig(project: Project, config: AppConfig): Promise<PushResult> {
   let response: Response;
   try {
@@ -59,7 +81,25 @@ export async function pushAppConfig(project: Project, config: AppConfig): Promis
     logger.error(
       `[pushAppConfig] hostnsoft-deploy returned HTTP ${response.status} for project ${project.slug}: ${bodyText}`
     );
-    return { pushed: false, error: bodyText || `hostnsoft-deploy returned HTTP ${response.status}` };
+    // hostnsoft-deploy's error responses are JSON ({error, code?,
+    // retainCount?}) but this is still best-effort parsing — an
+    // unexpected non-JSON body (a proxy error page, etc.) just means
+    // code/retainCount stay undefined, not a thrown error here.
+    let code: string | undefined;
+    let retainCount: number | undefined;
+    try {
+      const parsed = JSON.parse(bodyText) as { code?: string; retainCount?: number };
+      code = parsed.code;
+      retainCount = parsed.retainCount;
+    } catch {
+      // not JSON — leave code/retainCount undefined
+    }
+    return {
+      pushed: false,
+      error: bodyText || `hostnsoft-deploy returned HTTP ${response.status}`,
+      code,
+      retainCount,
+    };
   }
 
   return { pushed: true };
@@ -68,10 +108,18 @@ export async function pushAppConfig(project: Project, config: AppConfig): Promis
 export async function pushCustomDomainConfig(projectId: string): Promise<PushResult> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
 
-  const latestSuccess = await prisma.deployment.findFirst({
-    where: { projectId, status: "success" },
-    orderBy: { createdAt: "desc" },
-  });
+  // currentDeploymentId is kept up to date on every successful deploy AND
+  // every successful rollback (internalDeployments.routes.ts,
+  // deployments.routes.ts) — reading it directly instead of re-deriving
+  // "the latest successful deployment" via its own query keeps this in
+  // sync with rollback: a project rolled back to an old image must push
+  // THAT image here, not whatever the most recent row by timestamp is
+  // (which, before currentDeploymentId existed, happened to always be
+  // correct too, since rollback itself creates the newest row — but that
+  // was incidental, not guaranteed by this function's own logic).
+  const latestSuccess = project.currentDeploymentId
+    ? await prisma.deployment.findUnique({ where: { id: project.currentDeploymentId } })
+    : null;
 
   if (!latestSuccess || !latestSuccess.imageTag) {
     // Nothing has ever deployed successfully (or that deployment somehow

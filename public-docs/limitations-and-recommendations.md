@@ -60,6 +60,23 @@ SQLite file, analytics counters, uploaded files, cached state — under
 `{ recursive: true }` on startup rather than assuming they already exist.
 Don't design around any other path being durable, even temporarily.
 
+## Rollback
+
+### Only the last N build images are kept per app
+Every deploy builds a real image, kept locally (never pushed to a
+registry). Only the most recent handful are retained — older ones are
+pruned automatically to bound disk usage. One-click rollback can only
+reach as far back as whatever's still on disk; trying to roll back past
+that gets a `422` naming exactly how far back you can currently go (see
+[`troubleshoot.md`](troubleshoot.md#rollback-target-image-unavailable)) —
+it's a normal, expected response, not a platform failure.
+
+**Recommendation:** don't rely on being able to roll back to an
+arbitrary point in the past — treat rollback as a short-term "undo my
+last few deploys" tool, not a long-term version archive. If you need to
+reproduce a much older version, keep your own source history (git tags,
+releases) and redeploy fresh from it instead of rolling back to it.
+
 ## Build & runtime customization
 
 ### The build system auto-detects; there's no custom Dockerfile support

@@ -38,3 +38,29 @@ export async function createDeploymentWithNextVersion(
     `Could not allocate a unique deployment version for project ${projectId} after ${MAX_ATTEMPTS} attempts`
   );
 }
+
+// Shared by internalDeployments.routes.ts's two success paths (a normal
+// deploy's /internal/deployments/record call, and a rollback's async
+// /internal/deployments/:id/complete callback) — both need the exact
+// same "this is now the live version" bookkeeping. See
+// Project.currentDeploymentId's own schema comment for why this is a
+// plain field rather than something derived by query each time.
+export async function markProjectDeploymentLive(
+  projectId: string,
+  deploymentId: string,
+  appliedMemoryMb: number | null | undefined,
+  currentProjectMemoryMb: number
+): Promise<void> {
+  await prisma.project.update({
+    where: { id: projectId },
+    data: {
+      currentDeploymentId: deploymentId,
+      // Never downward — see internalDeployments.routes.ts's original
+      // comment on this exact reasoning (an explicit higher configured
+      // value must never be undercut by a lower auto-detected one).
+      ...(typeof appliedMemoryMb === "number" && appliedMemoryMb > currentProjectMemoryMb
+        ? { memoryMb: appliedMemoryMb }
+        : {}),
+    },
+  });
+}

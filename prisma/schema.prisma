@@ -56,6 +56,16 @@ model Project {
   isOrphan        Boolean   @default(false)
   orphanExpiresAt DateTime?
 
+  // The Deployment currently live on this project — set on every
+  // successful deploy (internalDeployments.routes.ts) and every
+  // successful rollback (deployments.routes.ts), so "what's actually
+  // running" is a direct read rather than a derived "latest success"
+  // query repeated in multiple places. Plain string, not a formal
+  // relation, to keep with this schema's convention of not tying down
+  // a Project row's shape to Deployment's (e.g. onDelete behavior) for
+  // what's fundamentally just a pointer.
+  currentDeploymentId String?
+
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]
