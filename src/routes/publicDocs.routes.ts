@@ -9,11 +9,13 @@ export const publicDocsRouter = Router();
 // — Traefik strips the /api prefix before the request reaches this
 // process (see the platform API's own base-URL note in docs.md), so
 // req.path/Express routing below correctly stays prefix-free. But any
-// link INSIDE a rendered page is followed by the browser directly
-// against the public host, which still needs the prefix — every href
-// this file generates in its OWN output HTML (nav, index list, rewritten
-// .md cross-links, the 404 page) must use this, not the bare mount path.
-const PUBLIC_PREFIX = "/api/public/docs";
+// link INSIDE a rendered page (HTML) or served file (raw .md) is
+// followed directly against the public host — by a browser for HTML, or
+// by whatever's consuming the raw markdown for .md — so every link this
+// file generates in its own output must use one of these, never the
+// bare mount path.
+const HTML_PREFIX = "/api/public";
+const MD_ORIGIN = "https://ship.embarko.ai/api/public";
 
 // hostnsoft-api/public-docs/ — see docs/request-feature-req.md's sibling,
 // docs/CLAUDE.md's note on this directory: customer-facing documentation,
@@ -101,8 +103,18 @@ function titleFor(content: string): string {
 // sibling memory note on updating them). Rewriting those into this
 // route's own URL shape here means the .md files never need to know
 // they're also served over HTTP under a different path.
-function rewriteMdLinks(html: string): string {
-  return html.replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, `href="${PUBLIC_PREFIX}/$1$2"`);
+function rewriteMdLinksForHtml(html: string): string {
+  return html.replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, `href="${HTML_PREFIX}/$1$2"`);
+}
+
+// Same idea, but for the RAW markdown routes below: rewrites in
+// markdown-link syntax (`](target.md#anchor)`), not HTML, and to a
+// FULLY QUALIFIED URL rather than a root-relative path — this markdown
+// is meant to be fetched and embedded by an external UI, which can't be
+// assumed to be serving from this same origin, so a root-relative link
+// would resolve against the wrong host once embedded elsewhere.
+function rewriteMdLinksForMarkdown(markdown: string): string {
+  return markdown.replace(/\]\(([a-z0-9-]+)\.md(#[\w-]*)?\)/g, `](${MD_ORIGIN}/$1.md$2)`);
 }
 
 const PAGE_STYLE = `
@@ -152,10 +164,10 @@ function pageHtml(title: string, bodyHtml: string): string {
 </head>
 <body>
 <nav class="topnav">
-  <a href="${PUBLIC_PREFIX}">Embarko Docs</a>
-  <a href="${PUBLIC_PREFIX}/docs">Getting started &amp; API reference</a>
-  <a href="${PUBLIC_PREFIX}/troubleshoot">Troubleshooting</a>
-  <a href="${PUBLIC_PREFIX}/limitations-and-recommendations">Limitations &amp; recommendations</a>
+  <a href="${HTML_PREFIX}/index">Embarko Docs</a>
+  <a href="${HTML_PREFIX}/docs">Getting started &amp; API reference</a>
+  <a href="${HTML_PREFIX}/troubleshoot">Troubleshooting</a>
+  <a href="${HTML_PREFIX}/limitations-and-recommendations">Limitations &amp; recommendations</a>
 </nav>
 <div class="wrap">
 ${bodyHtml}
@@ -164,11 +176,13 @@ ${bodyHtml}
 </html>`;
 }
 
-publicDocsRouter.get("/public/docs", (_req, res) => {
+// Index (HTML): renamed from /public/docs to /public/index — the bare
+// "docs" slug now means the docs.md content route instead (see below).
+publicDocsRouter.get("/public/index", (_req, res) => {
   const items = DOC_ORDER.map((filename) => {
     const doc = readDoc(slugFor(filename));
     const title = doc ? titleFor(doc.content) : filename;
-    return `<li><a href="${PUBLIC_PREFIX}/${slugFor(filename)}">${title}</a></li>`;
+    return `<li><a href="${HTML_PREFIX}/${slugFor(filename)}">${title}</a></li>`;
   }).join("\n");
 
   res.type("html").send(
@@ -181,11 +195,40 @@ publicDocsRouter.get("/public/docs", (_req, res) => {
   );
 });
 
-publicDocsRouter.get("/public/docs/:slug", (req, res) => {
+// Individual docs (HTML): flattened from /public/docs/:slug to
+// /public/:slug — e.g. /public/docs (was /public/docs/docs),
+// /public/troubleshoot, /public/limitations-and-recommendations.
+publicDocsRouter.get("/public/:slug([a-z0-9-]+)", (req, res) => {
   const doc = readDoc(req.params.slug);
   if (!doc) {
-    return res.status(404).type("html").send(pageHtml("Not found", `<h1>Not found</h1><p>No such doc. <a href="${PUBLIC_PREFIX}">Back to the docs index</a>.</p>`));
+    return res
+      .status(404)
+      .type("html")
+      .send(pageHtml("Not found", `<h1>Not found</h1><p>No such doc. <a href="${HTML_PREFIX}/index">Back to the docs index</a>.</p>`));
   }
-  const rendered = rewriteMdLinks(marked.parse(doc.content, { async: false }) as string);
+  const rendered = rewriteMdLinksForHtml(marked.parse(doc.content, { async: false }) as string);
   res.type("html").send(pageHtml(titleFor(doc.content), rendered));
+});
+
+// --- Raw markdown routes — for embedding in another UI, not for a browser to render ---
+
+const MD_INDEX = () => {
+  const links = DOC_ORDER.map((filename) => {
+    const doc = readDoc(slugFor(filename));
+    const title = doc ? titleFor(doc.content) : filename;
+    return `- [${title}](${MD_ORIGIN}/${filename})`;
+  }).join("\n");
+  return `# Embarko Documentation\n\nEverything you need to deploy and run an app on Embarko.\n\n${links}\n`;
+};
+
+publicDocsRouter.get("/public/index.md", (_req, res) => {
+  res.type("text/markdown").send(MD_INDEX());
+});
+
+publicDocsRouter.get("/public/:slug.md", (req, res) => {
+  const doc = readDoc(req.params.slug);
+  if (!doc) {
+    return res.status(404).type("text/markdown").send("# Not found\n\nNo such doc.\n");
+  }
+  res.type("text/markdown").send(rewriteMdLinksForMarkdown(doc.content));
 });
