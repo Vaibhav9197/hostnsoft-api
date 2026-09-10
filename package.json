@@ -22,6 +22,7 @@
     "express-rate-limit": "^7.5.1",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "marked": "^18.0.12",
     "psl": "^1.15.0",
     "rate-limit-redis": "^4.3.1",
     "redis": "^4.7.1",

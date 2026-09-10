@@ -1,17 +1,16 @@
 # Embarko Troubleshooting
 
-Real failures the platform has thrown, and known constraints of the platform
-itself — not hypotheticals. Each failure entry: `match` (exact substring to
-look for in a response body or logs) → `cause` → `fix`. Constraints have no
-`match` since they're not errors — they're things to design your app around
-*before* you hit them.
+Real failures the platform has thrown — not hypotheticals. Each entry:
+`match` (exact substring to look for in a response body or logs) → `cause`
+→ `fix`.
 
-This supersedes `deploy-troubleshooting.md` (kept in place, but consider it
-frozen) and covers the whole platform surface — `hostnsoft-deploy`'s
-`POST /apps` plus every `hostnsoft-api` endpoint (env vars, memory, rollback,
-custom domains). If you're only calling `POST /apps` directly (no dashboard),
-see also `hostnsoft-skill/scripts/troubleshoot.md`, which covers the same
-deploy-call errors in framework-agnostic language for an agent.
+Covers the whole platform surface: deploying (`POST /apps`) and everything
+you can do to a project afterward (env vars, memory, rollback, custom
+domains, monitoring). See [`docs.md`](docs.md) for the full API reference
+this troubleshooting guide assumes, and
+[`limitations-and-recommendations.md`](limitations-and-recommendations.md)
+for the platform's real constraints and how to design around them —
+*before* you hit them, not after.
 
 ## Build-time rejections (before any build runs)
 
@@ -20,8 +19,8 @@ deploy-call errors in framework-agnostic language for an agent.
 - cause: app calls `window.storage`, a Claude Artifacts sandbox API that doesn't exist outside it
 - fix: replace with SQLite (`better-sqlite3`, simple key/value) or `@electric-sql/pglite`
   (relational) — write under `DATA_DIR` either way, see
-  [Your data will be wiped on every redeploy](#your-data-will-be-wiped-on-every-redeploy-unless-its-under-data_dir)
-  below — then redeploy
+  [Only `DATA_DIR` survives a redeploy](limitations-and-recommendations.md#only-data_dir-survives-a-redeploy)
+  — then redeploy
 
 ### 401 unauthorized
 - match: `{"error":"Unauthorized","code":"unauthorized"}`
@@ -36,7 +35,7 @@ deploy-call errors in framework-agnostic language for an agent.
 
 ### 502 app_name_check_failed
 - match: `"code":"app_name_check_failed"`
-- cause: the deploy service couldn't reach `hostnsoft-api` to check name availability — transient
+- cause: a transient internal error while checking name availability
 - fix: safe to retry as-is; no need to change anything about the request
 
 ## Runtime crashes (build succeeded, app failed after)
@@ -70,12 +69,12 @@ deploy-call errors in framework-agnostic language for an agent.
   Content-Security-Policy, which didn't include `'wasm-unsafe-eval'` in `script-src`. This platform sets no
   CSP of its own at the edge before this fix, so whatever the app's own container happened to set is what a
   browser saw.
-- fix: **no longer needed for apps deployed/redeployed after this platform update** — every app's Traefik
-  router now applies a corrected default CSP (same as before, plus `'wasm-unsafe-eval'`) at the edge, which
-  takes precedence over anything the app's own container sets. Confirm with
+- fix: **no longer needed for apps deployed/redeployed after this platform update** — the platform now
+  applies a corrected default CSP (same as before, plus `'wasm-unsafe-eval'`) at the edge for every app,
+  which takes precedence over anything the app's own container sets. Confirm with
   `curl -sI https://<app>.app.embarko.ai/ | grep -i content-security-policy`; if it's still missing
   `wasm-unsafe-eval`, the app hasn't been redeployed since this fix — trigger any redeploy (even a no-op
-  rollback to the current version) to regenerate its job spec.
+  rollback to the current version) to pick it up.
 
 ## Access & ownership
 
@@ -100,7 +99,7 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 
 ### 502 from the agent customer-query endpoint
 - match: HTTP 502 from `POST .../apps/:appName/customer-query`
-- cause: hostnsoft-deploy couldn't reach hostnsoft-api to forward the request, or hostnsoft-api rejected it
+- cause: an internal error forwarding or storing the request
 - fix: transient — safe to retry. If it persists, the message/type may be invalid (`type` must be exactly
   `"feature"`, `"feedback"`, or `"other"`; `message` 1–5000 characters)
 
@@ -149,7 +148,7 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 ### Your app disappears ~24 hours after an anonymous deploy
 - no `match` — this is by design, not a bug
 - cause: a deploy with no `Authorization` header at all creates an unclaimed ("orphan")
-  project that's automatically torn down (Nomad job, Traefik routing, and Docker image all
+  project that's automatically torn down (the running app, its routing, and its image all
   removed) 24 hours after creation, unless claimed first
 - fix: redeploy the same `X-App-Name` **with** a valid token before it expires — this claims
   the project under your company, cancels the expiry, and behaves exactly like any other
@@ -199,14 +198,14 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 - no `match` — a behavior to know about, not an error
 - cause: `PATCH .../memory` only **persists** the new value in the dashboard's database. It does not push
   a config change to the already-running app.
-- fix: the new limit takes effect the next time the app's job spec is regenerated — a fresh deploy
+- fix: the new limit takes effect the next time the app's configuration is regenerated — a fresh deploy
   (`POST /apps`), a rollback, or a custom-domain change all do this. If you just need the new memory limit
-  applied with no code change, roll back to the **current** version — that re-pushes the spec with the new
-  memory floor and no rebuild
+  applied with no code change, roll back to the **current** version — that re-applies the current
+  configuration with the new memory floor and no rebuild
 
 ### Env var changes need a redeploy to reach the running app
 - no `match` — a behavior to know about, not an error
-- cause: env vars are baked into the app's Nomad job spec at deploy time, not pushed live to an already-running
+- cause: env vars are baked into the app's configuration at deploy time, not pushed live to an already-running
   container
 - fix: after `PUT .../env-vars`, trigger a new deploy (`POST /apps`, even with unchanged source) for the app
   to actually see the new values — see `docs.md`'s
@@ -214,46 +213,7 @@ now `.../customer-query`. Same data, same behavior, `type` now also accepts `"ot
 
 ## Platform-level constraints (apply to every app, always true — not failures)
 
-These aren't things that go wrong; they're the actual shape of the platform. Design around them rather
-than assuming stronger guarantees than what's listed here.
-
-### Your data will be wiped on every redeploy unless it's under `DATA_DIR`
-- Every redeploy builds a fresh image and schedules a fresh container. The **only** directory that survives
-  across redeploys is whatever `DATA_DIR` points at (an env var provided to your app) — everything else in
-  the container's filesystem is reset to exactly what your image contains, every time.
-- If your code assumes a folder exists that isn't part of your uploaded source **and** isn't under
-  `DATA_DIR` (e.g. `fs.writeFileSync('./analytics/results.json', ...)` with no prior `mkdir`), it can also
-  crash at runtime with `ENOENT` the first time it tries to write — not just lose data on the next deploy,
-  fail immediately.
-- fix: read/write anything that needs to survive a redeploy (a SQLite file, analytics counters, uploaded
-  files, A/B test results, anything) under `path.join(process.env.DATA_DIR, ...)`, creating subdirectories
-  with `{ recursive: true }` on startup rather than assuming they exist.
-
-### CPU limits are a relative share, not a hard cap
-- The platform reserves memory per app (hard-enforced, confirmed via a real OOM incident where the kernel
-  killed one container without affecting others) but CPU is a relative weight, not a ceiling — a CPU-heavy
-  neighbor app can degrade your app's performance under contention. Don't rely on CPU isolation for a
-  workload that's sensitive to that.
-
-### Disk usage isn't quota-enforced, including under `DATA_DIR`
-- Nothing currently stops an app from writing far more to disk than its own reasonable share, whether
-  that's under `DATA_DIR` or not — the platform doesn't cap this per app today. Keep an eye on unbounded
-  logs/caches/uploads; a runaway app can affect the shared host, not just itself.
-
-### Network isolation between different apps' containers is unverified
-- Whether one app's container can reach another app's container directly over the Docker network,
-  bypassing Traefik entirely, has not been tested either way. Don't rely on container-to-container
-  isolation as a security boundary for anything sensitive until this is explicitly confirmed.
-
-### Logs are a recent snapshot, not a live stream
-- `GET .../logs` returns the tail of the most recent allocation's logs at the moment you call it — it does
-  not stream. Poll it if you need to watch logs as they happen.
-
-### Public, unauthenticated endpoints are rate-limited
-- `POST /public/deploy-tokens/request` and `POST /public/customer-query` (see "Customer queries" above —
-  renamed 2026-09-09 from `/public/feature-requests`) are capped per-email, per-IP, and globally
-  (defaults: 5/hour per email,
-  10/hour per IP for token requests; 10/email, 20/IP, 500/global per hour for customer queries). Both
-  always return the same generic success response regardless of
-  whether the rate limit was hit or the email exists — retries beyond the limit are silently no-ops, not
-  errors, so don't loop on a missing email without waiting.
+These aren't things that go wrong — they're the actual shape of the platform, worth designing around
+rather than assuming stronger guarantees than it makes. Moved to their own doc, paired with concrete
+recommendations for building around each one: see
+[`limitations-and-recommendations.md`](limitations-and-recommendations.md).

@@ -6,6 +6,7 @@ import { internalDeploymentsRouter } from "./internalDeployments.routes";
 import { internalCustomerQueryRouter } from "./internalCustomerQuery.routes";
 import { publicTokensRouter } from "./publicTokens.routes";
 import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
+import { publicDocsRouter } from "./publicDocs.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
 import { tokensRouter } from "./tokens.routes";
@@ -33,6 +34,7 @@ router.use(internalDeploymentsRouter);
 router.use(internalCustomerQueryRouter);
 router.use(publicTokensRouter);
 router.use(publicCustomerQueryRouter);
+router.use(publicDocsRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);

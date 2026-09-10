@@ -73,7 +73,7 @@ Full details on both endpoints: [Checking deploy status & logs](#status-and-logs
 - **Anything that needs to survive a redeploy must live under `DATA_DIR`**
   (an env var the platform provides) — a fresh container is scheduled on
   every redeploy, and only `DATA_DIR` persists across that. See
-  [`troubleshoot.md`](troubleshoot.md#your-data-will-be-wiped-on-every-redeploy-unless-its-under-data_dir)
+  [`limitations-and-recommendations.md`](limitations-and-recommendations.md#only-data_dir-survives-a-redeploy)
   for the full explanation and a concrete example of getting this wrong.
 - **Don't use `window.storage`** — a Claude Artifacts sandbox API that
   doesn't exist here. Use SQLite (`better-sqlite3`) or PGlite
@@ -109,8 +109,8 @@ deploys only — they don't sign in to the dashboard itself.
 Omit the `Authorization` header entirely to deploy without an account first —
 useful for trying the platform before committing to one. This creates an
 **unclaimed ("orphan") project** that:
-- Gets a `24h` expiry — after that, the app, its Nomad job, and its Docker
-  image are all torn down automatically.
+- Gets a `24h` expiry — after that, the app and its container image are
+  torn down automatically.
 - Shows a live countdown banner injected into the app's own pages (HTML apps
   only — see [`troubleshoot.md`](troubleshoot.md#the-in-app-will-be-deleted-banner-doesnt-show-up)).
 - Can be **claimed** at any point before expiry by redeploying the exact same
@@ -174,7 +174,7 @@ curl "https://ship.embarko.ai/apps/my-app/status" -H "Authorization: Bearer $DEP
     "finishedAt": "2026-09-09T10:01:32.000Z",
     "errorDetail": null
   },
-  "health": { "...": "live Nomad allocation status" }
+  "health": { "...": "live status of the running app" }
 }
 ```
 
@@ -184,7 +184,7 @@ until it's no longer `"in_progress"`. `deploy` reflects the **most recent
 deploy attempt this process has seen** (in-memory, not a durable history —
 use `GET /companies/:companyId/projects/:projectId/deployments` on the
 platform API for durable history). `health` reflects the app's actual
-current Nomad allocation state, independent of the last deploy's outcome.
+current running state, independent of the last deploy's outcome.
 
 ### [Logs](#logs)
 
@@ -208,7 +208,7 @@ allocation has ever been created for this app yet"}`.
 ## [Environment variables](#environment-variables)
 
 Set/update env vars through the platform API, then **redeploy** — env vars
-are baked into the app's job spec at deploy time, they don't reach an
+are baked into the app's configuration at deploy time, they don't reach an
 already-running container on their own (see
 [`troubleshoot.md`](troubleshoot.md#env-var-changes-need-a-redeploy-to-reach-the-running-app)):
 
@@ -247,7 +247,7 @@ curl -X PATCH "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJE
 This only **persists** the new value — it takes effect on the next deploy,
 rollback, or custom-domain change, not immediately. If you don't have a new
 build to ship, the fastest way to apply a memory change alone is rolling
-back to the **current** version (see below) — that re-pushes the job spec
+back to the **current** version (see below) — that re-applies the configuration
 with no rebuild.
 
 ## [Rollback](#rollback)
@@ -377,7 +377,7 @@ curl -X POST "https://ship.embarko.ai/api/public/customer-query" \
 ```
 
 Rate-limited (per-email, per-IP, and globally — see
-[`troubleshoot.md`](troubleshoot.md#public-unauthenticated-endpoints-are-rate-limited))
+[`limitations-and-recommendations.md`](limitations-and-recommendations.md#public-unauthenticated-endpoints-are-rate-limited))
 since it requires no authentication at all.
 
 ## [Monitoring your app](#monitoring)
@@ -404,12 +404,14 @@ curl "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID/ana
 curl -X DELETE "https://ship.embarko.ai/api/companies/$COMPANY_ID/projects/$PROJECT_ID" -H "proxy_auth_token: $TOKEN"
 ```
 
-Tears down the running app (Nomad job, Traefik routing, Docker image) as
+Tears down the running app (its container, routing, and image) as
 well as the dashboard record — this is not reversible.
 
 ## [Errors and known limitations](#errors)
 
-See [`troubleshoot.md`](troubleshoot.md) for the full error-code reference
-and the platform's actual constraints (persistence, memory/CPU/disk, rate
-limits) — worth reading once before you build something that assumes
+See [`troubleshoot.md`](troubleshoot.md) for the full error-code reference,
+and [`limitations-and-recommendations.md`](limitations-and-recommendations.md)
+for the platform's actual constraints (persistence, memory/CPU/disk,
+network isolation, logs, rate limits) paired with concrete recommendations
+for each — worth reading once before you build something that assumes
 guarantees the platform doesn't make.
