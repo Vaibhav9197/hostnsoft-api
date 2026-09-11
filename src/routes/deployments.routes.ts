@@ -13,6 +13,14 @@ deploymentsRouter.use(requireProxyToken);
 // Populated by hostnsoft-deploy calling POST /internal/deployments/record
 // after each deploy attempt concludes — see
 // src/routes/internalDeployments.routes.ts.
+//
+// isCurrent marks whichever row's id matches Project.currentDeploymentId
+// — the field itself only lives on Project (see its schema comment), so
+// without this a caller would have to fetch the project separately and
+// cross-reference ids by hand just to know "which one of these is
+// actually live right now." Not necessarily the most recent row: a
+// deploy attempt AFTER a successful rollback that itself fails leaves
+// the rollback's row marked current, not the newer failed one.
 deploymentsRouter.get(
   "/companies/:companyId/projects/:projectId/deployments",
   loadCompanyContext,
@@ -22,7 +30,7 @@ deploymentsRouter.get(
       where: { projectId: req.project!.id },
       orderBy: { createdAt: "desc" },
     });
-    res.json(deployments);
+    res.json(deployments.map((d) => ({ ...d, isCurrent: d.id === req.project!.currentDeploymentId })));
   }
 );
 
@@ -41,7 +49,7 @@ deploymentsRouter.get(
     if (!deployment) {
       return res.status(404).json({ error: "Deployment not found" });
     }
-    res.json(deployment);
+    res.json({ ...deployment, isCurrent: deployment.id === req.project!.currentDeploymentId });
   }
 );
 
