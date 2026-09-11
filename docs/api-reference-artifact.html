@@ -1054,7 +1054,11 @@
           </div>
           <div class="panel">
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span> <span class="tok-comment">// shown once</span> <span class="tok-punc">}</span></code></pre>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span> <span class="tok-comment">// shown once</span>
+<span class="tok-punc">}</span></code></pre>
           </div>
         </div>
       </article>
@@ -1065,7 +1069,19 @@
           <span class="path">/companies/:companyId/tokens</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Metadata only (<code>label</code>, <code>prefix</code>, timestamps, <code>revokedAt</code>) — the raw token itself is never retrievable after creation.</p>
+        <p class="endpoint-desc">Metadata only — the raw token itself is never retrievable after creation, not even truncated, past the one-time create/rotate response above.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">[</span>
+  <span class="tok-punc">{</span>
+    <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"revokedAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-08T14:02:11.000Z"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span> <span class="tok-comment">// or "agent" — minted via a person in the UI vs. the public email endpoint below</span>
+  <span class="tok-punc">}</span>
+<span class="tok-punc">]</span></code></pre>
+          </div>
+        </div>
       </article>
 
       <article class="endpoint" id="ep-tokens-revoke">
@@ -1087,7 +1103,12 @@
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_new..."</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_..."</span><span class="tok-punc">,</span> <span class="tok-key">"oldTokenValidUntil"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T10:30:00.000Z"</span> <span class="tok-punc">}</span></code></pre>
+            <pre><code><span class="tok-comment">// same shape as create above, plus oldTokenValidUntil</span>
+<span class="tok-punc">{</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_new..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_e5f6..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T10:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_e5f6..."</span><span class="tok-punc">,</span> <span class="tok-comment">// shown once</span>
+  <span class="tok-key">"oldTokenValidUntil"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T11:30:00.000Z"</span>
+<span class="tok-punc">}</span></code></pre>
           </div>
         </div>
       </article>
