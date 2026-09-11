@@ -6,7 +6,10 @@ import crypto from "crypto";
 // the hash alone.
 // Who minted a token. Stored on DeployToken.source; string column (SQLite
 // has no enums) so this union is the single source of truth.
-export const DEPLOY_TOKEN_SOURCES = ["dashboard", "agent"] as const;
+// "connector" — minted by POST /connector/token, exchanging a proxy_auth_token
+// for a deploy token so an AI client (ChatGPT/Claude connector) never sees
+// a login page — see src/routes/connectorAuth.routes.ts.
+export const DEPLOY_TOKEN_SOURCES = ["dashboard", "agent", "connector"] as const;
 export type DeployTokenSource = (typeof DEPLOY_TOKEN_SOURCES)[number];
 
 export function hashToken(token: string): string {

@@ -434,6 +434,8 @@
       <a class="navlink" href="#ep-tokens-revoke">Revoke</a>
       <a class="navlink" href="#ep-tokens-rotate">Rotate</a>
       <a class="navlink" href="#ep-public-token-request">Request via email <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-connector-token">Connector exchange <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-connector-token-validate">Connector validate <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
     </div>
 
     <div class="navgroup">
@@ -1077,7 +1079,7 @@
   <span class="tok-punc">{</span>
     <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span>
     <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"revokedAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-08T14:02:11.000Z"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span> <span class="tok-comment">// or "agent" — minted via a person in the UI vs. the public email endpoint below</span>
+    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span> <span class="tok-comment">// or "agent" (public email endpoint) / "connector" (AI-connector exchange, below)</span>
   <span class="tok-punc">}</span>
 <span class="tok-punc">]</span></code></pre>
           </div>
@@ -1131,6 +1133,61 @@
           </div>
         </div>
         <div class="endpoint-note info">Doesn't rotate or revoke anything — every call mints a fresh token under a new label (<code>email &lt;timestamp&gt; UTC</code>); older tokens keep working. Revoke unwanted ones from the dashboard like any other token.</div>
+      </article>
+
+      <article class="endpoint" id="ep-connector-token">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/connector/token</span>
+          <span class="role-chip open">proxy_auth_token in body, no header needed</span>
+          <span class="chip role-chip new" style="margin-left:8px;">new</span>
+        </div>
+        <p class="endpoint-desc">The one-click connector flow: when Embarko is connected as a ChatGPT/Claude connector, the AI client opens MSG91's hosted login widget, the person logs in exactly as on the dashboard, and the widget hands the client a <code>proxy_auth_token</code> in-page. This endpoint exchanges that for a Deploy Token — no copying, no pasting. Mints a <strong>brand-new</strong> token every call (existing tokens are never touched), scoped to the identity's current company, with <code>source: "connector"</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"&lt;proxy_auth_token from the login widget&gt;"</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"accessToken"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span><span class="tok-punc">,</span> <span class="tok-comment">// shown once — this IS the deploy token</span>
+  <span class="tok-key">"tokenId"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"Connector Token: 14:02 IST"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-11T10:49:55.520Z"</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">401 if the <code>proxy_auth_token</code> itself is invalid/expired. 409 <code>{"error": "no_company"}</code> if the identity has no current company yet — send the person to the dashboard to finish setup first. Rate-limited per IP (<code>CONNECTOR_TOKEN_EXCHANGE_RATE_PER_IP</code>).</div>
+      </article>
+
+      <article class="endpoint" id="ep-connector-token-validate">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/connector/token/validate</span>
+          <span class="role-chip open">token in body, no header needed</span>
+          <span class="chip role-chip new" style="margin-left:8px;">new</span>
+        </div>
+        <p class="endpoint-desc">Given any Deploy Token (from this endpoint, the dashboard, or the email endpoint), reports whether it's still live and which company it belongs to. Distinct from the internal <code>/internal/deploy-tokens/validate</code> used by the deploy service — that one is restricted to server-to-server calls; this one is meant for the open internet (e.g. an AI platform's backend introspecting a token it's holding) and resolves a human-readable company name.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response (valid)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"valid"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"tokenId"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"Connector Token: 14:02 IST"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-11T10:49:55.564Z"</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response (invalid)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"valid"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info">Always <code>200</code>, whatever the token's state — check the <code>valid</code> field, not the status code. Rate-limited per IP (<code>CONNECTOR_TOKEN_VALIDATE_RATE_PER_IP</code>).</div>
       </article>
     </section>
 

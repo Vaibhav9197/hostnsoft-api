@@ -7,6 +7,7 @@ import { internalCustomerQueryRouter } from "./internalCustomerQuery.routes";
 import { publicTokensRouter } from "./publicTokens.routes";
 import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { publicDocsRouter } from "./publicDocs.routes";
+import { connectorAuthRouter } from "./connectorAuth.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
 import { tokensRouter } from "./tokens.routes";
@@ -21,8 +22,9 @@ import { customerQueryRouter } from "./customerQuery.routes";
 
 export const router = Router();
 
-// healthRouter, every internal*Router and publicTokensRouter carry no auth requirement and
-// MUST stay mounted before any router below — each of those calls
+// healthRouter, every internal*Router, every public*Router and
+// connectorAuthRouter carry no `.use(requireProxyToken)` of their own and
+// MUST stay mounted before any router below — each router below calls
 // `.use(requireProxyToken)` unconditionally on itself, and since every router
 // here mounts at "/", that blanket check runs (and can short-circuit the
 // whole chain with a 401) for ANY request that reaches it first,
@@ -35,6 +37,7 @@ router.use(internalCustomerQueryRouter);
 router.use(publicTokensRouter);
 router.use(publicCustomerQueryRouter);
 router.use(publicDocsRouter);
+router.use(connectorAuthRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);

@@ -71,17 +71,21 @@ the `:companyId` in the URL, checked against proxy membership per request.
 **The agent never logs in as the person, and never holds a session on
 their behalf.** It only ever needs one thing: a company-scoped **Deploy
 Token** (already specced below). Getting that token the first time is a
-one-time bootstrap: either through the dashboard, or — **added 2026-09-08** —
+one-time bootstrap, now via any of three paths: through the dashboard;
 by the agent calling the open, rate-limited
-`POST /public/deploy-tokens/request {email}`, which emails the person a
-**new deploy token** for every company they belong to (creating the proxy user
-and a company named after the email first when none exist). The response is
-always the same 202 so the endpoint never confirms which emails have
-accounts. See `docs/plans/2026-09-08-001-feat-email-deploy-token-api-plan.md`
-and `src/services/publicTokenRequest.ts`. This replaces an earlier, more
-complex design (device-code polling + agent-submitted email + magic links)
-that was solving a problem that doesn't actually exist here — the agent
-doesn't need to *act as* the person at all.
+`POST /public/deploy-tokens/request {email}` (**added 2026-09-08**), which
+emails the person a **new deploy token** for every company they belong to
+(creating the proxy user and a company named after the email first when
+none exist) — the response is always the same 202 so the endpoint never
+confirms which emails have accounts (see
+`docs/plans/2026-09-08-001-feat-email-deploy-token-api-plan.md` and
+`src/services/publicTokenRequest.ts`); or — **added 2026-09-11** — by an AI
+client (a ChatGPT/Claude "connector") exchanging a `proxy_auth_token` for
+one via `POST /connector/token`, see "3. AI-connector bootstrap" below.
+This replaces an earlier, more complex design (device-code polling +
+agent-submitted email + magic links) that was solving a problem that
+doesn't actually exist here — the agent doesn't need to *act as* the
+person at all.
 
 ### 1. Dashboard login (person, via browser) — MSG91 proxy-auth
 
@@ -206,6 +210,63 @@ completion of. Copy-pasting a token is a single manual step a person does
 once; building an automated-detection system for a one-time copy-paste
 is solving a problem more elaborate than the actual need.
 
+### 3. AI-connector bootstrap — one-click via ChatGPT/Claude
+
+**This changed once Embarko could be listed as a connector inside
+ChatGPT/Claude (added 2026-09-11).** An MCP/connector client *can* run a
+real one-click login — the AI client opens MSG91's hosted login widget in
+a system browser, the person logs in exactly as they would on the
+dashboard, and the widget hands the AI client a `proxy_auth_token`
+in-page, the same credential the dashboard's own "Option B" integration
+uses (`docs/msg91-proxy-auth.md`). **The login page itself is entirely
+MSG91 proxy's — out of scope for this API**, same as dashboard login. What
+this API adds is the two REST endpoints an AI client needs around that
+login, both in `src/routes/connectorAuth.routes.ts`, neither behind
+`requireProxyToken` (their credential arrives in the request body, not the
+header):
+
+- `POST /connector/token {token}` — "the token endpoint": exchanges the
+  `proxy_auth_token` the widget just produced for a company-scoped Deploy
+  Token, scoped to the identity's *current* company (same company proxy's
+  JWT names on login — see `POST /auth/msg91/exchange`). Mints a brand-new
+  token every call (same non-rotating shape as `mintEmailToken`, see
+  `src/services/connectorToken.ts`) rather than reusing one, so
+  reconnecting never invalidates a still-in-use token. Stored with
+  `DeployToken.source = "connector"` — a third value alongside
+  `"dashboard"` and `"agent"` (`src/lib/deployTokens.ts`) — so it shows up
+  distinctly in `GET /companies/:companyId/tokens` and is revocable from
+  the dashboard like any other token. A person with no current company
+  (proxy normally auto-creates one on first login) gets a `409` telling
+  them to finish setup on the dashboard, not a token to nowhere.
+- `POST /connector/token/validate {token}` — "the token-validation API":
+  given a Deploy Token (from this endpoint, the dashboard, or the public
+  email endpoint — all the same row type), reports `{valid, companyId,
+  companyName, tokenId, label, lastUsedAt}`, or `{valid: false}`.
+  Deliberately **not** the same route as
+  `POST /internal/deploy-tokens/validate` — that one is reserved for
+  `hostnsoft-deploy`'s own server-to-server calls and is flagged in its own
+  comment for eventual network-level restriction to `hostnsoft-deploy`'s
+  host; this one is meant for the open internet (an AI platform's backend
+  introspecting a token it's holding), so it also resolves `companyName`
+  via proxy rather than leaving the caller with only an opaque id.
+
+Both routes are public (mounted in the no-`requireProxyToken` block in
+`src/routes/index.ts` — see that file's routing-gotcha comment) and each
+carries its own per-IP rolling rate limit
+(`src/lib/connectorTokenConfig.ts`, `CONNECTOR_TOKEN_*` env vars) — the
+exchange endpoint's window guards against retry storms from a
+misbehaving client rather than credential guessing (it already requires a
+live `proxy_auth_token`); the validate endpoint's window guards a route
+now reachable by anyone on the internet, even though the token itself
+(a 256-bit secret) isn't practically guessable.
+
+This doesn't add a new token type or a new capability an agent can do
+that it couldn't before — a connector-sourced Deploy Token is used
+exactly like any other Deploy Token against `hostnsoft-deploy`. It only
+removes the one manual step (copy a token out of the dashboard, paste it
+somewhere) by giving an AI client a way to get that same token itself,
+once a person has completed the same MSG91 login they'd do anyway.
+
 ## API surface: Companies, Projects, Members, Tokens
 
 All endpoints below require a valid `proxy_auth_token` header
@@ -242,9 +303,11 @@ it has an endpoint here (removed 2026-09-04).
 | Endpoint | Permission | Notes |
 |---|---|---|
 | `POST /companies/:companyId/tokens` `{label}` | any member | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. Response: `{id, label, token, created_at}`. |
-| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, created_at, last_used_at, revoked_at, source}` (`source` is `dashboard` or `agent`, i.e. minted in the UI vs. by the public email endpoint) — **never** the secret itself, not even truncated/partial, past this one-time creation response. |
+| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, created_at, last_used_at, revoked_at, source}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange) — **never** the secret itself, not even truncated/partial, past this one-time creation response. |
 | `DELETE /companies/:companyId/tokens/:tokenId` | any member | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
 | `POST /companies/:companyId/tokens/:tokenId/rotate` | any member | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
+| `POST /connector/token` `{token}` | none (public) — `token` is a live `proxy_auth_token`, not a header | "The token endpoint" (Auth flow #3 above): exchanges a `proxy_auth_token` for a new Deploy Token scoped to the identity's current company. `source: "connector"`. Response: `{accessToken, tokenId, label, companyId, companyName, createdAt}`. `409 {error: "no_company"}` if the identity has no current company yet. |
+| `POST /connector/token/validate` `{token}` | none (public) — `token` is a Deploy Token | "The token-validation API" (Auth flow #3 above): `{valid: true, companyId, companyName, tokenId, label, lastUsedAt}` or `{valid: false}`. Separate from the internal `/internal/deploy-tokens/validate` used by `hostnsoft-deploy` — this one is meant for the open internet and resolves a human-readable `companyName`. |
 
 **Public email endpoint tokens (added 2026-09-08).** There is no special
 "default" token. Each `POST /public/deploy-tokens/request` mints a brand-new
@@ -252,6 +315,12 @@ ordinary token per company (label `email <timestamp> UTC`, see
 `src/services/emailToken.ts`) and never rotates or revokes anything, so a
 service still deploying with an older token keeps working. Members revoke
 unwanted ones from the dashboard like any other token.
+
+**AI-connector tokens (added 2026-09-11).** Same non-rotating shape:
+`POST /connector/token` always mints a brand-new token (label
+`Connector Token: <time> IST`, see `src/services/connectorToken.ts`),
+never touching any existing token. See Auth flow #3 above for the full
+exchange + validate flow.
 
 Conceptual rules carried over from the earlier design (still apply):
 - Multiple tokens per company, each independently labeled, so revocation
