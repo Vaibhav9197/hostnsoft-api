@@ -51,7 +51,29 @@ projectsRouter.post(
 
 projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (req, res) => {
   const projects = await prisma.project.findMany({ where: { companyId: req.company!.id } });
-  res.json(projects);
+
+  // status is the CURRENT deployment's own status (via currentDeploymentId
+  // — see deployments.routes.ts's isCurrent for why this isn't just "most
+  // recent by timestamp"), not a live health check — that stays GET-one
+  // only (fetchAppHealth is a real Nomad call per app; doing that once
+  // per project here would mean N network calls just to list them).
+  // Batched as one extra query rather than N, regardless of how many
+  // projects a company has.
+  const currentDeploymentIds = projects
+    .map((p) => p.currentDeploymentId)
+    .filter((id): id is string => !!id);
+  const currentDeployments = await prisma.deployment.findMany({
+    where: { id: { in: currentDeploymentIds } },
+    select: { id: true, status: true },
+  });
+  const statusById = new Map(currentDeployments.map((d) => [d.id, d.status]));
+
+  res.json(
+    projects.map((p) => ({
+      ...p,
+      status: (p.currentDeploymentId && statusById.get(p.currentDeploymentId)) || "no_deployments",
+    }))
+  );
 });
 
 projectsRouter.get(

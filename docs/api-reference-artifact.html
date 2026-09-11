@@ -818,7 +818,20 @@
           <span class="path">/companies/:companyId/projects</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Every project in the company. Doesn't include live <code>health</code> (see get-one below) — this is the list/table view, keep it cheap.</p>
+        <p class="endpoint-desc">Every project in the company, each with a <code>status</code> field <span class="role-chip new" style="margin-left:4px;">new</span>. Doesn't include live <code>health</code> (see get-one below) — that's a real Nomad call per app, too expensive to pay once per row just to list them; this is the list/table view, kept cheap (one extra batched query regardless of how many projects the company has).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">[</span>
+  <span class="tok-punc">{</span>
+    <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
+  <span class="tok-punc">}</span>
+<span class="tok-punc">]</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info"><code>status</code> is the <strong>current</strong> deployment's own status (via <code>currentDeploymentId</code> — see <a href="#ep-deployments-list">Deployments</a>' <code>isCurrent</code>), not necessarily the most recent row by timestamp: if a deploy attempt after a successful rollback itself fails, that failed attempt is newer, but <code>status</code> here still correctly reflects the rollback that's actually live. <code>"no_deployments"</code> covers a project that exists but has never completed a deploy attempt.</div>
       </article>
 
       <article class="endpoint" id="ep-projects-get">
