@@ -8,6 +8,7 @@ import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 import { tearDownApp } from "../services/appTeardown";
 import { fetchAppHealth } from "../services/appHealth";
+import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -52,26 +53,30 @@ projectsRouter.post(
 projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (req, res) => {
   const projects = await prisma.project.findMany({ where: { companyId: req.company!.id } });
 
-  // status is the CURRENT deployment's own status (via currentDeploymentId
-  // — see deployments.routes.ts's isCurrent for why this isn't just "most
-  // recent by timestamp"), not a live health check — that stays GET-one
-  // only (fetchAppHealth is a real Nomad call per app; doing that once
-  // per project here would mean N network calls just to list them).
-  // Batched as one extra query rather than N, regardless of how many
-  // projects a company has.
-  const currentDeploymentIds = projects
-    .map((p) => p.currentDeploymentId)
-    .filter((id): id is string => !!id);
-  const currentDeployments = await prisma.deployment.findMany({
-    where: { id: { in: currentDeploymentIds } },
-    select: { id: true, status: true },
-  });
-  const statusById = new Map(currentDeployments.map((d) => [d.id, d.status]));
+  // status: same shared helper as get-one below (projectStatus.ts),
+  // batched as one extra DB query regardless of project count.
+  //
+  // health: a real Nomad call per app — genuinely more expensive than
+  // status, but kept here too rather than silently different from
+  // get-one's response shape (a resource's list and single views should
+  // return the same fields; withholding one because it's costlier is a
+  // per-endpoint decision that should be made explicitly, not fall out
+  // by accident). Run in parallel across all of a company's projects
+  // rather than sequentially — still N calls, just not N sequential
+  // round trips. Revisit with pagination/an opt-out query param if a
+  // company's project count ever makes this endpoint too slow in
+  // practice; not a real problem at today's expected scale (a handful of
+  // projects per company, not thousands).
+  const [statusById, healthList] = await Promise.all([
+    resolveProjectStatuses(projects),
+    Promise.all(projects.map((p) => fetchAppHealth(p.slug))),
+  ]);
 
   res.json(
-    projects.map((p) => ({
+    projects.map((p, i) => ({
       ...p,
-      status: (p.currentDeploymentId && statusById.get(p.currentDeploymentId)) || "no_deployments",
+      status: (p.currentDeploymentId && statusById.get(p.currentDeploymentId)) || NO_DEPLOYMENTS_STATUS,
+      health: healthList[i],
     }))
   );
 });
@@ -81,8 +86,11 @@ projectsRouter.get(
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
-    const health = await fetchAppHealth(req.project!.slug);
-    res.json({ ...req.project, health });
+    const [health, status] = await Promise.all([
+      fetchAppHealth(req.project!.slug),
+      resolveProjectStatus(req.project!.currentDeploymentId),
+    ]);
+    res.json({ ...req.project, status, health });
   }
 );
 

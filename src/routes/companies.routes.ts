@@ -19,7 +19,18 @@ export const companiesRouter = Router();
 // session — there's no local session concept these need.
 
 companiesRouter.get("/companies", requireProxyToken, async (req, res) => {
-  res.json(await listMyCompanies(req.proxyAuthToken!));
+  const companies = await listMyCompanies(req.proxyAuthToken!);
+
+  // projectCount also appears on GET /companies/:companyId below — kept
+  // consistent between list and get-one rather than only on the single
+  // fetch. Cheap (a local DB count, not a proxy/network call), so no
+  // reason to withhold it here the way health is withheld from the
+  // projects list.
+  const counts = await Promise.all(
+    companies.map((c) => prisma.project.count({ where: { companyId: c.id } }))
+  );
+
+  res.json(companies.map((c, i) => ({ ...c, projectCount: counts[i] })));
 });
 
 const createCompanySchema = z.object({
