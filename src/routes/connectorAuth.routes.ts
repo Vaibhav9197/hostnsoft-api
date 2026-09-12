@@ -1,8 +1,9 @@
-import { Router, type Request } from "express";
+import { Router, type Request, urlencoded as expressUrlencoded } from "express";
 import { z } from "zod";
 import { verifyProxyAuthToken, getCompanyById } from "../lib/msg91";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
 import { mintConnectorToken } from "../services/connectorToken";
+import { redeemPendingLoginCode } from "../lib/connectorPendingLogin";
 import { createLimiter } from "../lib/rateLimit";
 import {
   CONNECTOR_TOKEN_RATE_WINDOW_MS,
@@ -33,26 +34,63 @@ function ipLimiter(keyPrefix: string, requestLabel: string, limit: number) {
   return createLimiter(keyPrefix, requestLabel, "ip", limit, CONNECTOR_TOKEN_RATE_WINDOW_MS, (req: Request) => req.ip ?? "unknown");
 }
 
-const exchangeSchema = z.object({ token: z.string().min(1) });
+// Accepts either a JSON body (direct API testing) or a standard OAuth-style
+// form-encoded token request (application/x-www-form-urlencoded) - the
+// latter is what a generic OAuth proxy (e.g. viasocket-mcp) sends without
+// any Embarko-specific handling. `client_id`/`client_secret`/`redirect_uri`/
+// `grant_type` may be present on that request; we don't need them (this
+// endpoint trusts the proxy_auth_token itself), so they're simply ignored.
+const formBodyParser = expressUrlencoded({ extended: false });
 
-// `token` here is the proxy_auth_token the AI client's embedded MSG91
-// login just produced — "the login result" in the user's own framing.
-// Mints a brand-new deploy token every call (same non-rotating shape as
-// the public email endpoint's mintEmailToken) scoped to the identity's
-// CURRENT company, matching how /auth/msg91/exchange already picks a
-// company for a fresh login. An account with no current company (rare —
-// proxy auto-creates a default one on first login) can't be handed a
-// token to a company that doesn't exist, so that's a 409 telling the
-// person to finish setup on the dashboard first, not a 500.
+const exchangeSchema = z
+  .object({
+    // `token`: this endpoint's own original field name - a proxy_auth_token
+    // presented directly (a direct/JSON caller that already holds a live
+    // PAT, not routed through the redirect flow below).
+    token: z.string().min(1).optional(),
+    // `code`: the standard OAuth authorization-code field name, used when a
+    // generic OAuth proxy exchanges the redirect result. This is NOT the
+    // PAT itself - GET /auth/msg91/callback hands out a single-use, short-TTL
+    // opaque code instead of the PAT (see connectorPendingLogin.ts's own
+    // comment for why), so this is always redeemed via Redis first.
+    code: z.string().min(1).optional(),
+  })
+  .refine((v) => v.token || v.code, { message: "token or code is required" });
+
+// `token` is a proxy_auth_token presented directly; `code` is redeemed
+// (single-use) for the proxy_auth_token it was issued for. Either way, once
+// resolved, this is "the login result" in the user's own framing. Mints a
+// brand-new deploy token every call (same non-rotating shape as the public
+// email endpoint's mintEmailToken) scoped to the identity's CURRENT
+// company, matching how /auth/msg91/exchange already picks a company for a
+// fresh login. An account with no current company (rare — proxy
+// auto-creates a default one on first login) can't be handed a token to a
+// company that doesn't exist, so that's a 409 telling the person to finish
+// setup on the dashboard first, not a 500.
 connectorAuthRouter.post(
   "/connector/token",
+  formBodyParser,
   ipLimiter("connector-exchange", "connector token requests", CONNECTOR_TOKEN_EXCHANGE_RATE_PER_IP),
   async (req, res) => {
-    const { token } = exchangeSchema.parse(req.body);
+    const { token, code } = exchangeSchema.parse(req.body);
+
+    let proxyAuthToken: string;
+    if (token) {
+      proxyAuthToken = token;
+    } else {
+      const redeemed = await redeemPendingLoginCode(code as string);
+      if (!redeemed) {
+        return res.status(400).json({
+          error: "invalid_grant",
+          message: "This code is invalid, expired, or already used. Start the connection again from your AI client.",
+        });
+      }
+      proxyAuthToken = redeemed;
+    }
 
     // A rejected token propagates as ProxyError -> 401 via errorHandler,
     // same as /auth/msg91/exchange.
-    const identity = await verifyProxyAuthToken(token);
+    const identity = await verifyProxyAuthToken(proxyAuthToken);
 
     if (!identity.company) {
       return res.status(409).json({
@@ -67,7 +105,11 @@ connectorAuthRouter.post(
     });
 
     res.status(201).json({
-      accessToken, // shown once — the AI client must store this now
+      // access_token: standard OAuth token-response field name, for a
+      // generic OAuth proxy parsing this as a normal token endpoint.
+      access_token: accessToken,
+      token_type: "bearer",
+      accessToken, // kept for existing/direct callers - shown once either way
       tokenId: record.id,
       label: record.label,
       companyId: record.companyId,
