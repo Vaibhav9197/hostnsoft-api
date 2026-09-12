@@ -12,6 +12,7 @@ import { requireProxyToken } from "../middleware/proxyToken";
 import { logAudit } from "../services/audit";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { resolveConnectorRedirect } from "../lib/connectorRedirect";
+import { createPendingLoginCode } from "../lib/connectorPendingLogin";
 import { logger } from "../lib/logger";
 import { ensureBillingForCompany } from "../services/billingCustomer";
 import type { Msg91Identity } from "../lib/msg91";
@@ -138,8 +139,14 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
   void ensureBillingForCurrentCompany(identity);
 
   // Unlike the internal dashboard redirect (whose frontend already has its
-  // PAT from the widget directly), an external connector redirect needs the
-  // token forwarded explicitly - that's the whole point of this branch.
+  // PAT from the widget directly), an external connector redirect needs some
+  // credential forwarded - that's the whole point of this branch. It must
+  // NOT be the PAT itself: this URL lands in browser history and very
+  // plausibly in the receiving service's own access logs, and the PAT is
+  // the same long-lived credential used for every dashboard API call, not
+  // something scoped to this one handoff. So we hand over a single-use,
+  // short-TTL opaque code instead (see connectorPendingLogin.ts) - POST
+  // /connector/token redeems it for the real PAT server-side, once.
   // Named `code` (not `access_token`) so it lines up with the standard
   // OAuth authorization-code query param the connector's callback already
   // expects and parses the same way regardless of which platform it's
@@ -151,7 +158,10 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
     res.redirect(target);
     return;
   }
-  const finalUrl = connectorState ? appendParam(appendParam(target, "code", token), "state", connectorState) : appendParam(target, "code", token);
+  const pendingLoginCode = await createPendingLoginCode(token);
+  const finalUrl = connectorState
+    ? appendParam(appendParam(target, "code", pendingLoginCode), "state", connectorState)
+    : appendParam(target, "code", pendingLoginCode);
   res.redirect(finalUrl);
 });
 
