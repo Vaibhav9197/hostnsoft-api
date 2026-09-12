@@ -383,6 +383,25 @@ comment for why), hashes the token, and checks it exists, isn't revoked
 — then stamps `DeployToken.lastUsedAt`. See
 `../hostnsoft-deploy/docs/CLAUDE.md` for that repo's side.
 
+**Resolved 2026-09-13 — claimed-app status/logs also accept a
+proxy_auth_token**: `GET /apps/:appName/status`, `.../logs`, and
+`.../customer-query` on `hostnsoft-deploy` (all three share one
+`authorizeAppAccess` helper — see that repo's `server.js`) used to accept
+only a deploy token for a claimed app. Rather than building a parallel
+API for a logged-in dashboard user to check their own app, that SAME
+helper now also accepts the dashboard's own `proxy_auth_token` as an
+alternative — checked against the SPECIFIC company the app belongs to via
+a new `POST /internal/proxy-auth/verify-membership`
+(`src/routes/internalProxyAuth.routes.ts`), since (unlike a deploy token)
+a PAT isn't itself scoped to one company. Gated by `requireInternalSecret`
+— not just "the token itself is the credential" like
+`/internal/deploy-tokens/validate` — since a PAT is a far more powerful
+credential than a company-scoped deploy token. An orphan app is
+unaffected (still no credential needed at all); a deploy token still
+takes precedence when both are somehow presented, so no existing
+agent/CI caller's behavior changes. See
+`../hostnsoft-deploy/verify-proxy-auth.js` for that repo's side.
+
 **Routing gotcha hit while wiring this up, worth remembering**: every
 resource router here (`companiesRouter`, `tokensRouter`, etc.) calls
 `.use(requireAuth)` on itself with no path filter. Since all these

@@ -466,6 +466,12 @@
     </div>
 
     <div class="navgroup">
+      <div class="navgroup-label">App status &amp; logs <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
+      <a class="navlink" href="#ep-deploy-status">Status</a>
+      <a class="navlink" href="#ep-deploy-logs">Logs</a>
+    </div>
+
+    <div class="navgroup">
       <div class="navgroup-label">Customer queries <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
       <a class="navlink" href="#ep-feature-requests-dashboard">Submit (dashboard)</a>
       <a class="navlink" href="#ep-feature-requests-public">Submit (public)</a>
@@ -1548,6 +1554,52 @@
 
     <hr class="rule" />
 
+    <section class="resource" id="deploy-status-logs">
+      <div class="resource-head"><h2>App status &amp; logs <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">Live on the <strong>deploy endpoint</strong> (<code>ship.embarko.ai</code>), <strong>not this API</strong> — same split as <a href="#feature-requests">the agent customer-query path</a> below, and sharing that same path's one authorization check (<strong>updated 2026-09-13</strong> to also accept <code>proxy_auth_token</code>): a request is allowed if the app is still an unclaimed orphan (no credential needed at all), or if the caller presents <strong>either</strong> a deploy token <strong>or</strong> a dashboard <code>proxy_auth_token</code> belonging to the app's own company — so someone already logged into the dashboard can check their own app's status/logs directly, without separately minting a deploy token just for that. Anyone else (including no credential at all, for a claimed app) gets <code>404</code> — never <code>403</code> — so a wrong/foreign credential can't even confirm the app exists. A credential that's present but itself invalid (a bad deploy token, or a rejected/expired <code>proxy_auth_token</code>) is <code>401</code> instead.</p>
+
+      <article class="endpoint" id="ep-deploy-status">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/apps/:appName/status</span>
+          <span class="role-chip">deploy token or proxy_auth_token (optional for an orphan app)</span>
+        </div>
+        <p class="endpoint-desc">The in-flight/last-completed deploy attempt (build/deploy progress, tracked in-process) alongside the app's real live health (a Nomad allocation check) — reported separately so "still building" and "built but crashed" read differently instead of both just looking like silence.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"appName"</span><span class="tok-punc">:</span> <span class="tok-str">"my-app"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"deploy"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span>
+    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// or "in_progress" | "failed" | "unknown"</span>
+    <span class="tok-key">"appVersion"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"startedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"finishedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"errorDetail"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span>
+  <span class="tok-punc">}</span><span class="tok-punc">,</span>
+  <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"healthy"</span> <span class="tok-comment">// or "unhealthy" | "unknown"</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="endpoint" id="ep-deploy-logs">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/apps/:appName/logs</span>
+          <span class="role-chip">deploy token or proxy_auth_token (optional for an orphan app)</span>
+        </div>
+        <p class="endpoint-desc">Recent tail (not streaming) of stdout/stderr for the app's most recent Nomad allocation, whether or not it's currently healthy — the most common reason to check logs is a build/runtime failure, so a dead allocation's logs matter here as much as a healthy one's. <code>?stream=stderr</code> for the error stream; stdout is the default.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"allocId"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"stream"</span><span class="tok-punc">:</span> <span class="tok-str">"stdout"</span><span class="tok-punc">,</span> <span class="tok-key">"logs"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span>
+<span class="tok-comment">// or, if no allocation is available yet:</span>
+<span class="tok-punc">{</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"reason"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
     <section class="resource" id="feature-requests">
       <div class="resource-head"><h2>Customer queries <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
       <p class="resource-intro">One <code>type</code> (<code>"feature"</code>, <code>"feedback"</code>, or <code>"other"</code>) and a <code>message</code> — submitted through three independent paths that all feed the same store. Submission-only from here; see <a href="#ep-admin-feature-requests">the admin listing</a> to read them back. <strong>Renamed 2026-09-09</strong> from <code>.../feature-requests</code> to <code>.../customer-query</code> on all three paths — same data, same behavior.</p>
@@ -1592,7 +1644,7 @@
 
       <div class="callout">
         <div class="eyebrow">Third path lives on the deploy endpoint, not here</div>
-        <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request, piece of feedback, or other query about the app it's deploying — <code>POST /apps/:appName/customer-query</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Same auth shape as that endpoint's <code>.../status</code> and <code>.../logs</code>: <code>Authorization: Bearer &lt;deploy token&gt;</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token directly (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards it here internally.</p>
+        <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request, piece of feedback, or other query about the app it's deploying — <code>POST /apps/:appName/customer-query</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Exact same auth as <a href="#deploy-status-logs">.../status and .../logs</a> above (all three share one check): a deploy token or a dashboard <code>proxy_auth_token</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token or proxy_auth_token directly for this path (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards the query here internally.</p>
       </div>
     </section>
 
