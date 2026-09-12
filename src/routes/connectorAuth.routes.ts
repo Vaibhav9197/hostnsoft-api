@@ -1,6 +1,6 @@
 import { Router, type Request, urlencoded as expressUrlencoded } from "express";
 import { z } from "zod";
-import { verifyProxyAuthToken, getCompanyById } from "../lib/msg91";
+import { verifyProxyAuthToken } from "../lib/msg91";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
 import { mintConnectorToken } from "../services/connectorToken";
 import { redeemPendingLoginCode } from "../lib/connectorPendingLogin";
@@ -20,8 +20,9 @@ import {
 //   1. POST /connector/token       — exchange the proxy_auth_token for a
 //      company-scoped deploy token (the actual credential used against
 //      hostnsoft-deploy from here on — see docs/CLAUDE.md "Auth flow" #2).
-//   2. POST /connector/token/validate — given a deploy token, is it still
-//      live and whose account (company) is it scoped to.
+//   2. GET /connector/token/validate  — given a deploy token (as a Bearer
+//      header), is it still live and whose account (company) is it scoped
+//      to.
 //
 // Neither route calls requireProxyToken (the credential for each arrives in
 // the body, not the proxy_auth_token header), so — same routing gotcha as
@@ -119,8 +120,6 @@ connectorAuthRouter.post(
   }
 );
 
-const validateSchema = z.object({ token: z.string().min(1) });
-
 // `token` here is a deploy token (from this endpoint, the dashboard, or the
 // public email endpoint — all three are ordinary DeployToken rows, this
 // doesn't care which minted it). Deliberately separate from
@@ -128,32 +127,29 @@ const validateSchema = z.object({ token: z.string().min(1) });
 // hostnsoft-deploy's own server-to-server calls (its own comment flags it
 // for eventual network-level restriction to hostnsoft-deploy's host) and
 // returns bare identifiers only. This one is meant for the wider internet
-// (an AI platform's backend introspecting a token it's holding), so it
-// resolves companyId to a human-readable companyName too — "whose account
-// it belongs to" in the user's own framing, not just an opaque id.
-connectorAuthRouter.post(
+// (an AI platform's backend introspecting a token it's holding) — a
+// generic OAuth/API-key proxy (e.g. viasocket-mcp) that validates a stored
+// credential by sending it in an Authorization header and reading the HTTP
+// status code, not a JSON body, to decide pass/fail. This is what actually
+// lets tool calls (not just login) succeed for a generic MCP proxy —
+// without it, every request after a successful login still gets rejected
+// at the per-request token check.
+connectorAuthRouter.get(
   "/connector/token/validate",
-  ipLimiter("connector-validate", "connector token validation requests", CONNECTOR_TOKEN_VALIDATE_RATE_PER_IP),
+  ipLimiter("connector-validate-header", "connector token validation requests", CONNECTOR_TOKEN_VALIDATE_RATE_PER_IP),
   async (req, res) => {
-    const { token } = validateSchema.parse(req.body);
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : authHeader;
+
+    if (!token) {
+      return res.status(400).json({ error: "missing_token", message: "Authorization header is required" });
+    }
 
     const record = await findLiveDeployToken(token);
     if (!record) {
-      return res.json({ valid: false });
+      return res.status(401).json({ valid: false });
     }
 
-    // Best-effort company name: proxy being briefly unavailable shouldn't
-    // turn "is this token valid" into a 5xx — the token's own validity
-    // already answered the question that matters most.
-    const company = await getCompanyById(record.companyId).catch(() => null);
-
-    res.json({
-      valid: true,
-      companyId: record.companyId,
-      companyName: company?.name ?? null,
-      tokenId: record.id,
-      label: record.label,
-      lastUsedAt: record.lastUsedAt,
-    });
+    res.status(200).json({ valid: true, companyId: record.companyId, tokenId: record.id });
   }
 );
