@@ -1,4 +1,4 @@
-import { Router, type Request } from "express";
+import { Router, type Request, urlencoded as expressUrlencoded } from "express";
 import { z } from "zod";
 import { verifyProxyAuthToken, getCompanyById } from "../lib/msg91";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
@@ -33,10 +33,27 @@ function ipLimiter(keyPrefix: string, requestLabel: string, limit: number) {
   return createLimiter(keyPrefix, requestLabel, "ip", limit, CONNECTOR_TOKEN_RATE_WINDOW_MS, (req: Request) => req.ip ?? "unknown");
 }
 
-const exchangeSchema = z.object({ token: z.string().min(1) });
+// Accepts either a JSON body (direct API testing) or a standard OAuth-style
+// form-encoded token request (application/x-www-form-urlencoded) - the
+// latter is what a generic OAuth proxy (e.g. viasocket-mcp) sends without
+// any Embarko-specific handling. `client_id`/`client_secret`/`redirect_uri`/
+// `grant_type` may be present on that request; we don't need them (this
+// endpoint trusts the proxy_auth_token itself), so they're simply ignored.
+const formBodyParser = expressUrlencoded({ extended: false });
 
-// `token` here is the proxy_auth_token the AI client's embedded MSG91
-// login just produced — "the login result" in the user's own framing.
+const exchangeSchema = z
+  .object({
+    // `token`: this endpoint's own original field name.
+    token: z.string().min(1).optional(),
+    // `code`: the standard OAuth authorization-code field name, used when a
+    // generic OAuth proxy exchanges the redirect result - the value is the
+    // same proxy_auth_token either way.
+    code: z.string().min(1).optional(),
+  })
+  .refine((v) => v.token || v.code, { message: "token or code is required" });
+
+// `token`/`code` here is the proxy_auth_token the AI client's embedded
+// MSG91 login just produced — "the login result" in the user's own framing.
 // Mints a brand-new deploy token every call (same non-rotating shape as
 // the public email endpoint's mintEmailToken) scoped to the identity's
 // CURRENT company, matching how /auth/msg91/exchange already picks a
@@ -46,13 +63,15 @@ const exchangeSchema = z.object({ token: z.string().min(1) });
 // person to finish setup on the dashboard first, not a 500.
 connectorAuthRouter.post(
   "/connector/token",
+  formBodyParser,
   ipLimiter("connector-exchange", "connector token requests", CONNECTOR_TOKEN_EXCHANGE_RATE_PER_IP),
   async (req, res) => {
-    const { token } = exchangeSchema.parse(req.body);
+    const { token, code } = exchangeSchema.parse(req.body);
+    const proxyAuthToken = (token ?? code) as string;
 
     // A rejected token propagates as ProxyError -> 401 via errorHandler,
     // same as /auth/msg91/exchange.
-    const identity = await verifyProxyAuthToken(token);
+    const identity = await verifyProxyAuthToken(proxyAuthToken);
 
     if (!identity.company) {
       return res.status(409).json({
@@ -67,7 +86,11 @@ connectorAuthRouter.post(
     });
 
     res.status(201).json({
-      accessToken, // shown once — the AI client must store this now
+      // access_token: standard OAuth token-response field name, for a
+      // generic OAuth proxy parsing this as a normal token endpoint.
+      access_token: accessToken,
+      token_type: "bearer",
+      accessToken, // kept for existing/direct callers - shown once either way
       tokenId: record.id,
       label: record.label,
       companyId: record.companyId,

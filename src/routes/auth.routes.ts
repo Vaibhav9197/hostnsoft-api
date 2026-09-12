@@ -11,6 +11,7 @@ import {
 import { requireProxyToken } from "../middleware/proxyToken";
 import { logAudit } from "../services/audit";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
+import { resolveConnectorRedirect } from "../lib/connectorRedirect";
 import { logger } from "../lib/logger";
 import { ensureBillingForCompany } from "../services/billingCustomer";
 import type { Msg91Identity } from "../lib/msg91";
@@ -86,12 +87,33 @@ function safeRedirectPath(next: unknown): string {
 // verified (so bad logins surface as auth_error) but not forwarded onward —
 // a frontend on this flow gets its PAT from the proxy embed it already
 // hosts.
+function appendParam(url: string, key: string, value: string): string {
+  const u = new URL(url);
+  u.searchParams.set(key, value);
+  return u.toString();
+}
+
 authRouter.get("/auth/msg91/callback", async (req, res) => {
   const next = safeRedirectPath(req.query.next);
   const token = req.query.proxy_auth_token;
+  // Only set when redirect_uri matches the connector allowlist; everything
+  // else (the dashboard's own login) keeps redirecting to FRONTEND_ORIGIN
+  // exactly as before.
+  const connectorRedirect = resolveConnectorRedirect(req.query.redirect_uri);
+  const target = connectorRedirect ?? `${FRONTEND_ORIGIN}${next}`;
+  // The dashboard's own convention is `auth_error`; a connector redirect
+  // uses the standard OAuth `error` param name instead, so a generic OAuth
+  // proxy on the other end (no Embarko-specific parsing) handles it the
+  // same way it would any other platform's failure response.
+  const errorParam = connectorRedirect ? "error" : "auth_error";
+  const connectorState = connectorRedirect && typeof req.query.state === "string" ? req.query.state : undefined;
+  function errorRedirect(code: string): string {
+    const url = appendParam(target, errorParam, code);
+    return connectorState ? appendParam(url, "state", connectorState) : url;
+  }
 
   if (typeof token !== "string" || token.length === 0) {
-    return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=missing_token`);
+    return res.redirect(errorRedirect("missing_token"));
   }
 
   // The one place proxy failures are caught by hand: this response is a
@@ -102,11 +124,11 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
   } catch (err) {
     if (err instanceof ProxyError && err.code === "PROXY_TOKEN_REJECTED") {
       logger.warn(`[auth.msg91.callback] rejected: ${err.message}`);
-      return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=invalid_token`);
+      return res.redirect(errorRedirect("invalid_token"));
     }
     if (err instanceof ProxyError) {
       logger.error(`[auth.msg91.callback] proxy ${err.status}: ${err.message}`);
-      return res.redirect(`${FRONTEND_ORIGIN}${next}?auth_error=identity_unavailable`);
+      return res.redirect(errorRedirect("identity_unavailable"));
     }
     throw err;
   }
@@ -115,7 +137,22 @@ authRouter.get("/auth/msg91/callback", async (req, res) => {
   // the dashboard learns readiness from GET /companies/:id/billing.
   void ensureBillingForCurrentCompany(identity);
 
-  res.redirect(`${FRONTEND_ORIGIN}${next}`);
+  // Unlike the internal dashboard redirect (whose frontend already has its
+  // PAT from the widget directly), an external connector redirect needs the
+  // token forwarded explicitly - that's the whole point of this branch.
+  // Named `code` (not `access_token`) so it lines up with the standard
+  // OAuth authorization-code query param the connector's callback already
+  // expects and parses the same way regardless of which platform it's
+  // talking to. `state` is opaque to us - a generic OAuth proxy sends it as
+  // its own top-level param (not embedded in redirect_uri), so it has to be
+  // forwarded explicitly too or the caller can't match this response back
+  // to the request that started it.
+  if (!connectorRedirect) {
+    res.redirect(target);
+    return;
+  }
+  const finalUrl = connectorState ? appendParam(appendParam(target, "code", token), "state", connectorState) : appendParam(target, "code", token);
+  res.redirect(finalUrl);
 });
 
 // The frontend revokes the PAT against proxy directly on logout; our job is
