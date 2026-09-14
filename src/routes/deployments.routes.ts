@@ -118,7 +118,7 @@ deploymentsRouter.post(
       imageTag: target.imageTag,
       memoryMb: effectiveMemoryMb,
       status: "in_progress",
-      triggeredBy: `rollback:${req.userId}`,
+      triggeredBy: `re-deploy:${req.userId}`,
     });
 
     const result = await pushAppConfig(project, {
