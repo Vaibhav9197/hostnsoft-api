@@ -9,9 +9,11 @@
 // forwarding it directly, we mint a random opaque code, store the real PAT
 // against it in Redis (shared across processes, matching every other
 // cross-process lookup in this codebase - see ttlCache.ts) for a couple of
-// minutes, and forward that. GETDEL makes redemption single-use: the second
-// attempt to use the same code - a replayed URL from browser history or a
-// log - always fails.
+// minutes, and forward that. Redemption uses a MULTI GET+DEL (GETDEL isn't
+// available on every Redis-compatible deployment we run against) to make
+// redemption single-use: the second attempt to use the same code - a
+// replayed URL from browser history or a log - always fails. MULTI/EXEC
+// is atomic, so two concurrent redemptions still can't both see the value.
 import crypto from "crypto";
 import { redis } from "./redis";
 import { logger } from "./logger";
@@ -33,9 +35,16 @@ export async function createPendingLoginCode(proxyAuthToken: string): Promise<st
 // (already redeemed, expired, or never issued) - callers should treat all
 // three identically, as an invalid/expired grant.
 export async function redeemPendingLoginCode(code: string): Promise<string | null> {
-  const value = await redis.getDel(key(code)).catch((err) => {
-    logger.error("[connectorPendingLogin] redeem failed:", err);
-    return null;
-  });
+  const k = key(code);
+  const value = await redis
+    .multi()
+    .get(k)
+    .del(k)
+    .exec()
+    .then((results) => results?.[0] as string | null)
+    .catch((err) => {
+      logger.error("[connectorPendingLogin] redeem failed:", err);
+      return null;
+    });
   return value ?? null;
 }
