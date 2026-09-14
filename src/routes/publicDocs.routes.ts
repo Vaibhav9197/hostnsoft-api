@@ -32,7 +32,7 @@ const PUBLIC_DOCS_DIR = path.resolve(__dirname, "../../public-docs");
 // index page's listing order and implicitly which files are servable at
 // all (see the slug validation below, which checks against this list's
 // actual filenames on disk rather than trusting the request).
-const DOC_ORDER = ["docs.md", "troubleshoot.md", "limitations-and-recommendations.md"];
+const DOC_ORDER = ["docs.md", "troubleshoot.md", "limitations-and-recommendations.md", "hackathons.md"];
 
 function slugFor(filename: string): string {
   return filename.replace(/\.md$/, "");
@@ -168,6 +168,7 @@ function pageHtml(title: string, bodyHtml: string): string {
   <a href="${HTML_PREFIX}/docs">Getting started &amp; API reference</a>
   <a href="${HTML_PREFIX}/troubleshoot">Troubleshooting</a>
   <a href="${HTML_PREFIX}/limitations-and-recommendations">Limitations &amp; recommendations</a>
+  <a href="${HTML_PREFIX}/hackathons">Hackathons</a>
 </nav>
 <div class="wrap">
 ${bodyHtml}
