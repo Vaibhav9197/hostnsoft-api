@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { getCompanyById } from "../lib/msg91";
+import { getCompanyById, getUserByEmail, getUserById } from "../lib/msg91";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin";
 import { featureRequestTypeSchema } from "../services/featureRequests";
@@ -109,5 +109,118 @@ adminRouter.get("/admin/customer-query", async (req, res) => {
     limit: query.limit,
     total,
     totalPages: Math.ceil(total / query.limit),
+  });
+});
+
+const grantSuperAdminSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+// POST /admin/super-admins — grant super-admin to another user by email.
+// Caller must already be a super admin (router-level requireSuperAdmin).
+// Email is what an admin actually knows about a colleague; it's resolved to
+// the proxy (MSG91) user id via getUserByEmail because SuperAdmin is keyed
+// on that id — the same key requireProxyToken puts on req.userId and the
+// same one scripts/grant-super-admin.ts takes. An email proxy doesn't know
+// is a 404, so nothing dangling is ever written. Idempotent: granting to an
+// existing admin is a no-op that still returns 200.
+adminRouter.post("/admin/super-admins", async (req, res) => {
+  const { email } = grantSuperAdminSchema.parse(req.body);
+
+  const user = await getUserByEmail(email);
+  if (!user) {
+    return res.status(404).json({ error: "User not found", code: "USER_NOT_FOUND" });
+  }
+
+  const existing = await prisma.superAdmin.findUnique({ where: { userId: user.id } });
+  const admin = existing ?? (await prisma.superAdmin.create({ data: { userId: user.id } }));
+
+  res.status(existing ? 200 : 201).json({
+    userId: admin.userId,
+    email: user.email,
+    name: user.name,
+    grantedAt: admin.grantedAt.toISOString(),
+    grantedBy: req.userId,
+    alreadyAdmin: existing !== null,
+  });
+});
+
+// GET /admin/super-admins — everyone currently holding super-admin, newest
+// grant first. SuperAdmin stores only userId + grantedAt, so name/email are
+// resolved from proxy (getUserById, TTL-cached) the same way /admin/apps
+// resolves company names. A row whose user proxy no longer knows still
+// appears, with null name/email and unresolved: true — it holds real access,
+// so hiding it would make the list lie about who can get in.
+adminRouter.get("/admin/super-admins", async (req, res) => {
+  const admins = await prisma.superAdmin.findMany({ orderBy: { grantedAt: "desc" } });
+
+  const users = await Promise.all(admins.map((a) => getUserById(a.userId)));
+
+  res.json(
+    admins.map((admin, i) => {
+      const user = users[i];
+      return {
+        userId: admin.userId,
+        email: user?.email ?? null,
+        name: user?.name ?? null,
+        grantedAt: admin.grantedAt.toISOString(),
+        unresolved: user === null,
+        isSelf: admin.userId === req.userId,
+      };
+    })
+  );
+});
+
+const revokeSuperAdminSchema = z.object({
+  userId: z.string().min(1),
+});
+
+// DELETE /admin/super-admins/:userId — revoke super-admin. Keyed on the
+// proxy user id, not email: the id is what GET /admin/super-admins returns
+// for every row, including rows proxy can no longer resolve to an email,
+// and those are exactly the stale grants most worth being able to remove.
+//
+// Two guards, both refusing rather than silently locking people out:
+// self-revoke (an admin dropping their own access can't undo it — nothing
+// over HTTP grants it back to a non-admin, only the script can) and
+// last-admin (the SuperAdmin table emptying means /admin/* becomes
+// unreachable for everyone and only scripts/grant-super-admin.ts can
+// recover it).
+adminRouter.delete("/admin/super-admins/:userId", async (req, res) => {
+  const { userId } = revokeSuperAdminSchema.parse(req.params);
+
+  if (userId === req.userId) {
+    return res.status(400).json({
+      error: "You cannot revoke your own super-admin access",
+      code: "CANNOT_REVOKE_SELF",
+    });
+  }
+
+  const existing = await prisma.superAdmin.findUnique({ where: { userId } });
+  if (!existing) {
+    return res.status(404).json({ error: "Super admin not found", code: "SUPER_ADMIN_NOT_FOUND" });
+  }
+
+  // Belt-and-braces: self-revoke is already blocked above, so a count of 1
+  // here means the caller isn't in the table at all — impossible past
+  // requireSuperAdmin. Kept anyway so the invariant survives the guard
+  // above ever being relaxed.
+  const total = await prisma.superAdmin.count();
+  if (total <= 1) {
+    return res.status(400).json({
+      error: "Cannot revoke the last super admin",
+      code: "LAST_SUPER_ADMIN",
+    });
+  }
+
+  await prisma.superAdmin.delete({ where: { userId } });
+
+  const user = await getUserById(userId);
+  res.json({
+    userId,
+    email: user?.email ?? null,
+    name: user?.name ?? null,
+    revokedAt: new Date().toISOString(),
+    revokedBy: req.userId,
   });
 });
