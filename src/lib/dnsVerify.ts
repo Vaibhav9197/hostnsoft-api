@@ -9,8 +9,8 @@
  * the expected, common case here, not an exceptional one.
  */
 import { promises as dns } from "node:dns";
-import type { DomainType } from "./customDomain";
-import { EDGE_HOSTNAME, ORIGIN_SERVER_IP } from "./customDomainConfig";
+import { isPlatformDomain, type DomainType } from "./customDomain";
+import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, PLATFORM_DOMAIN } from "./customDomainConfig";
 import { logger } from "./logger";
 
 function normalizeHostname(host: string): string {
@@ -56,5 +56,19 @@ async function apexPointsAtOrigin(domain: string): Promise<boolean> {
 }
 
 export async function verifyDomainDns(domain: string, type: DomainType): Promise<boolean> {
+  // Refused here rather than only at registration, so every caller inherits
+  // it: the verify endpoint, the periodic re-verification sweep, and
+  // anything added later. A name in our own zone would otherwise pass on
+  // the origin-IP fallback below, since that's exactly where it points.
+  //
+  // This also cleans up after itself. Any such domain registered before
+  // this check existed is `active` today; the next re-verification pass
+  // sees false and deactivates it, with no migration to write.
+  if (isPlatformDomain(domain, PLATFORM_DOMAIN)) {
+    logger.warn(
+      `[dnsVerify] refusing "${domain}": inside the platform zone ${PLATFORM_DOMAIN}, never a valid custom domain`
+    );
+    return false;
+  }
   return type === "apex" ? apexPointsAtOrigin(domain) : subdomainPointsAtEdge(domain);
 }

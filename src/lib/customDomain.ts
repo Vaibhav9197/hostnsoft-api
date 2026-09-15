@@ -22,6 +22,31 @@ export function isValidDomainSyntax(domain: string): boolean {
   return DOMAIN_SYNTAX.test(domain);
 }
 
+/**
+ * Is this domain the platform's own zone, or inside it?
+ *
+ * Registering one as a "custom domain" would hand a customer a Traefik
+ * router for a platform hostname. DNS verification does not stop it: the
+ * subdomain check falls back to matching the origin IP, and every name in
+ * this zone that points at the origin matches. So it's refused up front,
+ * by name, before any DNS is consulted.
+ *
+ * Matches the zone itself and anything under it at any depth —
+ * `embarko.ai`, `ship.embarko.ai` and `a.b.embarko.ai` alike. The
+ * endsWith test is anchored on a leading dot so a lookalike registration
+ * like `notembarko.ai` isn't caught by accident.
+ *
+ * Takes the zone as an argument rather than importing it: this module is
+ * pure name-handling with no config dependency, and customDomainConfig
+ * throws at import time if its env vars are missing, which would drag a
+ * startup requirement into anything that only wanted to classify a string.
+ */
+export function isPlatformDomain(domain: string, platformDomain: string): boolean {
+  const lower = domain.toLowerCase().replace(/\.$/, "");
+  const zone = platformDomain.toLowerCase().replace(/\.$/, "");
+  return lower === zone || lower.endsWith(`.${zone}`);
+}
+
 export function classifyDomain(domain: string): DomainType {
   const lower = domain.toLowerCase();
   const parsed = psl.parse(lower);
