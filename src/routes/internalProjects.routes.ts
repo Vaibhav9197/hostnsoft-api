@@ -42,9 +42,19 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     return res.status(401).json(unauthorizedDeployTokenBody());
   }
 
+  // Reserved before taken: a name that's both should say it's reserved,
+  // since that's the one the caller can't resolve by trying again later.
+  if (result.claim.rejected) {
+    return res.status(409).json({
+      error: result.claim.rejected.reason,
+      code: result.claim.rejected.code,
+    });
+  }
+
   if (result.claim.conflict) {
     return res.status(409).json({
       error: `App name "${slug}" is already in use by a different company`,
+      code: "app_name_taken",
     });
   }
 

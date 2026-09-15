@@ -463,6 +463,27 @@ Things that apply everywhere above, collected here rather than front-loaded.
   app name is also its live subdomain (`<app-name>.app.embarko.ai`). If
   another company already used the exact name you're deploying,
   `code: "app_name_taken"`.
+
+### [App names](#app-names)
+
+An app name becomes a hostname, so it has to satisfy DNS as well as us:
+lowercase letters, digits and hyphens (`^[a-z0-9-]+$`), 3–63 characters,
+and it can't start or end with a hyphen.
+
+Some names are **reserved by the platform** — infrastructure (`ship`,
+`api`, `www`, `admin`), mail and DNS (`mail`, `smtp`, `ns1`), TLS
+validation (`acme`, `well-known`), authentication and payment (`login`,
+`auth`, `billing`, `checkout`), and the platform's own brand and support
+names (`docs`, `status`, `security`, `support`). Deploying one is refused
+with `code: "app_name_reserved"`.
+
+The distinction matters if you're automating: **`app_name_taken` can free
+up later, `app_name_reserved` never does** — don't retry a reserved name,
+pick a different one. `GET /capabilities` carries the length limits and
+the refusal codes.
+
+Apps that already hold a reserved name keep working; the rule applies to
+newly claimed names only.
 - **Every non-2xx response has a `code` field.** Branch on `code`, not on the
   human-readable `error` string, which can change without notice. Full list
   in [`troubleshoot.md`](troubleshoot.md).
