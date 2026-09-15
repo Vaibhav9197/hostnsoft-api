@@ -105,6 +105,8 @@ deploymentsRouter.post(
           retainCount: outcome.retainCount,
         });
       }
+      // Everything else narrows to rollback_push_failed, the only remaining
+      // member of RollbackOutcome and the only one carrying `error`.
       return res.status(502).json({ error: `Rollback failed: ${outcome.error}` });
     }
 

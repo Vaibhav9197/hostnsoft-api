@@ -132,6 +132,7 @@ function sendRedeployFailure(res: Response, outcome: Extract<RedeployOutcome, { 
         code: "rollback_image_unavailable",
         retainCount: outcome.retainCount,
       });
+    // Narrows to rollback_push_failed once every other member is handled.
     default:
       return res.status(502).json({ error: `Re-deploy failed: ${outcome.error}`, code: "rollback_push_failed" });
   }

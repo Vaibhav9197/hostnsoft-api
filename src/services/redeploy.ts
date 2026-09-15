@@ -23,13 +23,29 @@ import { prisma } from "../lib/prisma";
 import { pushAppConfig } from "./customDomainActivation";
 import { createDeploymentWithNextVersion } from "./deploymentVersioning";
 
-export type RedeployOutcome =
-  | { ok: true; deployment: Deployment; target: Deployment }
-  | { ok: false; code: "deployment_not_found" }
-  | { ok: false; code: "rollback_not_successful_deployment" }
-  | { ok: false; code: "no_current_deployment" }
+type Succeeded = { ok: true; deployment: Deployment; target: Deployment };
+
+// Failures the push itself can produce, whichever image it was given.
+type PushFailure =
   | { ok: false; code: "rollback_image_unavailable"; retainCount: number }
   | { ok: false; code: "rollback_push_failed"; error: string };
+
+type PushOutcome = Succeeded | PushFailure;
+
+// The two entry points fail in different ways, and saying so in the types is
+// what lets each caller handle only what it can actually receive. Widening
+// both to one union meant the dashboard's rollback route had to handle
+// "no_current_deployment" — a case it can never get — and TypeScript
+// rightly refused to let it read `.error` off a member that has none.
+export type RollbackOutcome =
+  | PushOutcome
+  | { ok: false; code: "deployment_not_found" }
+  | { ok: false; code: "rollback_not_successful_deployment" };
+
+export type ApplyConfigOutcome = PushOutcome | { ok: false; code: "no_current_deployment" };
+
+/** Everything either entry point can return — for code that handles both. */
+export type RedeployOutcome = RollbackOutcome | ApplyConfigOutcome;
 
 /**
  * The shared body. `target` supplies the image; everything else is read
@@ -40,7 +56,7 @@ async function pushWithImage(
   project: Project,
   target: Deployment,
   triggeredBy: string
-): Promise<RedeployOutcome> {
+): Promise<PushOutcome> {
   const activeDomains = await prisma.domain.findMany({
     where: { projectId: project.id, status: "active" },
     select: { domain: true },
@@ -94,7 +110,7 @@ export async function rollbackToDeployment(
   project: Project,
   targetDeploymentId: string,
   triggeredBy: string
-): Promise<RedeployOutcome> {
+): Promise<RollbackOutcome> {
   const target = await prisma.deployment.findFirst({
     where: { id: targetDeploymentId, projectId: project.id },
   });
@@ -118,7 +134,7 @@ export async function rollbackToDeployment(
 export async function applyCurrentConfig(
   project: Project,
   triggeredBy: string
-): Promise<RedeployOutcome> {
+): Promise<ApplyConfigOutcome> {
   if (!project.currentDeploymentId) {
     return { ok: false, code: "no_current_deployment" };
   }
