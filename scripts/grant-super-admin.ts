@@ -1,8 +1,9 @@
-// Deliberately the ONLY way to grant admin access — see docs/admin-panel.md
-// Part 3. No API/UI does this on purpose, to keep the set of people who can
-// grant it limited to those with direct access to run this script (or the
-// equivalent manual SQL) against the database, not anything reachable over
-// HTTP.
+// Bootstrap path for admin access: the FIRST super admin has to be created
+// here (or via the equivalent manual SQL), since POST /admin/super-admins
+// (src/routes/admin.routes.ts) requires the caller to already be a super
+// admin. Once one exists, existing admins can grant and revoke over HTTP
+// (POST and DELETE /admin/super-admins). This script stays the only way
+// back in if the table is ever emptied entirely.
 //
 // Usage: npx tsx scripts/grant-super-admin.ts <proxyUserId>
 // Revoke: npx tsx scripts/grant-super-admin.ts --revoke <proxyUserId>
