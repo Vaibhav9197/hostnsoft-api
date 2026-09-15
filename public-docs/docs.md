@@ -389,6 +389,69 @@ project**.
 Tears down the running app (its container, routing, and image) as
 well as the dashboard record — this is not reversible.
 
+## [Agent control plane](#agent-control-plane)
+
+Everything above assumes a person in the dashboard. An AI agent or CI
+script holding a **deploy token** can do the common operations itself, at
+`https://ship.embarko.ai/api/apps/<app-name>/…`, addressed by app name
+rather than by the internal company and project ids the dashboard uses.
+
+| Operation | Request |
+|---|---|
+| App summary | `GET /api/apps/<name>` |
+| List env vars | `GET /api/apps/<name>/env-vars` |
+| Set env vars in bulk | `PUT /api/apps/<name>/env-vars` |
+| Update one env var | `PUT /api/apps/<name>/env-vars/<key>` |
+| Delete an env var | `DELETE /api/apps/<name>/env-vars/<key>` |
+| Apply saved env vars | `POST /api/apps/<name>/env-vars/apply` |
+| Deployment history | `GET /api/apps/<name>/deployments` |
+| One deployment | `GET /api/apps/<name>/deployments/<id>` |
+| Roll back | `POST /api/apps/<name>/rollback` |
+
+All take `Authorization: Bearer <deploy token>`, and resolve only apps
+belonging to that token's company — anything else is a `404`, never a
+`403`.
+
+**Env var values are never returned.** The list endpoint gives keys and
+`set: true`, not values. Env vars double as this platform's secret store,
+and an agent's context is transcribed and retained in ways a dashboard
+session isn't. Set a new value if you need to change one; ask the person if
+you genuinely need to know one.
+
+**`PUT` merges.** Variables you don't include are left alone, so setting
+one can't silently drop the rest.
+
+**Updating one variable** is `PUT .../env-vars/<key>` with `{"value":
+"..."}`. It creates the variable if it doesn't exist and reports which
+happened via `created`.
+
+**A write does not reach the running app on its own.** Env vars are baked
+into the job spec at deploy time, so saving one leaves the running
+container untouched — the response says `"applied": false,
+"appliesOn": "next_deploy"`.
+
+To make a change take effect **without a rebuild or a source re-upload**,
+pass `"apply": true` on either write, or call `POST .../env-vars/apply`
+after several. That re-pushes the currently running image with the new
+configuration and returns `202` plus a `statusUrl` to poll — the same
+shape as a rollback. This is what lets an agent fix an app that can't boot
+because a variable is missing, in a situation where it has no source to
+re-upload.
+
+If the app has never deployed successfully there's nothing to re-push:
+that's `422 no_current_deployment`, and the values stay saved for the next
+deploy.
+
+**Rollback** with an empty body `{}` targets the most recent successful
+deployment that isn't current — "undo the last deploy". Pass
+`{"deploymentId": "..."}` for a specific one; `GET .../deployments` marks
+each valid target with `rollbackTarget: true`. It returns `202` with a
+`statusUrl` to poll until `terminal` is `true`.
+
+Custom domains, memory, analytics and deletion remain dashboard-only for
+now. [`/capabilities`](#capabilities) states which is which under each
+feature's `via`.
+
 ## [Conventions](#conventions)
 
 Things that apply everywhere above, collected here rather than front-loaded.

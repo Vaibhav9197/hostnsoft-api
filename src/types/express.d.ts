@@ -1,4 +1,4 @@
-import type { Project } from "@prisma/client";
+import type { DeployToken, Project } from "@prisma/client";
 import type { Msg91Identity } from "../lib/msg91";
 
 declare global {
@@ -15,6 +15,10 @@ declare global {
       // against proxy (company list, switch, /auth/me). Never persisted.
       proxyAuthToken?: string;
       proxyIdentity?: Msg91Identity;
+      // The validated deploy token behind an agent-authenticated request
+      // (src/middleware/deployTokenContext.ts). Present only on the agent
+      // routes; the dashboard's own routes never set it.
+      deployToken?: DeployToken;
     }
   }
 }

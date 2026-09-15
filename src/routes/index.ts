@@ -9,6 +9,7 @@ import { publicTokensRouter } from "./publicTokens.routes";
 import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { publicDocsRouter } from "./publicDocs.routes";
 import { connectorAuthRouter } from "./connectorAuth.routes";
+import { agentAppsRouter } from "./agentApps.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
 import { tokensRouter } from "./tokens.routes";
@@ -40,6 +41,9 @@ router.use(publicTokensRouter);
 router.use(publicCustomerQueryRouter);
 router.use(publicDocsRouter);
 router.use(connectorAuthRouter);
+// Agent control plane: deploy-token auth, mounted with the other
+// non-requireProxyToken routers per the ordering rule above.
+router.use(agentAppsRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);
