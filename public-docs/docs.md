@@ -83,6 +83,34 @@ Full details on both endpoints: [Checking deploy status & logs](#status-and-logs
   doesn't exist here. Use SQLite (`better-sqlite3`) or PGlite
   (`@electric-sql/pglite`) under `DATA_DIR` instead.
 
+## [Capabilities](#capabilities)
+
+`GET https://ship.embarko.ai/capabilities` — the machine-readable version of
+this page's constraints. No authentication, cached for an hour, and safe to
+read before you have a token.
+
+It answers the questions you need settled *before* writing an app: the
+runtime contract (`PORT`, `0.0.0.0`, no Dockerfile), what survives a
+redeploy and what doesn't, how to obtain a credential, the memory defaults,
+and which features exist. Each feature also says **who can invoke it** —
+some are dashboard-only today, so an agent can tell in advance whether it
+can do a thing itself or has to hand it to a person.
+
+```json
+{
+  "runtime": { "port_env": "PORT", "bind_address": "0.0.0.0", "dockerfile": "rejected" },
+  "persistence": { "data_dir_env": "DATA_DIR", "survives_redeploy": true, "survives_node_loss": false },
+  "features": {
+    "deploy":   { "status": "available", "via": ["agent", "dashboard"] },
+    "rollback": { "status": "available", "via": ["dashboard"] },
+    "backups":  { "status": "unavailable" }
+  }
+}
+```
+
+Anything reported `"unavailable"` is genuinely not built — don't design
+around it.
+
 ## [Authentication](#authentication)
 
 Every deploy is authenticated one of two ways:
@@ -102,10 +130,25 @@ Authorization: Bearer <token>
 4. `export DEPLOY_TOKEN="..."` (or store it in a local credentials file,
    e.g. `~/.embarko/credentials`, `chmod 600`).
 
+**By email, no browser needed** — the route to prefer when an AI agent is
+doing the work, since it needs nothing but an email address:
+
+```bash
+curl -X POST "https://ship.embarko.ai/api/public/deploy-tokens/request" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+```
+
+Always returns `202` — the token is emailed, never returned in the
+response, and an account and company are created automatically if that
+address doesn't have one. Rate limited per-email, per-IP and globally.
+
 **Rotating/revoking**: from the same page, **Rotate** issues a replacement
 under the same label — the old token keeps working for **one hour**
 afterward so an in-flight CI run doesn't break. **Revoke** disables a token
-immediately.
+immediately. Because tokens are stored hashed and shown only once, **Rotate
+is also how you recover a token you've lost** — there is no way to read an
+existing one back.
 
 Deploy tokens are company-wide (not scoped to one project) and authenticate
 deploys only — they don't sign in to the dashboard itself.
