@@ -11,11 +11,19 @@ for the platform's real shape rather than an idealized one.
 ## Compute & isolation
 
 ### Memory is hard-enforced; CPU is not
-Memory is reserved per app and enforced at the container level — exceeding
+Memory is capped per app and enforced at the container level — exceeding
 your limit gets your app OOM-killed, not throttled (confirmed via a real
 incident where the kernel killed one container without affecting its
 neighbors). CPU, by contrast, is a **relative share, not a ceiling** — a
 CPU-heavy neighbor app can degrade your app's performance under contention.
+
+Note that your `memoryMb` is a ceiling rather than a reservation: apps are
+scheduled against a much lower floor and burst up to their ceiling when the
+host has capacity (see [`docs.md`](docs.md#memory-allocation)). Usage above
+that floor is therefore best-effort. This doesn't change the number your app
+gets OOM-killed at — that's still your ceiling, exactly as before — but it
+does mean an app that permanently sits near its ceiling is relying on
+capacity it isn't guaranteed.
 
 **Recommendation:** size `memoryMb` to your app's real peak usage with
 headroom (see [`docs.md`](docs.md#memory-allocation)), and treat memory as

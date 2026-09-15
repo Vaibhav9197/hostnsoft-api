@@ -351,7 +351,11 @@ Mutable, by any company member:
   database table.
 - **Memory allocation** — override the auto-detected default (currently
   256MB / 512MB based on PGlite detection, per the gist). Needs a way to
-  push this into the Nomad job spec too.
+  push this into the Nomad job spec too. Note this value is now the task's
+  burst *ceiling* (`memory_max`), not its reservation — deploy-service
+  schedules against a much lower floor (64/128MB) that `Project.memoryMb`
+  deliberately does not affect, so raising memory buys headroom without
+  making the app harder to place.
 
 ## Integration with the existing `hostnsoft-deploy`
 

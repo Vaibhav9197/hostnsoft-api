@@ -260,6 +260,16 @@ container on their own (see
 
 Default is 256MB (512MB if an embedded DB like PGlite is auto-detected).
 
+That number is your app's **ceiling** — the most it may use. Apps are
+*scheduled* against a much lower floor (64MB, or 128MB with an embedded
+DB), because in practice almost everything deployed here idles far below
+its ceiling. The practical effect is that apps get placed and start more
+reliably, and your app can still use anything up to its ceiling whenever
+the host has room. What it does mean: memory above the floor is
+best-effort, not reserved for you. An app that genuinely sits near its
+ceiling all the time is better off having that ceiling raised than
+relying on burst.
+
 1. Open your project in the dashboard and go to its **Memory** section.
 2. Enter the new limit in MB and save.
 
