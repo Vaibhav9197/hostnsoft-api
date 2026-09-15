@@ -2,37 +2,22 @@
 
 ## [Overview](#overview)
 
-Embarko deploys apps from source to a live URL, and gives each company a
-dashboard/API to manage what's running: environment variables, memory
-allocation, deployment history, rollback, and custom domains.
+Embarko builds and runs apps from source in minutes. Upload the code — it
+detects the language, builds the image, and serves it. No Dockerfile, no
+build configuration.
 
-**Most day-to-day management — env vars, memory, rollback, custom domains,
-monitoring, deleting a project — happens directly in the dashboard**
-(`https://embarko.ai/app`), and that's what the sections below walk
-through. Deploying itself always goes through the **Deploy API**
-(`https://ship.embarko.ai/apps...`) — there's no separate
-upload-through-the-dashboard flow, so this is what an agent, CI pipeline,
-or your own script uses to actually ship code.
+Every app gets a live URL at `<app-name>.app.embarko.ai`, and can also be
+served from your own domain.
 
-Everything the dashboard does is also available directly as a **Platform
-API** (`https://ship.embarko.ai/api/...`) for anyone building their own
-tooling instead of using the dashboard — not the focus of this doc, since
-it walks through the dashboard, but it exists if you want it.
+No account needed to deploy. An anonymous deploy is a real, running app
+that expires after 24 hours; add a deploy token to keep it permanently.
 
-A few things that apply everywhere below:
-- **Projects auto-create on first deploy.** No dashboard step is required
-  beforehand — the first deploy of a new app name creates its project under
-  your token's company automatically.
-- **App names are unique platform-wide**, not just within your company — an
-  app name is also its live subdomain (`<app-name>.app.embarko.ai`). If
-  another company already used the exact name you're deploying,
-  `code: "app_name_taken"`.
-- **Every non-2xx response has a `code` field.** Branch on `code`, not on the
-  human-readable `error` string, which can change without notice. Full list
-  in [`troubleshoot.md`](troubleshoot.md).
+Apps run as real processes, not static files: yours must listen on `$PORT`
+and bind `0.0.0.0`. Anything written under `$DATA_DIR` survives a redeploy.
 
-For every error/edge case and known platform constraint, see
-[`troubleshoot.md`](troubleshoot.md) — this doc only covers the happy path.
+Deploying always goes through the **Deploy API** — what an agent, a CI
+pipeline, or your own script calls. Environment variables, rollback,
+domains and monitoring live in the dashboard.
 
 ## [Quick start](#quick-start)
 
@@ -403,6 +388,30 @@ project**.
 
 Tears down the running app (its container, routing, and image) as
 well as the dashboard record — this is not reversible.
+
+## [Conventions](#conventions)
+
+Things that apply everywhere above, collected here rather than front-loaded.
+
+- **Projects auto-create on first deploy.** No dashboard step is required
+  beforehand — the first deploy of a new app name creates its project under
+  your token's company automatically.
+- **App names are unique platform-wide**, not just within your company — an
+  app name is also its live subdomain (`<app-name>.app.embarko.ai`). If
+  another company already used the exact name you're deploying,
+  `code: "app_name_taken"`.
+- **Every non-2xx response has a `code` field.** Branch on `code`, not on the
+  human-readable `error` string, which can change without notice. Full list
+  in [`troubleshoot.md`](troubleshoot.md).
+- **Timestamps** are RFC 3339 UTC.
+
+**The Platform API.** Everything the dashboard does is also available
+directly at `https://ship.embarko.ai/api/...`, for building your own
+tooling instead of clicking through the dashboard. It authenticates with a
+dashboard session credential rather than a deploy token, so a deploy token
+alone can't reach it — see
+[Capabilities](#capabilities), where each feature states whether you can
+invoke it yourself.
 
 ## [Errors and known limitations](#errors)
 
