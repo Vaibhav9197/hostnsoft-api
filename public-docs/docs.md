@@ -96,7 +96,9 @@ Authorization: Bearer <token>
 1. Go to `https://embarko.ai/login` and sign in (or create an account).
 2. Open your company's **Deploy tokens** page (`https://embarko.ai/app/tokens`).
 3. Enter a label (e.g. `"CI pipeline"`) and click **Create token** — shown
-   once, prefixed `hns_`, and cannot be retrieved again.
+   once, prefixed `emb_`, and cannot be retrieved again. (Tokens issued
+   before the Embarko rename start `hns_` and remain valid — there's no
+   need to rotate them.)
 4. `export DEPLOY_TOKEN="..."` (or store it in a local credentials file,
    e.g. `~/.embarko/credentials`, `chmod 600`).
 
