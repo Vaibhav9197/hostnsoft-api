@@ -49,6 +49,9 @@ router.use(connectorAuthRouter);
 // non-requireProxyToken routers per the ordering rule above.
 router.use(agentAppsRouter);
 
+// Mixed: GET /billing/plans is open, the rest need a token. Stays above the
+// blanket-check routers below, which would 401 that route first.
+router.use(billingRouter);
 router.use(authRouter);
 router.use(companiesRouter);
 router.use(tokensRouter);
@@ -56,7 +59,6 @@ router.use(projectsRouter);
 router.use(deploymentsRouter);
 router.use(envVarsRouter);
 router.use(domainsRouter);
-router.use(billingRouter);
 router.use(analyticsRouter);
 router.use(customerQueryRouter);
 router.use(showcaseRouter);

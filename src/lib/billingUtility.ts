@@ -41,7 +41,9 @@ export const FREE_PLAN_CODE = "embarko_free";
 export const PUBLIC_PLAN_CODES: readonly string[] = [
   FREE_PLAN_CODE,
   "embarko_creator",
-  "embarko_team"
+  "embarko_creator_annual",
+  "embarko_team",
+  "embarko_team_annual"
 ];
 
 export function isPublicPlan(code: string): boolean {

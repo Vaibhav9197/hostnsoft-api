@@ -64,7 +64,7 @@ An empty list from `GET /companies/:companyId/billing` also means "call 3".
 
 | Route | Method | Description |
 |---|---|---|
-| `/billing/plans` | GET | public Lago plans only (`PUBLIC_PLAN_CODES` in `billingUtility.ts`, in that order) |
+| `/billing/plans` | GET | **no auth**, rate-limited — public Lago plans only (`PUBLIC_PLAN_CODES` in `billingUtility.ts`, in that order) |
 | `/companies/:companyId/billing/customer` | POST | set up billing explicitly (repair path; `POST /companies` does it automatically) |
 | `/companies/:companyId/billing/customer` | GET | the company's Lago customer |
 | `/companies/:companyId/billing/payment-methods` | GET | saved payment methods, direct from Stripe |
@@ -73,6 +73,19 @@ An empty list from `GET /companies/:companyId/billing` also means "call 3".
 | `/companies/:companyId/billing` | GET | status: live subscriptions, each with its full plan |
 | `/companies/:companyId/billing/subscription` | PUT | change plan (`{ plan_code }`, must be in `PUBLIC_PLAN_CODES`) |
 | `/companies/:companyId/billing/subscription` | DELETE | cancel = move to the free plan |
+
+Every route above except `GET /billing/plans` requires `proxy_auth_token`.
+
+That one is open for signed-out pricing pages. It stays public through two
+orderings — keep both if you edit either file:
+
+1. It's registered **above** `billingRouter.use(requireProxyToken)`.
+2. `billingRouter` is mounted **above** the blanket-check routers in `routes/index.ts`.
+
+It leaks nothing company-specific (`listLagoPlans` filters to
+`PUBLIC_PLAN_CODES`) and is rate-limited per IP and globally
+(`PUBLIC_PLANS_RATE_*`). The per-IP limit needs `trust proxy` set correctly
+behind a load balancer, or every caller looks like one IP.
 
 ### POST /companies/:companyId/billing/customer
 Body (all but `name`, `email` optional):
