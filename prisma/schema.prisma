@@ -36,7 +36,7 @@ model DeployToken {
 }
 
 // One Project == one deployed app on hostnsoft-deploy. slug is immutable —
-// it's the subdomain hostnsoft-deploy routes by (<slug>.app.hostnsoft.com)
+// it's the subdomain hostnsoft-deploy routes by (<slug>.app.embarko.ai)
 // and the X-App-Name it expects; name is just a display label.
 // companyId/createdBy are null only for orphan (anonymous) projects — see
 // docs/Anonymous-deploy-req.md — until a real deploy token claims them.
