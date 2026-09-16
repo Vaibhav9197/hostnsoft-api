@@ -185,8 +185,8 @@ relative to the server repo of the same name) should:
    `hostnsoft-skill/`), or a local credentials file. If found, use it
    directly; skip everything below.
 2. If none exists, tell the person plainly: *"You'll need a deploy token
-   — go to `https://hostnsoft.com/login`, sign in, open your company's Tokens
-   page, create one, and paste it here"* (or: *"...and set it as
+   — go to `https://embarko.ai/app/tokens`, sign in, create one, and paste it
+   here"* (or: *"...and set it as
    `DEPLOY_TOKEN` in your environment"*).
 3. Wait for the person to paste the token back in chat, or confirm
    they've set the env var — there is no polling, no automatic detection
@@ -292,7 +292,7 @@ it has an endpoint here (removed 2026-09-04).
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/projects` `{name}` | any member | Generates an immutable `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.hostnsoft.com`). |
+| `POST /companies/:companyId/projects` `{name}` | any member | Generates an immutable `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.embarko.ai`). |
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — `slug` never changes after creation. See open questions on why. |

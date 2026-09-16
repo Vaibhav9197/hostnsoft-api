@@ -8,7 +8,7 @@
 if (!process.env.EDGE_HOSTNAME) {
   throw new Error(
     "EDGE_HOSTNAME environment variable is not set. This must be a dedicated, " +
-      "permanently-unproxied hostname (e.g. edge.hostnsoft.com) resolving directly " +
+      "permanently-unproxied hostname (e.g. edge.embarko.ai) resolving directly " +
       "to the origin server's IP — see docs/Customdomain-req.md constraint #2. " +
       "Never reuse the proxied *.app.<platform-domain> hostname here."
   );
