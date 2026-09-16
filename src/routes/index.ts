@@ -8,6 +8,7 @@ import { internalProxyAuthRouter } from "./internalProxyAuth.routes";
 import { publicTokensRouter } from "./publicTokens.routes";
 import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { publicDocsRouter } from "./publicDocs.routes";
+import { publicShowcaseRouter } from "./publicShowcase.routes";
 import { connectorAuthRouter } from "./connectorAuth.routes";
 import { agentAppsRouter } from "./agentApps.routes";
 import { authRouter } from "./auth.routes";
@@ -21,6 +22,8 @@ import { billingRouter } from "./billing.routes";
 import { analyticsRouter } from "./analytics.routes";
 import { adminRouter } from "./admin.routes";
 import { customerQueryRouter } from "./customerQuery.routes";
+import { showcaseRouter } from "./showcase.routes";
+import { adminShowcaseRouter } from "./adminShowcase.routes";
 
 export const router = Router();
 
@@ -39,6 +42,7 @@ router.use(internalCustomerQueryRouter);
 router.use(internalProxyAuthRouter);
 router.use(publicTokensRouter);
 router.use(publicCustomerQueryRouter);
+router.use(publicShowcaseRouter);
 router.use(publicDocsRouter);
 router.use(connectorAuthRouter);
 // Agent control plane: deploy-token auth, mounted with the other
@@ -54,5 +58,8 @@ router.use(envVarsRouter);
 router.use(domainsRouter);
 router.use(billingRouter);
 router.use(analyticsRouter);
-router.use(adminRouter);
 router.use(customerQueryRouter);
+router.use(showcaseRouter);
+
+router.use(adminRouter);
+router.use(adminShowcaseRouter);
