@@ -353,7 +353,7 @@ Mutable, by any company member:
   256MB / 512MB based on PGlite detection, per the gist). Needs a way to
   push this into the Nomad job spec too. Note this value is now the task's
   burst *ceiling* (`memory_max`), not its reservation — deploy-service
-  schedules against a much lower floor (64/128MB) that `Project.memoryMb`
+  schedules against a much lower floor (32/128MB) that `Project.memoryMb`
   deliberately does not affect, so raising memory buys headroom without
   making the app harder to place.
 

@@ -261,7 +261,7 @@ container on their own (see
 Default is 256MB (512MB if an embedded DB like PGlite is auto-detected).
 
 That number is your app's **ceiling** — the most it may use. Apps are
-*scheduled* against a much lower floor (64MB, or 128MB with an embedded
+*scheduled* against a much lower floor (32MB, or 128MB with an embedded
 DB), because in practice almost everything deployed here idles far below
 its ceiling. The practical effect is that apps get placed and start more
 reliably, and your app can still use anything up to its ceiling whenever
