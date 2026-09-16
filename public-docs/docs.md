@@ -21,19 +21,39 @@ domains and monitoring live in the dashboard.
 
 ## [Quick start](#quick-start)
 
-**1. Get a deploy token** — see [Authentication](#authentication).
+**If you can run a shell script, use ours** — it does everything below,
+plus pre-flight checks the hand-rolled version skips (network reachability,
+unsupported storage APIs, entry-point detection). It is a plain, readable
+file with no installer: fetch it, read it, then run it.
 
-**2. Package and deploy:**
+```bash
+curl -fsSL https://embarko.ai/skills/embarko-deploy.sh -o /tmp/embarko-deploy.sh
+# read /tmp/embarko-deploy.sh, then:
+bash /tmp/embarko-deploy.sh .
+```
+
+Reading it first is encouraged, not a formality — you should not execute a
+script from a host you don't know without looking at it. The rest of this
+section is the same deploy done by hand, for environments that can't run a
+script at all.
+
+**No token. No account. Deploy first.** The first deploy of an app needs no
+credential at all — get it live, then decide whether to keep it.
+
+**1. Package and deploy** — note there is no `Authorization` header:
 
 ```bash
 tar -czf /tmp/my-app.tar.gz --exclude=node_modules --exclude=.git -C /path/to/app .
 
 curl -X POST "https://ship.embarko.ai/apps" \
-  -H "Authorization: Bearer $DEPLOY_TOKEN" \
   -H "X-App-Name: my-app" \
   -H "X-App-Version: $(git rev-parse --short HEAD)" \
   -F "source=@/tmp/my-app.tar.gz"
 ```
+
+`X-App-Name` is lowercase letters, numbers and dashes only — slugify
+anything else (`"My Landing Page"` → `my-landing-page`) rather than sending
+it verbatim and taking a `400`.
 
 You'll get a `202` immediately — the build/deploy itself continues in the
 background:
@@ -42,15 +62,30 @@ background:
 { "accepted": true, "statusUrl": "https://ship.embarko.ai/apps/my-app/status", "logsUrl": "https://ship.embarko.ai/apps/my-app/logs" }
 ```
 
-**3. Poll until it's live:**
+**2. Poll until it's live** (an unclaimed app needs no token here either —
+add `-H "Authorization: Bearer $DEPLOY_TOKEN"` once it's claimed):
 
 ```bash
-curl "https://ship.embarko.ai/apps/my-app/status" -H "Authorization: Bearer $DEPLOY_TOKEN"
+curl "https://ship.embarko.ai/apps/my-app/status"
 ```
 
 Wait for `deploy.status` to be `"success"` (or `"failed"` — check `.../logs`
 if so). Once successful, your app is live at `https://my-app.app.embarko.ai`.
 Full details on both endpoints: [Checking deploy status & logs](#status-and-logs).
+
+**3. Keep it (optional, and only worth raising once the app is live).** An
+anonymous app is real and serving, but it is deleted after 24 hours unless
+claimed. To claim it you need a token, and you can get one with an email
+address alone — no browser:
+
+```bash
+curl -X POST "https://ship.embarko.ai/api/public/deploy-tokens/request" \
+  -H "Content-Type: application/json" -d '{"email": "you@example.com"}'
+```
+
+The token arrives by email. Redeploy the **same** `X-App-Name` with
+`-H "Authorization: Bearer $DEPLOY_TOKEN"` and the expiry is cancelled — same
+URL, nothing else changes. Full detail: [Authentication](#authentication).
 
 ## [Your app's requirements](#your-apps-requirements)
 
