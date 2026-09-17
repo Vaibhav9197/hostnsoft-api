@@ -187,3 +187,82 @@ model AuditLog {
 
   @@index([companyId, createdAt])
 }
+// ---------------------------------------------------------------- Showcase
+// See docs/showcase.md. Two kinds of public page, both /showcase/<slug>:
+//   company — reserved for every company the moment it's created. Only that
+//             company's own deployed apps can be listed on it.
+//   public  — a public board, created by a company from its console (a
+//             hackathon, a demo day). Live at once; any company's members
+//             can list their own deployed apps on it. No approval, no code.
+model ShowcaseCollection {
+  id        String   @id @default(cuid())
+  // The public URL segment. Immutable once created — it's an address people
+  // will have shared. Lowercase letters, digits, dashes; see
+  // src/services/showcase.ts for the exact rule and the reserved list.
+  slug      String   @unique
+  title     String
+  intro     String?
+  // "company" | "public" — see the block comment above.
+  type      String   @default("public")
+  // Proxy company id of the owning company
+  companyId String
+  // Proxy userId of the creator; the company creator for company pages.
+  createdBy String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects ShowcaseProject[]
+
+  @@index([companyId])
+  @@index([type])
+}
+// One deployed app listed under one collection. Always created by a
+// logged-in member of the app's company, so there is a real Project behind
+// every row — appUrl is derived from it, never typed. No review state of
+// its own. Public iff isPrivate == false.
+model ShowcaseProject {
+  id           String @id @default(cuid())
+  collectionId String
+  // The deployed app being shown off — Project.id — and who owns it. Plain
+  // strings rather than a relation, matching Project.currentDeploymentId's
+  // convention: a listing should outlive nothing about the app's row shape.
+  projectId    String
+  companyId    String
+  submittedBy  String
+
+  // Public URL segment, /showcase/apps/<slug>. Derived from name, suffixed
+  // on collision, globally unique.
+  slug           String  @unique
+  name           String
+  tagline        String
+  whatItDoes     String?
+  whyBuilt       String?
+  // Snapshot at submit time: the project's active custom domain if it had
+  // one, else its platform URL. See resolveAppUrl in services/showcase.ts.
+  appUrl         String
+  screenshotUrl  String?
+  videoUrl       String?
+  creatorName    String
+  creatorProfile String?
+  builtWith      String?
+  category       String?
+  // JSON-encoded string[] — SQLite has no array column.
+  tagsJson       String  @default("[]")
+
+  // The collection owner's switch: hides this listing from every public
+  // route without removing it.
+  isPrivate Boolean @default(false)
+  // Super admin's: ordered ahead of the rest on public listings.
+  featured  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  collection ShowcaseCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  // An app is listed under a given slug at most once.
+  @@unique([collectionId, projectId])
+  @@index([companyId])
+  @@index([collectionId, isPrivate])
+}

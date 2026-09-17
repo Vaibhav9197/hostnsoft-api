@@ -2,10 +2,29 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
+import { checkSlug, type SlugRejection } from "../lib/reservedSlugs";
 
 export type ClaimResult =
-  | { project: Project; conflict: false }
-  | { project: null; conflict: true };
+  | { project: Project; conflict: false; rejected: null }
+  | { project: null; conflict: true; rejected: null }
+  | { project: null; conflict: false; rejected: SlugRejection };
+
+/**
+ * Reserved names are refused only when the slug isn't already a project.
+ *
+ * Enforcing them unconditionally would break every existing app whose name
+ * happens to be on the list the moment this ships — a redeploy would start
+ * failing on a name that was legal when it was claimed. Asking whether the
+ * project exists first grandfathers those automatically, with no allowlist
+ * to maintain: the name stays usable for as long as the app does, and
+ * becomes unclaimable once it's deleted.
+ */
+async function slugRejection(slug: string): Promise<SlugRejection | null> {
+  const check = checkSlug(slug);
+  if (!check.reserved) return null;
+  const existing = await prisma.project.findUnique({ where: { slug } });
+  return existing ? null : check;
+}
 
 // Shared by the pre-deploy claim endpoint (internalProjects.routes.ts,
 // called by hostnsoft-deploy BEFORE it spends any build/Nomad resources)
@@ -24,6 +43,9 @@ export async function claimProjectForCompany(
   companyId: string,
   slug: string
 ): Promise<ClaimResult> {
+  const rejected = await slugRejection(slug);
+  if (rejected) return { project: null, conflict: false, rejected };
+
   let project: Project;
   try {
     project = await prisma.project.create({
@@ -38,7 +60,7 @@ export async function claimProjectForCompany(
   }
 
   if (project.companyId === companyId) {
-    return { project, conflict: false };
+    return { project, conflict: false, rejected: null };
   }
 
   if (project.isOrphan) {
@@ -50,13 +72,13 @@ export async function claimProjectForCompany(
       where: { id: project.id },
       data: { companyId, isOrphan: false, orphanExpiresAt: null },
     });
-    return { project: adopted, conflict: false };
+    return { project: adopted, conflict: false, rejected: null };
   }
 
   // Slug already belongs to a DIFFERENT, already-claimed company (slugs
   // are globally unique platform-wide — they're a live subdomain). This
   // is the actual "app name must be unique" enforcement point.
-  return { project: null, conflict: true };
+  return { project: null, conflict: true, rejected: null };
 }
 
 // The no-token path — see docs/Anonymous-deploy-req.md. Same create-
@@ -67,6 +89,9 @@ export async function claimProjectForCompany(
 // starts once, at first creation); a slug already claimed by a real
 // company is never touchable anonymously.
 export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
+  const rejected = await slugRejection(slug);
+  if (rejected) return { project: null, conflict: false, rejected };
+
   let project: Project;
   try {
     project = await prisma.project.create({
@@ -85,8 +110,8 @@ export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
   if (!project.isOrphan) {
     // Already claimed by a real company — an anonymous caller can never
     // take over or redeploy to it, even under its own name.
-    return { project: null, conflict: true };
+    return { project: null, conflict: true, rejected: null };
   }
 
-  return { project, conflict: false };
+  return { project, conflict: false, rejected: null };
 }

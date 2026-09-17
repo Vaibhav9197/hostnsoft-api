@@ -6,10 +6,10 @@ import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
-import { classifyDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
+import { classifyDomain, isPlatformDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
 import { verifyDomainDns } from "../lib/dnsVerify";
 import { activateDomain, pushCustomDomainConfig } from "../services/customDomainActivation";
-import { EDGE_HOSTNAME, ORIGIN_SERVER_IP } from "../lib/customDomainConfig";
+import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, PLATFORM_DOMAIN } from "../lib/customDomainConfig";
 
 // See docs/Customdomain-req.md. Mounted without the doc's illustrative
 // "/api" prefix — every other resource in this API (companies, projects,
@@ -35,8 +35,19 @@ domainsRouter.post(
     const domain = rawDomain.toLowerCase().trim();
 
     if (!isValidDomainSyntax(domain)) {
-      return res.status(400).json({ error: "Not a valid domain name" });
+      return res.status(400).json({ error: "Not a valid domain name", code: "invalid_domain" });
     }
+
+    // Before any DNS work: a name inside our own zone would pass
+    // verification on the origin-IP fallback and then take a Traefik
+    // router for a platform hostname. See isPlatformDomain.
+    if (isPlatformDomain(domain, PLATFORM_DOMAIN)) {
+      return res.status(400).json({
+        error: `"${domain}" is part of ${PLATFORM_DOMAIN} and can't be registered as a custom domain. Use a domain you own.`,
+        code: "domain_reserved",
+      });
+    }
+
 
     const type = classifyDomain(domain);
 

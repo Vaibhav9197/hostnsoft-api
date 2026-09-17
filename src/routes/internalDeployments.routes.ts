@@ -58,9 +58,13 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   }
 
   const claim = await claimProjectForCompany(tokenRecord.companyId, body.projectSlug);
+  if (claim.rejected) {
+    return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
+  }
   if (claim.conflict) {
     return res.status(409).json({
       error: `Project slug "${body.projectSlug}" belongs to a different company`,
+      code: "app_name_taken",
     });
   }
 

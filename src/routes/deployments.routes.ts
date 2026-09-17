@@ -4,8 +4,7 @@ import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
-import { pushAppConfig } from "../services/customDomainActivation";
-import { createDeploymentWithNextVersion } from "../services/deploymentVersioning";
+import { rollbackToDeployment } from "../services/redeploy";
 
 export const deploymentsRouter = Router();
 deploymentsRouter.use(requireProxyToken);
@@ -80,72 +79,38 @@ deploymentsRouter.post(
   async (req, res) => {
     const project = req.project!;
 
-    const target = await prisma.deployment.findFirst({
-      where: { id: req.params.deploymentId, projectId: project.id },
-    });
-    if (!target) {
-      return res.status(404).json({ error: "Deployment not found" });
-    }
-    if (target.status !== "success" || !target.imageTag) {
-      return res.status(422).json({ error: "Can only roll back to a past successful deployment that has an image" });
-    }
+    const outcome = await rollbackToDeployment(
+      project,
+      req.params.deploymentId,
+      `re-deploy:${req.userId}`
+    );
 
-    const activeDomains = await prisma.domain.findMany({
-      where: { projectId: project.id, status: "active" },
-      select: { domain: true },
-    });
-    const envVars = await prisma.envVar.findMany({
-      where: { projectId: project.id },
-      select: { key: true, value: true },
-    });
-
-    // The memory floor this specific past image actually needs (e.g. an
-    // embedded-DB dependency present at that version) isn't necessarily
-    // today's floor if dependencies changed since — same Math.max
-    // reasoning as customDomainActivation.ts, just floored against the
-    // TARGET deployment's own recorded memory instead of the latest one.
-    const effectiveMemoryMb = Math.max(project.memoryMb, target.memoryMb ?? 0);
-
-    // Created BEFORE the push call (status "in_progress", no finishedAt
-    // yet) so there's something to poll immediately, and so
-    // hostnsoft-deploy's async completion callback has a stable id to
-    // report back against no matter how long the actual Nomad apply
-    // takes. Deleted below if the push is never even accepted — no
-    // "in progress" rollback should be left behind for a call that
-    // failed before hostnsoft-deploy did anything.
-    const deployment = await createDeploymentWithNextVersion(project.id, {
-      appVersion: target.appVersion,
-      imageTag: target.imageTag,
-      memoryMb: effectiveMemoryMb,
-      status: "in_progress",
-      triggeredBy: `re-deploy:${req.userId}`,
-    });
-
-    const result = await pushAppConfig(project, {
-      imageTag: target.imageTag,
-      memoryMb: effectiveMemoryMb,
-      customDomains: activeDomains.map((d) => d.domain),
-      envVars,
-      deploymentId: deployment.id,
-    });
-    if (!result.pushed) {
-      await prisma.deployment.delete({ where: { id: deployment.id } });
+    if (!outcome.ok) {
+      if (outcome.code === "deployment_not_found") {
+        return res.status(404).json({ error: "Deployment not found" });
+      }
+      if (outcome.code === "rollback_not_successful_deployment") {
+        return res.status(422).json({ error: "Can only roll back to a past successful deployment that has an image" });
+      }
       // hostnsoft-deploy only prunes images beyond its own retention
       // window (image-retention.js) — a target this old having no image
       // left on disk is an expected, user-actionable outcome, not a
       // platform failure, so this is a 422 telling the caller exactly
       // why and how far back rollback actually reaches, not a generic
       // 502 (which reads as "something's wrong with the service").
-      if (result.code === "image_unavailable") {
-        const retainCount = result.retainCount ?? 5;
+      if (outcome.code === "rollback_image_unavailable") {
         return res.status(422).json({
-          error: `Cannot roll back: the image is no longer available. You can only roll back up to the last ${retainCount} deployments.`,
+          error: `Cannot roll back: the image is no longer available. You can only roll back up to the last ${outcome.retainCount} deployments.`,
           code: "rollback_image_unavailable",
-          retainCount,
+          retainCount: outcome.retainCount,
         });
       }
-      return res.status(502).json({ error: `Rollback failed: ${result.error}` });
+      // Everything else narrows to rollback_push_failed, the only remaining
+      // member of RollbackOutcome and the only one carrying `error`.
+      return res.status(502).json({ error: `Rollback failed: ${outcome.error}` });
     }
+
+    const { deployment, target } = outcome;
 
     await logAudit({
       actorUserId: req.userId,

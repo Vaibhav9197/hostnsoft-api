@@ -13,6 +13,10 @@ export function errorHandler(
   if (err instanceof ZodError) {
     return res.status(400).json({
       error: "Validation failed",
+      // Carries a `code` like every other error body: the public docs
+      // tell callers to branch on `code` rather than on `error` wording,
+      // and a validation failure was the one case that didn't have one.
+      code: "validation_failed",
       details: err.issues.map((issue) => ({
         path: issue.path.join("."),
         message: issue.message,
