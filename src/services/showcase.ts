@@ -208,6 +208,12 @@ export const showcaseSubmissionSchema = z.object({
 });
 export type ShowcaseSubmissionInput = z.infer<typeof showcaseSubmissionSchema>;
 
+// Same fields as showcaseSubmissionSchema minus projectId: the agent path
+// addresses its app via the deploy token + :appName (req.project), not an id
+// it would have to already know.
+export const agentShowcaseSubmissionSchema = showcaseSubmissionSchema.omit({ projectId: true });
+export type AgentShowcaseSubmissionInput = z.infer<typeof agentShowcaseSubmissionSchema>;
+
 export function normalizeTags(raw: string[]): string[] {
   const seen = new Set<string>();
   for (const value of raw) {

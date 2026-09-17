@@ -145,6 +145,23 @@ Validation lives in `showcaseSubmissionSchema` (`src/services/showcase.ts`):
 every URL must parse as http(s), `builtWith`/`category` must be offered
 options or are dropped, tags normalised and capped at 8.
 
+### Agent (deploy token) — `src/routes/agentApps.routes.ts`
+
+The agent-facing equivalent of the submitter endpoints above, for an AI
+agent that has a deploy token and an app name but no dashboard session and
+no `projectId`. Mounted under the same `/apps/:appName/…` control plane as
+env vars and rollback — see that file's header comment and
+`middleware/deployTokenContext.ts`.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| PUT | `/apps/:appName/showcase` | Body: `collectionSlug, name, tagline, creatorName` required; same optional fields as `POST .../submissions`. No `projectId` — the app is already resolved from the deploy token + `:appName`. 404 `SHOWCASE_COLLECTION_UNKNOWN` for an unknown slug; 403 `SHOWCASE_COLLECTION_PRIVATE` for another company's company page. **Create-or-update**: if this app is already listed on that page, updates the existing listing instead of 409ing — an agent re-running the same prompt to fix a tagline or swap a screenshot shouldn't have to withdraw and relist. 201 on create, 200 on update, both with the listing. |
+
+This is the one path where a listing's content can be changed after it's
+made (see "Deliberately not done" below) — deliberately, since re-running
+an agent prompt is the expected way a listing gets corrected on this path,
+there being no console for it to edit in instead.
+
 ### Admin (proxy token + super admin) — `src/routes/adminShowcase.routes.ts`
 
 Same gate as `admin.routes.ts`: 404, never 403, for non-admins. Oversight
@@ -193,7 +210,9 @@ company-scoped request the dashboard makes for them.
 
 - No admin edit of a listing's content, and no admin hide — the organiser
   hides or removes, the owner withdraws.
-- No editing a listing or a page's title/intro after it's made.
+- No editing a listing or a page's title/intro after it's made via the
+  console — the agent path (`PUT /apps/:appName/showcase`) is the one
+  exception, since an agent has no console to withdraw-and-relist from.
 - No spam control on public boards beyond the organiser's hide switch and
   the fact that every submitter is a logged-in company member with a real
   deployed project.

@@ -23,9 +23,19 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { requireDeployToken, loadAppBySlug } from "../middleware/deployTokenContext";
 import { logAudit } from "../services/audit";
 import { applyCurrentConfig, rollbackToDeployment, type RedeployOutcome } from "../services/redeploy";
+import {
+  agentShowcaseSubmissionSchema,
+  canListOn,
+  collectionSummary,
+  normalizeTags,
+  resolveAppUrl,
+  toOwnerProject,
+  uniqueProjectSlug,
+} from "../services/showcase";
 
 export const agentAppsRouter = Router();
 
@@ -426,4 +436,87 @@ appScoped.post("/rollback", async (req, res) => {
     statusUrl: `/api/apps/${project.slug}/deployments/${outcome.deployment.id}`,
     terminal: false,
   });
+});
+
+const SHOWCASE_COLLECTION_UNKNOWN = {
+  error: "That showcase page doesn't exist",
+  code: "SHOWCASE_COLLECTION_UNKNOWN",
+} as const;
+
+// List (or update) this app on a showcase page — the agent-facing half of
+// what the dashboard's POST /companies/:companyId/showcase/submissions
+// does, addressed by app name instead of a projectId the agent doesn't
+// have. PUT rather than POST: calling it again with new details updates the
+// existing listing instead of erroring, since an agent iterating on
+// tagline/screenshot shouldn't have to look up and delete first.
+appScoped.put("/showcase", async (req, res) => {
+  const body = agentShowcaseSubmissionSchema.parse(req.body);
+  const project = req.project!;
+
+  const collection = await prisma.showcaseCollection.findUnique({ where: { slug: body.collectionSlug } });
+  if (!collection) return res.status(404).json(SHOWCASE_COLLECTION_UNKNOWN);
+  if (!canListOn(collection, req.company!.id)) {
+    return res.status(403).json({
+      error: `/showcase/${collection.slug} is a company's own page; only its apps can be listed there`,
+      code: "SHOWCASE_COLLECTION_PRIVATE",
+    });
+  }
+
+  const data = {
+    collectionId: collection.id,
+    projectId: project.id,
+    companyId: req.company!.id,
+    submittedBy: req.userId!,
+    name: body.name,
+    tagline: body.tagline,
+    appUrl: await resolveAppUrl(project),
+    whatItDoes: body.whatItDoes ?? null,
+    whyBuilt: body.whyBuilt ?? null,
+    creatorName: body.creatorName,
+    creatorProfile: body.creatorProfile ?? null,
+    builtWith: body.builtWith ?? null,
+    category: body.category ?? null,
+    tagsJson: JSON.stringify(normalizeTags(body.tags)),
+    videoUrl: body.videoUrl ?? null,
+    screenshotUrl: body.screenshotUrl ?? null,
+  };
+
+  const existing = await prisma.showcaseProject.findUnique({
+    where: { collectionId_projectId: { collectionId: collection.id, projectId: project.id } },
+  });
+
+  if (existing) {
+    const listing = await prisma.showcaseProject.update({ where: { id: existing.id }, data });
+    await logAudit({
+      actorUserId: req.userId,
+      companyId: req.company!.id,
+      projectId: project.id,
+      action: "showcase.listing.update",
+      details: `${listing.slug} -> /showcase/${collection.slug} (${agentActor(req)})`,
+    });
+    return res.json(toOwnerProject(listing, collectionSummary(collection)));
+  }
+
+  // A name collision retries once with a fresh slug; a (collectionId, projectId) collision doesn't.
+  let listing = null;
+  for (let attempt = 0; attempt < 2 && !listing; attempt++) {
+    const slug = await uniqueProjectSlug(body.name);
+    try {
+      listing = await prisma.showcaseProject.create({ data: { ...data, slug } });
+    } catch (err) {
+      if (!isUniqueConstraintViolation(err)) throw err;
+      if (attempt === 1) {
+        return res.status(409).json({ error: "That app is already listed there", code: "SHOWCASE_ALREADY_LISTED" });
+      }
+    }
+  }
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: project.id,
+    action: "showcase.listing.create",
+    details: `${listing!.slug} -> /showcase/${collection.slug} (${agentActor(req)})`,
+  });
+  res.status(201).json(toOwnerProject(listing!, collectionSummary(collection)));
 });
