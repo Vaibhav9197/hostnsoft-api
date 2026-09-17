@@ -39,9 +39,15 @@ async function slugRejection(slug: string): Promise<SlugRejection | null> {
 // "no existing row" and both try to create one — same pattern used
 // throughout this codebase (company creation in msg91Login.ts, deploy
 // version allocation in internalDeployments.routes.ts).
+//
+// createdBy is the proxy userId when a real person deployed through the
+// dashboard's upload UI (its proxy_auth_token names them — see
+// services/deployActor.ts), and falls back to "hostnsoft-deploy" for a
+// deploy token, which identifies a company but nobody in particular.
 export async function claimProjectForCompany(
   companyId: string,
-  slug: string
+  slug: string,
+  createdBy?: string | null
 ): Promise<ClaimResult> {
   const rejected = await slugRejection(slug);
   if (rejected) return { project: null, conflict: false, rejected };
@@ -49,7 +55,7 @@ export async function claimProjectForCompany(
   let project: Project;
   try {
     project = await prisma.project.create({
-      data: { companyId, createdBy: "hostnsoft-deploy", slug, name: slug },
+      data: { companyId, createdBy: createdBy ?? "hostnsoft-deploy", slug, name: slug },
     });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;

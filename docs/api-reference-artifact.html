@@ -466,6 +466,11 @@
     </div>
 
     <div class="navgroup">
+      <div class="navgroup-label">Deploy an app <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
+      <a class="navlink" href="#ep-deploy-upload"><span class="chip method post" style="background:none;padding:0;color:var(--post)">POST</span> apps (upload)</a>
+    </div>
+
+    <div class="navgroup">
       <div class="navgroup-label">App status &amp; logs <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
       <a class="navlink" href="#ep-deploy-status">Status</a>
       <a class="navlink" href="#ep-deploy-logs">Logs</a>
@@ -537,13 +542,19 @@
             <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
               There is no refresh flow, no cookie, and no in-memory access token to juggle — hold onto the PAT itself for the life of the session (same place you'd have kept an access token before) and send it on every call, including <code>GET /auth/me</code> and every <code>/companies/...</code> route. A missing header is <code>400</code>; a rejected/expired PAT is <code>401</code> with <code>code: "PROXY_TOKEN_REJECTED"</code> — send the user back through the MSG91 widget in both cases.
             </p>
+            <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+              <strong>The same PAT also works against the deploy endpoint</strong> (<code>ship.embarko.ai</code>) — <a href="#deploy">deploying an app</a> (2026-09-17) and <a href="#deploy-status-logs">status &amp; logs</a> (2026-09-13). Those calls additionally need <code>X-Company-Id</code>, since a PAT isn't scoped to one company the way a deploy token is. It's one credential for the whole dashboard, across both hosts.
+            </p>
           </div>
         </div>
         <div class="panel">
-          <div class="panel-head"><span class="label">Deploy tokens (unrelated, not for the frontend to auth with)</span></div>
+          <div class="panel-head"><span class="label">Deploy tokens (a separate credential, not for the frontend to auth with)</span></div>
           <div style="padding:14px 16px;">
-            <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
+            <p style="margin:0 0 10px;color:var(--ink-dim);font-size:13.5px;">
               Created and listed through this API (see <a href="#ep-tokens-create">Deploy tokens</a>) so a member can manage them in the dashboard — but the raw token itself is only ever used against the separate deploy endpoint at <code>ship.embarko.ai/apps</code>. The frontend's job is CRUD on token metadata, never using a deploy token to call this API.
+            </p>
+            <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
+              <strong>The dashboard no longer needs to mint one just to deploy.</strong> Since 2026-09-17 the upload path takes the user's own PAT (see <a href="#deploy">Deploy an app</a>), so don't build a flow that silently creates a deploy token behind an upload button — a deploy token is a long-lived, company-wide secret, and one should only exist because a person deliberately asked for one to use outside the browser.
             </p>
           </div>
         </div>
@@ -1550,6 +1561,54 @@
         </div>
         <div class="endpoint-note info">Every field the underlying row has is returned as-is — this is the raw store, not a shaped/redacted view, since it's admin-only. Newest first (<code>createdAt</code> descending). Which fields are populated depends on which path the row came from — see the field table in <code>docs/request-feature-req.md</code>.</div>
       </article>
+    </section>
+
+    <hr class="rule" />
+
+    <section class="resource" id="deploy">
+      <div class="resource-head"><h2>Deploy an app <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">The upload itself lives on the <strong>deploy endpoint</strong> (<code>ship.embarko.ai</code>), <strong>not this API</strong> — same split as <a href="#deploy-status-logs">status &amp; logs</a> below. It's listed here because, <strong>as of 2026-09-17</strong>, the dashboard can call it directly with the <code>proxy_auth_token</code> it already holds: an upload button, not a detour through the Tokens page. Nothing about the existing deploy-token path changed, and this API gained no upload endpoint of its own — the tarball goes straight to the deploy service, as it always has.</p>
+
+      <article class="endpoint" id="ep-deploy-upload">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">https://ship.embarko.ai/apps</span>
+          <span class="role-chip">proxy_auth_token + X-Company-Id, or a deploy token</span>
+        </div>
+        <p class="endpoint-desc">Upload a source tarball and deploy it. The <em>same</em> endpoint for the first deploy and every redeploy after — re-upload under the same <code>X-App-Name</code> and it rebuilds in place. <strong>Async</strong>: it responds as soon as the upload is accepted, then builds in the background; poll <a href="#ep-deploy-status">GET /apps/:appName/status</a>, or this API's <a href="#ep-deployments-list">deployment history</a>, to follow it. The build log is the one dashboard screen this API doesn't serve.</p>
+
+        <div class="panels" style="grid-template-columns: 1fr;">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Headers the dashboard sends</span></div>
+            <div style="padding:14px 16px;">
+              <pre class="mono" style="margin:0 0 10px;font-size:12.5px;background:var(--surface-2);padding:9px 12px;border-radius:6px;">proxy_auth_token: &lt;the same PAT you send this API&gt;
+X-Company-Id:     &lt;the company the user is currently viewing&gt;
+X-App-Name:       my-app     <span style="color:var(--ink-faint)">// lowercase/digits/dashes, unique platform-wide</span>
+X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, image tag only</span></pre>
+              <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
+                Body is the source tarball, exactly as the CLI/agent path sends it. <code>X-Company-Id</code> is required <strong>because a PAT isn't company-scoped</strong> — a person can belong to several companies, so the dashboard has to say which one this app belongs to. It's verified against proxy membership server-side, never taken at face value.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <table class="status-table">
+          <thead><tr><th>Credential presented</th><th>What happens</th></tr></thead>
+          <tbody>
+            <tr><td class="code ok"><code>proxy_auth_token</code> + <code>X-Company-Id</code></td><td>Deploys under that company, as that person — <strong>new</strong>. The app is permanent and shows up in the dashboard immediately.</td></tr>
+            <tr><td class="code ok"><code>Authorization: Bearer &lt;deploy token&gt;</code></td><td>Deploys under the token's own company. <strong>Unchanged</strong> — this is what agents, CI and the CLI use.</td></tr>
+            <tr><td class="code">both</td><td>The deploy token wins; the PAT is ignored. Same precedence as <a href="#deploy-status-logs">status &amp; logs</a>, so no existing caller's behavior can shift.</td></tr>
+            <tr><td class="code warn">neither</td><td>Anonymous deploy — a real, live app that <strong>self-deletes in 24h</strong> unless claimed. <strong>Unchanged</strong>; see the note below.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="endpoint-note info"><strong>Only a completely absent credential deploys anonymously.</strong> A <code>proxy_auth_token</code> that's present and fails is an error, never a quiet downgrade — <code>401</code> <code>PROXY_TOKEN_REJECTED</code> if the PAT is expired (send the user back through the widget), <code>403</code> <code>not_a_company_member</code> if they're valid but no longer in the company the dashboard is pointed at (refresh <a href="#ep-companies-list">GET /companies</a> and let them pick again), <code>400</code> <code>company_id_required</code> if <code>X-Company-Id</code> was dropped, <code>409</code> if the app name already belongs to someone else. Don't treat any of these as "deploy without a token instead" — the user would get a temporary app they think is permanent.</div>
+      </article>
+
+      <div class="callout">
+        <div class="eyebrow">What the frontend needs to build</div>
+        <p>Upload straight to <code>ship.embarko.ai/apps</code> from the browser — don't route the tarball through this API, which has no endpoint for it by design. Then poll <a href="#ep-deploy-status">GET /apps/:appName/status</a> for build progress (it takes the same PAT), and <a href="#ep-deployments-list">GET .../deployments</a> here for the versioned history, which now records dashboard uploads alongside token deploys with <code>triggeredBy: "dashboard:&lt;userId&gt;"</code>.</p>
+      </div>
     </section>
 
     <hr class="rule" />

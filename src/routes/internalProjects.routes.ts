@@ -1,20 +1,21 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { findLiveDeployToken, unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
+import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 
 export const internalProjectsRouter = Router();
 
-// token is now optional — see docs/Anonymous-deploy-req.md. Absent
-// entirely means "deploy anonymously"; hostnsoft-deploy only omits it
-// when the incoming deploy request itself carried no Authorization
-// header at all (an invalid/malformed token it still sends here so this
-// endpoint's normal 401 applies — anonymous is opt-in by omission only,
-// never a fallback for a failed auth attempt).
+// Every credential field is optional — see services/deployActor.ts for
+// which combination selects which path. ALL of them absent means "deploy
+// anonymously" (docs/Anonymous-deploy-req.md); hostnsoft-deploy only
+// omits them when the incoming deploy request itself carried no
+// credential header at all (an invalid/malformed token it still sends
+// here so this endpoint's normal 401 applies — anonymous is opt-in by
+// omission only, never a fallback for a failed auth attempt).
 const claimSchema = z.object({
-  token: z.string().min(1).optional(),
+  ...deployCredentialFields,
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
 });
 
@@ -22,43 +23,49 @@ const claimSchema = z.object({
 // on a deploy — this is what actually enforces "app name (== live
 // subdomain) must be unique platform-wide" at the only point that
 // matters: before the Nomad job (named by that same app name) gets
-// created, not after. The deploy token's own companyId identifies which
-// company the project gets created under — a project never needs to
-// exist via the dashboard first; this is the auto-create path for
-// CLI/skill-first usage. No requireProxyToken — the deploy token itself is the
+// created, not after. Which company the project gets created under comes
+// from the caller's credential, never from the request's own say-so: the
+// deploy token's own companyId, or (added 2026-09-17, for the dashboard's
+// upload UI) the companyId a proxy_auth_token was just confirmed a member
+// of — see services/deployActor.ts. A project never needs to exist via
+// the dashboard first; this is the auto-create path for CLI/skill-first
+// usage. No requireProxyToken — the credential in the body is the
 // credential, same trust shape as the other /internal/* endpoints.
 internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
-  const { token, slug } = claimSchema.parse(req.body);
+  const { slug, ...credentials } = claimSchema.parse(req.body);
 
-  const result = token
-    ? await (async () => {
-        const tokenRecord = await findLiveDeployToken(token);
-        if (!tokenRecord) return { unauthorized: true as const };
-        return { unauthorized: false as const, claim: await claimProjectForCompany(tokenRecord.companyId, slug) };
-      })()
-    : { unauthorized: false as const, claim: await claimOrphanProject(slug) };
-
-  if (result.unauthorized) {
-    return res.status(401).json(unauthorizedDeployTokenBody());
+  const resolved = await resolveDeployActor(req, credentials);
+  if (!resolved.ok) {
+    return res.status(resolved.status).json(resolved.body);
   }
+
+  // A company-identified caller claims/adopts under that company; an
+  // anonymous one gets the orphan path, byte for byte as before. Which
+  // credential proved the company (a deploy token or a dashboard PAT)
+  // makes no difference from here on — a project claimed through the
+  // upload UI is an ordinary project of that company, with no record of
+  // how it was first deployed.
+  const claim = resolved.actor.companyId
+    ? await claimProjectForCompany(resolved.actor.companyId, slug, resolved.actor.userId)
+    : await claimOrphanProject(slug);
 
   // Reserved before taken: a name that's both should say it's reserved,
   // since that's the one the caller can't resolve by trying again later.
-  if (result.claim.rejected) {
+  if (claim.rejected) {
     return res.status(409).json({
-      error: result.claim.rejected.reason,
-      code: result.claim.rejected.code,
+      error: claim.rejected.reason,
+      code: claim.rejected.code,
     });
   }
 
-  if (result.claim.conflict) {
+  if (claim.conflict) {
     return res.status(409).json({
       error: `App name "${slug}" is already in use by a different company`,
       code: "app_name_taken",
     });
   }
 
-  const { project } = result.claim;
+  const { project } = claim;
 
   // Include this project's already-active custom domains (see
   // docs/Customdomain-req.md) so every fresh deploy/rebuild regenerates

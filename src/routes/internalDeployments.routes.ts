@@ -2,14 +2,22 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { createDeploymentWithNextVersion, markProjectDeploymentLive } from "../services/deploymentVersioning";
-import { findLiveDeployToken, unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
+import { unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
+import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { logAudit } from "../services/audit";
 import { requireInternalSecret } from "../middleware/requireInternalSecret";
 
 export const internalDeploymentsRouter = Router();
 
 const recordSchema = z.object({
-  token: z.string().min(1),
+  // Same credential shapes as POST /internal/projects/claim — a deploy
+  // token, or a proxy_auth_token + companyId for a dashboard upload. See
+  // services/deployActor.ts. Unlike claim, "neither" is not a valid
+  // combination here (anonymous deploys record no history at all — see
+  // docs/Anonymous-deploy-req.md's out-of-scope list), so it's rejected
+  // below rather than silently accepted as a companyless row.
+  ...deployCredentialFields,
   projectSlug: z.string().min(1),
   // Whatever hostnsoft-deploy used for the image tag (X-App-Version, or
   // its own timestamp fallback) — NOT the deployment's identity. A user
@@ -36,12 +44,15 @@ const recordSchema = z.object({
 // concluded, success or failure — this is what actually populates the
 // deployment history GET /companies/:companyId/projects/:projectId/deployments
 // reads. Same auth shape as /internal/deploy-tokens/validate: no
-// requireProxyToken, the deploy token itself (re-checked here, independently of
-// whatever check happened earlier in the same deploy request) is the
-// credential, so this endpoint is trustworthy on its own rather than
-// relying on the caller having already been authenticated once. The
-// token's own companyId is the source of truth for which company this
-// deployment belongs to.
+// requireProxyToken, the credential in the body (re-checked here,
+// independently of whatever check happened earlier in the same deploy
+// request) is what authenticates the call, so this endpoint is
+// trustworthy on its own rather than relying on the caller having
+// already been authenticated once. That credential — a deploy token, or
+// a proxy_auth_token + companyId for a dashboard upload (added
+// 2026-09-17, see services/deployActor.ts) — is also the source of truth
+// for which company this deployment belongs to; the request never gets
+// to name a company it hasn't proven it can act for.
 //
 // Project resolution here is a defense-in-depth backstop, not the
 // primary enforcement point — hostnsoft-deploy is expected to have
@@ -52,12 +63,20 @@ const recordSchema = z.object({
 internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) => {
   const body = recordSchema.parse(req.body);
 
-  const tokenRecord = await findLiveDeployToken(body.token);
-  if (!tokenRecord) {
+  const resolved = await resolveDeployActor(req, body);
+  if (!resolved.ok) {
+    return res.status(resolved.status).json(resolved.body);
+  }
+  if (!resolved.actor.companyId) {
+    // No credential at all. There's no company to attribute history to,
+    // and this endpoint has nothing else to fall back on — same 401 a
+    // dead deploy token gets, since from hostnsoft-deploy's side both
+    // mean "this deploy can't be recorded, don't retry as-is".
     return res.status(401).json(unauthorizedDeployTokenBody());
   }
+  const actor = resolved.actor;
 
-  const claim = await claimProjectForCompany(tokenRecord.companyId, body.projectSlug);
+  const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
   if (claim.rejected) {
     return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
   }
@@ -98,9 +117,25 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       memoryMb: body.memoryMb,
       status: body.status,
       errorDetail: body.errorDetail,
-      triggeredBy: tokenRecord.label,
+      triggeredBy: actor.triggeredBy,
       finishedAt,
     });
+
+    // Only on the row-creating call (a deploy STARTING), and only when a
+    // person is actually behind it — a deploy token names a company, not
+    // an actor, so there's no "who" worth writing down for it, and the
+    // token's own label is already on the deployment row either way.
+    // Skipped on the in_progress -> success/failed update so one upload
+    // is one audit line, not two.
+    if (actor.kind === "proxyAuth") {
+      await logAudit({
+        actorUserId: actor.userId,
+        companyId: actor.companyId,
+        projectId: claim.project.id,
+        action: "project.deploy",
+        details: `uploaded ${deployment.version} (${body.appVersion})`,
+      });
+    }
   }
 
   // body.memoryMb here is hostnsoft-deploy's actual applied taskMemory —

@@ -406,6 +406,32 @@ takes precedence when both are somehow presented, so no existing
 agent/CI caller's behavior changes. See
 `../hostnsoft-deploy/verify-proxy-auth.js` for that repo's side.
 
+**Resolved 2026-09-17 — `POST /apps` (the deploy itself) also accepts a
+proxy_auth_token**: the dashboard is growing an upload button, and a
+logged-in person holds a PAT and nothing else. Rather than making them
+mint a company-wide deploy token just to press it — a stronger, longer-
+lived secret created for a worse reason — the SAME `POST /apps` endpoint
+now takes a PAT as an alternative credential, exactly as status/logs did
+above. Since a PAT isn't company-scoped, the caller also sends
+`X-Company-Id`, and this service *verifies* that pairing (proxy
+membership) rather than trusting hostnsoft-deploy's word for it. Both
+internal endpoints a deploy passes through — `POST /internal/projects/claim`
+and `POST /internal/deployments/record` — now accept
+`{proxyAuthToken, companyId}` in place of `{token}`, resolved by one
+shared helper (`src/services/deployActor.ts`) so the three credential
+paths can't drift apart. That helper demands `X-Internal-Secret` on the
+PAT branch only, leaving the deploy-token and anonymous branches
+untouched; a deploy token still wins when both are somehow presented, so
+no existing agent/CI caller changes. **The anonymous/orphan path is
+deliberately unchanged** — only a request with NO credential at all
+deploys anonymously; a PAT that's present and fails is a 401/403, never a
+silent downgrade. `hostnsoft-deploy`'s own side shipped the same day (its
+new `deploy-credential.js` mirrors `deployActor.ts` — change them
+together; plus `cors()` for the first browser caller that service has
+ever had). The orphan banner needed nothing: it's a sidecar keyed off
+`claim.isOrphan`, not a build-time injection keyed off "has a token".
+Full contract in `docs/Ui-upload-deploy-req.md`.
+
 **Routing gotcha hit while wiring this up, worth remembering**: every
 resource router here (`companiesRouter`, `tokensRouter`, etc.) calls
 `.use(requireAuth)` on itself with no path filter. Since all these
