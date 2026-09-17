@@ -96,7 +96,13 @@ function appendParam(url: string, key: string, value: string): string {
 
 authRouter.get("/auth/msg91/callback", async (req, res) => {
   const next = safeRedirectPath(req.query.next);
-  const token = req.query.proxy_auth_token;
+  // MSG91's own redirect sends this as a query param (see this route's file
+  // comment below). Some server-side callers (e.g. a same-origin frontend
+  // bridge proxying the browser's request) send it as a header instead —
+  // accept either so this route isn't coupled to one specific caller shape.
+  const token = typeof req.query.proxy_auth_token === "string" && req.query.proxy_auth_token.length > 0
+    ? req.query.proxy_auth_token
+    : req.get("proxy_auth_token");
   // Only set when redirect_uri matches the connector allowlist; everything
   // else (the dashboard's own login) keeps redirecting to FRONTEND_ORIGIN
   // exactly as before.
