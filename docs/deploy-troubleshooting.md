@@ -14,7 +14,7 @@ look for in a response body or `GET .../logs` output) → `cause` → `fix`.
 ### 422 unsupported_storage_pattern
 - match: `"window.storage"` in the 422 response detail
 - cause: app calls `window.storage`, a Claude Artifacts sandbox API that doesn't exist outside it
-- fix: replace with SQLite (simple key/value) or `@electric-sql/pglite` (relational), redeploy
+- fix: replace with SQLite (`better-sqlite3`), writing under `DATA_DIR`, then redeploy
 
 ### 401 unauthorized
 - match: `{"error":"Unauthorized","code":"unauthorized"}`

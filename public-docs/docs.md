@@ -100,8 +100,8 @@ URL, nothing else changes. Full detail: [Authentication](#authentication).
   [`limitations-and-recommendations.md`](limitations-and-recommendations.md#only-data_dir-survives-a-redeploy)
   for the full explanation and a concrete example of getting this wrong.
 - **Don't use `window.storage`** — a Claude Artifacts sandbox API that
-  doesn't exist here. Use SQLite (`better-sqlite3`) or PGlite
-  (`@electric-sql/pglite`) under `DATA_DIR` instead.
+  doesn't exist here. Use SQLite (`better-sqlite3`) under `DATA_DIR`
+  instead.
 
 ## [Capabilities](#capabilities)
 
@@ -293,11 +293,11 @@ container on their own (see
 
 ## [Memory allocation](#memory-allocation)
 
-Default is 256MB (512MB if an embedded DB like PGlite is auto-detected).
+Default is 256MB for every app.
 
 That number is your app's **ceiling** — the most it may use. Apps are
-*scheduled* against a much lower floor (32MB, or 128MB with an embedded
-DB), because in practice almost everything deployed here idles far below
+*scheduled* against a much lower floor (32MB), because in practice
+almost everything deployed here idles far below
 its ceiling. The practical effect is that apps get placed and start more
 reliably, and your app can still use anything up to its ceiling whenever
 the host has room. What it does mean: memory above the floor is

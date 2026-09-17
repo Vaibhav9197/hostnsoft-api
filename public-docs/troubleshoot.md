@@ -17,7 +17,7 @@ for the platform's real constraints and how to design around them —
 ### 422 unsupported_storage_pattern
 - match: `"window.storage"` in the 422 response detail
 - cause: app calls `window.storage`, a Claude Artifacts sandbox API that doesn't exist outside it
-- fix: replace with SQLite (`better-sqlite3`, simple key/value) or `@electric-sql/pglite`
+- fix: replace with SQLite (`better-sqlite3`), writing under `DATA_DIR`
   (relational) — write under `DATA_DIR` either way, see
   [Only `DATA_DIR` survives a redeploy](limitations-and-recommendations.md#only-data_dir-survives-a-redeploy)
   — then redeploy
@@ -42,7 +42,7 @@ for the platform's real constraints and how to design around them —
 
 ### OOM killed
 - match: `"OOM Killed"`, `Exit Code: 137`
-- cause: app exceeds its allocated memory (256MB default, 512MB if PGlite is auto-detected). Common causes: an
+- cause: app exceeds its allocated memory (256MB). Common causes: an
   embedded DB the platform didn't auto-detect, or a dev-mode server (e.g. a "dev" CLI) shipped as the production
   start command
 - fix: `PATCH .../memory {"memoryMb": 1024}`, **then redeploy or roll back** — this endpoint only persists the

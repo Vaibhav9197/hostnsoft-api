@@ -349,13 +349,13 @@ Mutable, by any company member:
   other mechanism `hostnsoft-deploy` needs to expose. This is a real
   integration point with `hostnsoft-deploy` that needs designing, not just a
   database table.
-- **Memory allocation** — override the auto-detected default (currently
-  256MB / 512MB based on PGlite detection, per the gist). Needs a way to
-  push this into the Nomad job spec too. Note this value is now the task's
-  burst *ceiling* (`memory_max`), not its reservation — deploy-service
-  schedules against a much lower floor (32/128MB) that `Project.memoryMb`
-  deliberately does not affect, so raising memory buys headroom without
-  making the app harder to place.
+- **Memory allocation** — override the platform default (256MB for every
+  app; the old 512MB PGlite tier was removed when PGlite support was
+  dropped). Note this value is the task's burst *ceiling* (`memory_max`),
+  not its reservation — deploy-service schedules against a much lower
+  universal 32MB floor that `Project.memoryMb` deliberately does not
+  affect, so raising memory buys headroom without making the app harder
+  to place.
 
 ## Integration with the existing `hostnsoft-deploy`
 
