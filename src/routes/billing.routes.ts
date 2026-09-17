@@ -1,10 +1,4 @@
-import { Router, type Request } from "express";
-import { createLimiter, type LimitScope } from "../lib/rateLimit";
-import {
-  PUBLIC_PLANS_RATE_GLOBAL,
-  PUBLIC_PLANS_RATE_PER_IP,
-  PUBLIC_PLANS_RATE_WINDOW_MS,
-} from "../lib/publicPlansConfig";
+import { Router } from "express";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { logAudit } from "../services/audit";
@@ -12,7 +6,6 @@ import { billingErrors, FREE_PLAN_CODE, isPublicPlan } from "../lib/billingUtili
 import {
   getLagoCustomer,
   getLagoCheckoutUrl,
-  listLagoPlans,
   subscribeToFreePlan,
   assignPlan,
   listSubscriptions,
@@ -28,34 +21,11 @@ import { createCustomerSchema, changePlanSchema } from "../validation/billing.va
 // Stripe customer id that Lago recorded. Nothing billing-related is stored
 // locally, so every read here is a live call to Lago (and Stripe).
 
-// Anonymous request, no body to key on: IP plus a global ceiling is the
-// whole defence. Own Redis prefix, so it can't eat other endpoints' budgets.
-function limiter(scope: LimitScope, limit: number, keyGenerator: (req: Request) => string) {
-  return createLimiter(
-    "public-plans",
-    "plan catalogue requests",
-    scope,
-    limit,
-    PUBLIC_PLANS_RATE_WINDOW_MS,
-    keyGenerator
-  );
-}
-
 export const billingRouter = Router();
 
-// Open + rate-limited: the catalogue a signed-out pricing page shows.
-// listLagoPlans filters to PUBLIC_PLAN_CODES, so nothing private leaks.
-billingRouter.get(
-  "/billing/plans",
-  limiter("ip", PUBLIC_PLANS_RATE_PER_IP, (req) => req.ip ?? "unknown"),
-  limiter("global", PUBLIC_PLANS_RATE_GLOBAL, () => "all"),
-  async (_req, res) => {
-    res.json(await listLagoPlans());
-  }
-);
-
-// Everything below needs a token; anything above is public. Routes are also
-// mounted early in routes/index.ts so no other router's check 401s them.
+// The public plan catalogue (GET /billing/plans) lives in
+// publicBilling.routes.ts, mounted before every requireProxyToken router.
+// Everything in this router needs a token.
 billingRouter.use(requireProxyToken);
 
 // Creates the Stripe customer (product-tagged) and the Lago customer that

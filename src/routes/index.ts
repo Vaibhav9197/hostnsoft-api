@@ -9,6 +9,7 @@ import { publicTokensRouter } from "./publicTokens.routes";
 import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { publicDocsRouter } from "./publicDocs.routes";
 import { publicShowcaseRouter } from "./publicShowcase.routes";
+import { publicBillingRouter } from "./publicBilling.routes";
 import { connectorAuthRouter } from "./connectorAuth.routes";
 import { agentAppsRouter } from "./agentApps.routes";
 import { authRouter } from "./auth.routes";
@@ -44,14 +45,12 @@ router.use(publicTokensRouter);
 router.use(publicCustomerQueryRouter);
 router.use(publicShowcaseRouter);
 router.use(publicDocsRouter);
+router.use(publicBillingRouter);
 router.use(connectorAuthRouter);
 // Agent control plane: deploy-token auth, mounted with the other
 // non-requireProxyToken routers per the ordering rule above.
 router.use(agentAppsRouter);
 
-// Mixed: GET /billing/plans is open, the rest need a token. Stays above the
-// blanket-check routers below, which would 401 that route first.
-router.use(billingRouter);
 router.use(authRouter);
 router.use(companiesRouter);
 router.use(tokensRouter);
@@ -59,6 +58,7 @@ router.use(projectsRouter);
 router.use(deploymentsRouter);
 router.use(envVarsRouter);
 router.use(domainsRouter);
+router.use(billingRouter);
 router.use(analyticsRouter);
 router.use(customerQueryRouter);
 router.use(showcaseRouter);
