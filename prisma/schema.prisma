@@ -39,13 +39,14 @@ model DeployToken {
 // subdomain hostnsoft-deploy routes by (<slug>.app.embarko.ai) and the
 // X-App-Name it expects; name is just a display label.
 //
-// slug is changeable ONLY while the app has never deployed (see
-// src/services/projectSlugChange.ts and PATCH .../projects/:id/slug).
-// Once anything is running it is effectively immutable, because on
-// hostnsoft-deploy the slug is also the Nomad job name, the Traefik
-// router names, the Docker image repository, the app's data directory
-// on the host and its analytics rows — moving those is a migration that
-// needs an endpoint on that side which doesn't exist yet.
+// slug is changeable — see src/services/projectSlugChange.ts and
+// PATCH .../projects/:id/slug. For an app that has never deployed that
+// is one UPDATE. For a live one it is a migration on hostnsoft-deploy
+// (its POST /internal/apps/:appName/rename), because over there the slug
+// is also the Nomad job name, the Traefik router names, the Docker image
+// repository, the app's data directory on the host and its analytics
+// rows. The new slug is written here only after that reports success, so
+// this column never runs ahead of what is actually serving.
 // companyId/createdBy are null only for orphan (anonymous) projects — see
 // docs/Anonymous-deploy-req.md — until a real deploy token claims them.
 model Project {

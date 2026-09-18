@@ -147,8 +147,16 @@ const SLUG_CHANGE_STATUS: Record<SlugChangeFailure, number> = {
   app_name_too_long: 400,
   app_name_reserved: 409,
   app_name_taken: 409,
-  app_is_deployed: 409,
+  deploy_in_progress: 409,
+  no_current_deployment: 409,
+  slug_change_cooldown: 429,
   app_state_unknown: 503,
+  // The move was attempted and did not happen; the app is untouched and
+  // still on its old address. 502 because the failure is downstream.
+  rename_failed: 502,
+  // The move DID happen and we couldn't record it. 500: this one is
+  // ours, and it needs a person, not a retry.
+  rename_desynced: 500,
 };
 
 // Changes the app's WEB ADDRESS — a different thing from the rename
@@ -159,9 +167,11 @@ const SLUG_CHANGE_STATUS: Record<SlugChangeFailure, number> = {
 // company-wide, so letting one agent move an app would strand every
 // other agent and CI job still holding the old name.
 //
-// Today this only serves apps that have never deployed — see
-// services/projectSlugChange.ts for why a live one needs a migration on
-// hostnsoft-deploy that doesn't exist yet.
+// For an app that has already deployed this is SLOW: it holds the
+// request for a real migration on hostnsoft-deploy, including a fresh
+// certificate order for the new hostname, so minutes rather than
+// milliseconds. Callers must not assume a quick answer. See
+// services/projectSlugChange.ts.
 projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/slug",
   loadCompanyContext,

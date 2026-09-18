@@ -12,26 +12,25 @@
  * services/redeploy.ts: the route layer owns status codes.
  *
  * ---------------------------------------------------------------------
- * SCOPE TODAY: apps that have never successfully deployed.
+ * TWO PATHS, because the cost is wildly different.
  *
- * On hostnsoft-deploy there is no project id at all — the slug IS the
- * Nomad job name, the Traefik router names, the Docker image repository,
- * the app's data directory on the host, and the app_name column in the
- * analytics tables. So renaming a LIVE app is a migration (stop the job,
- * move the data directory, re-tag the images, run the new job, wait for
- * a fresh Let's Encrypt certificate on the new hostname, purge the old
- * job, rewrite the analytics rows), and it needs a new internal endpoint
- * on that side to carry it out. Until that exists, an app with anything
- * running is refused here rather than half-migrated: pushing a config
- * under a new name would start a SECOND Nomad job pointed at a brand-new
- * empty data directory while the old one kept serving, which for any app
- * with an embedded database is silent data loss.
+ * An app that has never deployed exists nowhere but this database, so
+ * changing its slug is one UPDATE. An app that HAS deployed exists on
+ * hostnsoft-deploy as a Nomad job, Traefik routers, a Docker image
+ * repository, a data directory bind-mounted at /data, and rows in the
+ * analytics tables — all keyed by the slug, because there is no project
+ * id on that side at all. Moving those is a real migration with real
+ * downtime, so it is delegated to that service's own rename endpoint
+ * (services/appRename.ts) and only recorded here once it reports
+ * success.
  *
- * The platform zone has no wildcard certificate (verified against
- * Certificate Transparency and a live handshake — every app holds its
- * own single-name Let's Encrypt cert), so a live rename also spends a
- * certificate from the zone's weekly issuance budget. DNS, by contrast,
- * is a wildcard, so no DNS work is involved either way.
+ * The platform zone has no wildcard certificate — verified against
+ * Certificate Transparency and a live handshake, every app holds its own
+ * single-name Let's Encrypt cert. So a live rename spends a certificate
+ * from the zone's weekly issuance budget, shared with new signups, and
+ * takes as long as an ACME order. That is what the cooldown below is
+ * for, and why it applies only to the deployed path. DNS is a wildcard,
+ * so no DNS work is involved on either path.
  * ---------------------------------------------------------------------
  */
 import type { Project } from "@prisma/client";
@@ -39,9 +38,28 @@ import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { checkSlug } from "../lib/reservedSlugs";
+import { envNumber } from "../lib/env";
 import { fetchAppHealth } from "./appHealth";
 import { tearDownApp } from "./appTeardown";
+import { renameApp } from "./appRename";
 import { platformAppUrl } from "./showcase";
+
+/**
+ * How long an app must wait between address changes, once it is live.
+ *
+ * Not an anti-abuse throttle so much as a budget guard: every live
+ * rename orders a fresh Let's Encrypt certificate for the new hostname,
+ * and that budget is per registered domain per week and shared with
+ * every new app signing up. A week matches the shape of the limit it is
+ * protecting. Only the deployed path consults it — an app that has never
+ * deployed has no hostname in service and spends no certificate.
+ */
+export const SLUG_CHANGE_COOLDOWN_MS: number = envNumber(
+  "SLUG_CHANGE_COOLDOWN_MS",
+  7 * 24 * 60 * 60 * 1000
+);
+
+export const SLUG_CHANGE_AUDIT_ACTION = "project.slug_change";
 
 // Matches hostnsoft-deploy's own X-App-Name check (server.js) and the
 // claim endpoint's zod schema. checkSlug deliberately does NOT cover the
@@ -56,8 +74,15 @@ export type SlugChangeFailure =
   | "app_name_too_long"
   | "app_name_reserved"
   | "app_name_taken"
-  | "app_is_deployed"
-  | "app_state_unknown";
+  | "app_state_unknown"
+  | "deploy_in_progress"
+  | "slug_change_cooldown"
+  | "no_current_deployment"
+  | "rename_failed"
+  // Raised only in the narrow case below: hostnsoft-deploy moved the app
+  // but this service could not record it. Its own code, because it is
+  // the one failure that needs a human rather than a retry.
+  | "rename_desynced";
 
 export type SlugChangeOutcome =
   | { ok: true; project: Project; previousSlug: string; unchanged: boolean }
@@ -80,41 +105,16 @@ export type SlugChangeOutcome =
  * hostnsoft-deploy is unreachable or errors, and treating "I couldn't
  * ask" as "nothing is there" is how you delete a live app's data.
  */
-async function assertNothingDeployed(project: Project): Promise<SlugChangeOutcome | null> {
-  if (project.currentDeploymentId) {
-    return {
-      ok: false,
-      code: "app_is_deployed",
-      reason:
-        "This app has been deployed, and its web address can't be changed yet. " +
-        "Deployed apps need their running container, stored data and certificate " +
-        "migrated to the new address, which isn't supported yet.",
-    };
-  }
+async function isLive(project: Project): Promise<boolean | "unknown"> {
+  if (project.currentDeploymentId) return true;
 
   const health = await fetchAppHealth(project.slug);
-  if (health === "not_deployed") return null;
+  if (health === "not_deployed") return false;
+  if (health === "unknown") return "unknown";
 
-  if (health === "unknown") {
-    return {
-      ok: false,
-      code: "app_state_unknown",
-      reason:
-        "Couldn't confirm whether this app is currently running, so its web " +
-        "address wasn't changed. Try again in a moment.",
-    };
-  }
-
-  // Running/starting/crashed/stopped with no recorded deployment — the
-  // failed-callback case above. Renaming would strand a live Nomad job
-  // under the old name.
-  return {
-    ok: false,
-    code: "app_is_deployed",
-    reason:
-      "This app is already running on the platform, so its web address can't " +
-      "be changed yet, even though no successful deployment was recorded for it.",
-  };
+  // Running/starting/crashed/stopped with nothing recorded — the
+  // failed-callback case above. Treat it as live, because it is.
+  return true;
 }
 
 /**
@@ -134,6 +134,50 @@ async function repointShowcaseListings(projectId: string, previousSlug: string, 
   });
   if (count > 0) {
     logger.info(`[projectSlugChange] repointed ${count} showcase listing(s) from ${stale} to ${fresh}`);
+  }
+}
+
+function takenReason(slug: string): string {
+  return `"${slug}" is already taken. App addresses are unique across the whole platform.`;
+}
+
+/**
+ * Milliseconds left on this app's cooldown, or 0 if it's free to move.
+ *
+ * Read from the audit log rather than a column on Project: the audit row
+ * is already written for every slug change and is the authoritative
+ * record of when one happened, so a dedicated timestamp would be a
+ * second source of truth for the same fact — and one that a migration
+ * would have to backfill.
+ */
+async function cooldownRemainingMs(projectId: string): Promise<number> {
+  if (SLUG_CHANGE_COOLDOWN_MS <= 0) return 0;
+  const last = await prisma.auditLog.findFirst({
+    where: { projectId, action: SLUG_CHANGE_AUDIT_ACTION },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  if (!last) return 0;
+  const elapsed = Date.now() - last.createdAt.getTime();
+  return Math.max(0, SLUG_CHANGE_COOLDOWN_MS - elapsed);
+}
+
+/**
+ * Rewrite this project's recorded image tags from the old app name to
+ * the new one, mirroring the `docker tag` pass hostnsoft-deploy just
+ * did. Only the repository half changes; the version is untouched.
+ */
+async function retagDeploymentHistory(projectId: string, previousSlug: string, nextSlug: string): Promise<void> {
+  const stale = await prisma.deployment.findMany({
+    where: { projectId, imageTag: { startsWith: `${previousSlug}:` } },
+    select: { id: true, imageTag: true },
+  });
+  for (const d of stale) {
+    const version = d.imageTag!.slice(previousSlug.length + 1);
+    await prisma.deployment.update({ where: { id: d.id }, data: { imageTag: `${nextSlug}:${version}` } });
+  }
+  if (stale.length) {
+    logger.info(`[projectSlugChange] retagged ${stale.length} deployment record(s) from "${previousSlug}:*" to "${nextSlug}:*"`);
   }
 }
 
@@ -168,40 +212,144 @@ export async function changeProjectSlug(project: Project, requestedSlug: string)
     return { ok: false, code: reserved.code as SlugChangeFailure, reason: reserved.reason };
   }
 
-  const blocked = await assertNothingDeployed(project);
-  if (blocked) return blocked;
+  const live = await isLive(project);
+  if (live === "unknown") {
+    return {
+      ok: false,
+      code: "app_state_unknown",
+      reason:
+        "Couldn't confirm whether this app is currently running, so its web " +
+        "address wasn't changed. Try again in a moment.",
+    };
+  }
 
   const previousSlug = project.slug;
 
-  // create-then-catch, not check-then-write: the slug is unique
-  // platform-wide and a concurrent claim (a deploy of that same name
-  // landing right now) must lose on the constraint rather than on a
-  // read that was already stale by the time we wrote. Same pattern as
-  // services/projectClaim.ts.
+  if (!live) {
+    // --- Nothing deployed: the slug exists only in this database.
+    //
+    // create-then-catch, not check-then-write: the slug is unique
+    // platform-wide and a concurrent claim (a deploy of that same name
+    // landing right now) must lose on the constraint rather than on a
+    // read that was already stale by the time we wrote. Same pattern as
+    // services/projectClaim.ts.
+    let updated: Project;
+    try {
+      updated = await prisma.project.update({ where: { id: project.id }, data: { slug } });
+    } catch (err) {
+      if (!isUniqueConstraintViolation(err)) throw err;
+      return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
+    }
+
+    await repointShowcaseListings(project.id, previousSlug, slug);
+
+    // Best-effort cleanup of anything a FAILED build left behind under
+    // the old name — an empty data directory and any half-built images.
+    // Safe only because isLive has established there is no Nomad job and
+    // no recorded deployment; with the name now freed, nothing else
+    // would ever collect these (image retention and teardown both filter
+    // by the app's current name, so they'd leak forever).
+    await tearDownApp(previousSlug);
+
+    return { ok: true, project: updated, previousSlug, unchanged: false };
+  }
+
+  // --- Deployed: a real migration on hostnsoft-deploy. ---
+
+  // Live, but we have no record of WHICH image is live — the
+  // failed-callback case isLive catches. Rebuilding the job spec under a
+  // new name needs that image tag, and guessing it would at best deploy
+  // the wrong version and at worst deploy nothing. The cheap path is
+  // equally wrong: it would rename the record and strand a running job
+  // under the old name. Redeploying repairs the record, so say so.
+  if (!project.currentDeploymentId) {
+    return {
+      ok: false,
+      code: "no_current_deployment",
+      reason:
+        "This app is running, but there's no record of which version is live, so its address " +
+        "can't be moved safely. Deploy it once and try again.",
+    };
+  }
+
+  const inFlight = await prisma.deployment.findFirst({
+    where: { projectId: project.id, status: "in_progress" },
+  });
+  if (inFlight) {
+    // The migration stops the Nomad job partway through. A deploy
+    // landing in that window would find the job stopped and
+    // hostnsoft-deploy's purgeIfNotRunning would purge it out from under
+    // the rollback path. Neither service has a cross-process lock, so
+    // this check is the interlock — see rename-app.js's header.
+    return {
+      ok: false,
+      code: "deploy_in_progress",
+      reason: "A deploy is running for this app. Wait for it to finish, then change the address.",
+    };
+  }
+
+  const cooldown = await cooldownRemainingMs(project.id);
+  if (cooldown > 0) {
+    const days = Math.ceil(cooldown / (24 * 60 * 60 * 1000));
+    return {
+      ok: false,
+      code: "slug_change_cooldown",
+      reason:
+        `This app's address was changed recently. Each change needs a new security ` +
+        `certificate, and those are rate-limited, so you can change it again in ${days} day${days === 1 ? "" : "s"}.`,
+    };
+  }
+
+  // Pre-flight only. It cannot be authoritative: the migration below
+  // takes minutes, and nothing reserves the name meanwhile. Claiming it
+  // here first would be worse, not better — it would free the OLD name
+  // for someone else during exactly the window in which the app is still
+  // serving from it. So the real guard stays the unique constraint at
+  // the end, and the (very narrow) loss of that race is reported as
+  // rename_desynced rather than silently swallowed.
+  if (await prisma.project.findUnique({ where: { slug } })) {
+    return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
+  }
+
+  const moved = await renameApp(project, slug);
+  if (!moved.renamed) {
+    // hostnsoft-deploy rolls back before it answers, so the app is still
+    // live under its old name here.
+    return { ok: false, code: "rename_failed", reason: moved.error };
+  }
+
   let updated: Project;
   try {
     updated = await prisma.project.update({ where: { id: project.id }, data: { slug } });
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
+    // The app HAS moved and is serving the new address; we just can't
+    // record it, because someone claimed the name during the migration.
+    // Nothing here can fix that safely — moving the app back is another
+    // full migration and another certificate — so it is logged loudly
+    // and handed to a person.
+    logger.error(
+      `[projectSlugChange] DESYNC: hostnsoft-deploy moved project ${project.id} from "${previousSlug}" to ` +
+        `"${slug}", but "${slug}" was claimed by another project during the migration. This service still ` +
+        `records "${previousSlug}". The app is live at "${slug}" and needs manual reconciliation.`
+    );
     return {
       ok: false,
-      code: "app_name_taken",
-      reason: `"${slug}" is already taken. App addresses are unique across the whole platform.`,
+      code: "rename_desynced",
+      reason:
+        `Your app has moved to "${slug}", but that address was claimed by someone else while the move was ` +
+        `running, so we couldn't finish recording it. Support has been alerted.`,
     };
   }
 
+  // Deployment.imageTag values embed the OLD app name ("<old>:<version>")
+  // and hostnsoft-deploy retags every image to "<new>:<version>" and
+  // drops the old tags. Left alone, every past deployment would point at
+  // an image reference that no longer exists on the host, and rollback —
+  // which replays exactly that string and checks it with `docker image
+  // inspect` first — would fail with image_unavailable on all of them.
+  await retagDeploymentHistory(project.id, previousSlug, slug);
   await repointShowcaseListings(project.id, previousSlug, slug);
-
-  // Best-effort cleanup of anything a FAILED build left behind under the
-  // old name — an empty data directory and any half-built images. Safe
-  // only because assertNothingDeployed has already established there is
-  // no Nomad job and no recorded deployment; with the name now freed,
-  // nothing else would ever collect these (image retention and teardown
-  // both filter by the app's current name, so they'd leak forever).
-  // Best-effort in the same sense as every other internal call here: a
-  // hostnsoft-deploy outage must not undo a slug change that already
-  // committed.
-  await tearDownApp(previousSlug);
 
   return { ok: true, project: updated, previousSlug, unchanged: false };
 }
