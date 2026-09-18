@@ -7,7 +7,19 @@ import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 import { checkSlug } from "../lib/reservedSlugs";
-import { changeProjectSlug, type SlugChangeFailure } from "../services/projectSlugChange";
+import {
+  prepareSlugChange,
+  applyDatabaseOnlySlugChange,
+  runSlugMigration,
+  type SlugChangeFailure,
+} from "../services/projectSlugChange";
+import {
+  markRenameStarted,
+  markRenameFinished,
+  getRenameStatus,
+  isRenameInProgress,
+} from "../services/renameStatus";
+import { logger } from "../lib/logger";
 import { tearDownApp } from "../services/appTeardown";
 import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
@@ -169,35 +181,98 @@ const SLUG_CHANGE_STATUS: Record<SlugChangeFailure, number> = {
 //
 // For an app that has already deployed this is SLOW: it holds the
 // request for a real migration on hostnsoft-deploy, including a fresh
-// certificate order for the new hostname, so minutes rather than
-// milliseconds. Callers must not assume a quick answer. See
-// services/projectSlugChange.ts.
+// certificate order for the new hostname. Nothing in front of this
+// service will hold a request that long — the dashboard's own proxy
+// gives up after ten seconds — so a live move answers 202 straight away
+// and continues behind the response. Poll the companion GET below for
+// the outcome. An app that has never deployed still answers 200 with the
+// updated project, because that really is finished by then.
 projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/slug",
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
     const { slug } = changeSlugSchema.parse(req.body);
-    const outcome = await changeProjectSlug(req.project!, slug);
+    const project = req.project!;
 
-    if (!outcome.ok) {
-      return res.status(SLUG_CHANGE_STATUS[outcome.code]).json({ error: outcome.reason, code: outcome.code });
-    }
-
-    // Re-submitting the address it already has changes nothing, so it
-    // gets no audit row — an audit log should record what happened, and
-    // nothing did.
-    if (!outcome.unchanged) {
-      await logAudit({
-        actorUserId: req.userId,
-        companyId: req.company!.id,
-        projectId: outcome.project.id,
-        action: "project.slug_change",
-        details: `${outcome.previousSlug} -> ${outcome.project.slug}`,
+    if (isRenameInProgress(project.id)) {
+      return res.status(409).json({
+        error: "This app's address is already being changed. Wait for that to finish.",
+        code: "rename_in_progress",
       });
     }
 
-    res.json(outcome.project);
+    const plan = await prepareSlugChange(project, slug);
+    if (!plan.ok) {
+      return res.status(SLUG_CHANGE_STATUS[plan.code]).json({ error: plan.reason, code: plan.code });
+    }
+
+    // Re-submitting the address it already has changes nothing, so no
+    // audit row — an audit log should record what happened, and nothing
+    // did.
+    if (plan.unchanged) return res.json(project);
+
+    const audit = (previousSlug: string, nextSlug: string) =>
+      logAudit({
+        actorUserId: req.userId,
+        companyId: req.company!.id,
+        projectId: project.id,
+        action: "project.slug_change",
+        details: `${previousSlug} -> ${nextSlug}`,
+      });
+
+    if (!plan.live) {
+      const outcome = await applyDatabaseOnlySlugChange(project, plan.slug);
+      if (!outcome.ok) {
+        return res.status(SLUG_CHANGE_STATUS[outcome.code]).json({ error: outcome.reason, code: outcome.code });
+      }
+      await audit(outcome.previousSlug, outcome.project.slug);
+      return res.json(outcome.project);
+    }
+
+    // Live: answer now, migrate behind it.
+    markRenameStarted(project.id, project.slug, plan.slug);
+    res.status(202).json({
+      moving: true,
+      from: project.slug,
+      to: plan.slug,
+      statusUrl: `/companies/${req.company!.id}/projects/${project.id}/slug`,
+    });
+
+    // Intentionally not awaited — the response is already sent. Never
+    // throws outward: there is nothing left to answer to, so every
+    // outcome is recorded for the poller instead.
+    void (async () => {
+      try {
+        const outcome = await runSlugMigration(project, plan.slug);
+        if (outcome.ok) await audit(outcome.previousSlug, outcome.project.slug);
+        markRenameFinished(
+          project.id,
+          outcome.ok ? { ok: true } : { ok: false, code: outcome.code, reason: outcome.reason }
+        );
+      } catch (e) {
+        const reason = (e as Error).message;
+        logger.error(`[projects] slug migration for ${project.id} threw: ${reason}`);
+        markRenameFinished(project.id, { ok: false, code: "rename_failed", reason });
+      }
+    })();
+  }
+);
+
+// Where a live move reports its outcome, since the PATCH above cannot
+// wait for one. 404 when nothing is known: either no move was started or
+// it finished long enough ago to have been forgotten, and the project's
+// own slug is the answer in both cases.
+projectsRouter.get(
+  "/companies/:companyId/projects/:projectId/slug",
+  loadCompanyContext,
+  loadProjectContext,
+  async (req, res) => {
+    const status = getRenameStatus(req.project!.id);
+    if (!status) {
+      return res.status(404).json({ error: "No address change is in progress for this app.", code: "no_rename" });
+    }
+    res.json(status);
   }
 );
 

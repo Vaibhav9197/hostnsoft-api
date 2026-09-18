@@ -181,7 +181,24 @@ async function retagDeploymentHistory(projectId: string, previousSlug: string, n
   }
 }
 
-export async function changeProjectSlug(project: Project, requestedSlug: string): Promise<SlugChangeOutcome> {
+/**
+ * Everything that can be decided before anything changes: what the slug
+ * normalises to, whether it is allowed, and which of the two paths this
+ * app needs.
+ *
+ * Split out from the work itself because the two paths have to be
+ * answered to the caller differently. The cheap path is a single write
+ * and can be answered synchronously; the migration takes minutes, which
+ * no HTTP client in front of this will wait for — the dashboard's own
+ * proxy gives up after ten seconds — so the route has to validate, reply,
+ * and run the migration in the background. It can only do that if the
+ * refusals are available separately from the work.
+ */
+export type SlugChangePlan =
+  | { ok: true; slug: string; live: boolean; unchanged: boolean }
+  | { ok: false; code: SlugChangeFailure; reason: string };
+
+export async function prepareSlugChange(project: Project, requestedSlug: string): Promise<SlugChangePlan> {
   const slug = requestedSlug.trim().toLowerCase();
 
   if (!SLUG_PATTERN.test(slug)) {
@@ -197,7 +214,7 @@ export async function changeProjectSlug(project: Project, requestedSlug: string)
   // refused by the reserved-name rule below for an app that legitimately
   // predates that list.
   if (slug === project.slug) {
-    return { ok: true, project, previousSlug: project.slug, unchanged: true };
+    return { ok: true, slug, live: false, unchanged: true };
   }
 
   // Deliberately NOT via projectClaim.ts's slugRejection(), which skips
@@ -223,9 +240,18 @@ export async function changeProjectSlug(project: Project, requestedSlug: string)
     };
   }
 
-  const previousSlug = project.slug;
+  if (!live) return { ok: true, slug, live: false, unchanged: false };
 
-  if (!live) {
+  // --- Remaining refusals apply only to a live app. ---
+  const liveRefusal = await liveRefusals(project, slug);
+  if (liveRefusal) return liveRefusal;
+  return { ok: true, slug, live: true, unchanged: false };
+}
+
+/** The cheap path: nothing exists on hostnsoft-deploy under this name. */
+export async function applyDatabaseOnlySlugChange(project: Project, slug: string): Promise<SlugChangeOutcome> {
+  const previousSlug = project.slug;
+  {
     // --- Nothing deployed: the slug exists only in this database.
     //
     // create-then-catch, not check-then-write: the slug is unique
@@ -253,9 +279,13 @@ export async function changeProjectSlug(project: Project, requestedSlug: string)
 
     return { ok: true, project: updated, previousSlug, unchanged: false };
   }
+}
 
-  // --- Deployed: a real migration on hostnsoft-deploy. ---
-
+/** Refusals that only make sense for an app that is actually running. */
+async function liveRefusals(
+  project: Project,
+  slug: string
+): Promise<{ ok: false; code: SlugChangeFailure; reason: string } | null> {
   // Live, but we have no record of WHICH image is live — the
   // failed-callback case isLive catches. Rebuilding the job spec under a
   // new name needs that image tag, and guessing it would at best deploy
@@ -310,6 +340,16 @@ export async function changeProjectSlug(project: Project, requestedSlug: string)
   if (await prisma.project.findUnique({ where: { slug } })) {
     return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
   }
+
+  return null;
+}
+
+/**
+ * The expensive path: hand the running app to hostnsoft-deploy, then
+ * record the move. Assumes prepareSlugChange has already approved it.
+ */
+export async function runSlugMigration(project: Project, slug: string): Promise<SlugChangeOutcome> {
+  const previousSlug = project.slug;
 
   const moved = await renameApp(project, slug);
   if (!moved.renamed) {
