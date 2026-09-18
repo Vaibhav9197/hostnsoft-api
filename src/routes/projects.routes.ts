@@ -6,6 +6,8 @@ import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
+import { checkSlug } from "../lib/reservedSlugs";
+import { changeProjectSlug, type SlugChangeFailure } from "../services/projectSlugChange";
 import { tearDownApp } from "../services/appTeardown";
 import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
@@ -26,6 +28,16 @@ projectsRouter.post(
     const slug = slugify(name);
     if (!slug) {
       return res.status(400).json({ error: "Name must contain at least one letter or digit" });
+    }
+
+    // Reserved/shape rules were previously enforced ONLY on the deploy
+    // path (services/projectClaim.ts), so this route could mint an app
+    // named `login` or `api` — a platform hostname — straight from the
+    // dashboard. No grandfathering branch here: unlike a claim, this is
+    // always a brand-new name, so there is no existing app to protect.
+    const rejected = checkSlug(slug);
+    if (rejected.reserved) {
+      return res.status(409).json({ error: rejected.reason, code: rejected.code });
     }
 
     const existing = await prisma.project.findUnique({ where: { slug } });
@@ -116,6 +128,66 @@ projectsRouter.patch(
       details: name,
     });
     res.json(project);
+  }
+);
+
+// Takes the slug literally rather than a display name to slugify: the
+// caller is choosing a public web address, so a value that isn't usable
+// has to come back as an error they can act on, not be silently mangled
+// into something adjacent. (POST above still derives one from `name`,
+// where the caller isn't picking an address at all.)
+const changeSlugSchema = z.object({ slug: z.string().trim().min(1).max(63) });
+
+// Which failures are the caller's malformed input vs. a genuine conflict
+// with platform state. Reserved names sit with the conflicts, matching
+// how POST /internal/projects/claim already reports them.
+const SLUG_CHANGE_STATUS: Record<SlugChangeFailure, number> = {
+  invalid_app_name: 400,
+  app_name_too_short: 400,
+  app_name_too_long: 400,
+  app_name_reserved: 409,
+  app_name_taken: 409,
+  app_is_deployed: 409,
+  app_state_unknown: 503,
+};
+
+// Changes the app's WEB ADDRESS — a different thing from the rename
+// above, and deliberately a different endpoint: this one can be refused
+// for reasons the display-name rename never can, and it is the caller's
+// only warning that the old address dies. Dashboard-only on purpose
+// (no agent-facing equivalent on /apps/:appName): deploy tokens are
+// company-wide, so letting one agent move an app would strand every
+// other agent and CI job still holding the old name.
+//
+// Today this only serves apps that have never deployed — see
+// services/projectSlugChange.ts for why a live one needs a migration on
+// hostnsoft-deploy that doesn't exist yet.
+projectsRouter.patch(
+  "/companies/:companyId/projects/:projectId/slug",
+  loadCompanyContext,
+  loadProjectContext,
+  async (req, res) => {
+    const { slug } = changeSlugSchema.parse(req.body);
+    const outcome = await changeProjectSlug(req.project!, slug);
+
+    if (!outcome.ok) {
+      return res.status(SLUG_CHANGE_STATUS[outcome.code]).json({ error: outcome.reason, code: outcome.code });
+    }
+
+    // Re-submitting the address it already has changes nothing, so it
+    // gets no audit row — an audit log should record what happened, and
+    // nothing did.
+    if (!outcome.unchanged) {
+      await logAudit({
+        actorUserId: req.userId,
+        companyId: req.company!.id,
+        projectId: outcome.project.id,
+        action: "project.slug_change",
+        details: `${outcome.previousSlug} -> ${outcome.project.slug}`,
+      });
+    }
+
+    res.json(outcome.project);
   }
 );
 

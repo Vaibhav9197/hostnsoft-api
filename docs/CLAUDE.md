@@ -292,10 +292,11 @@ it has an endpoint here (removed 2026-09-04).
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/projects` `{name}` | any member | Generates an immutable `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.embarko.ai`). |
+| `POST /companies/:companyId/projects` `{name}` | any member | Generates a `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — checked unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.embarko.ai`), and checked against `lib/reservedSlugs.ts` (added with the slug-change endpoint below; before that this route enforced the reserved list nowhere, so the dashboard could mint an app called `login` or `api`). |
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
-| `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — `slug` never changes after creation. See open questions on why. |
+| `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |
+| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. **Only for apps that have never deployed**: refused `409 app_is_deployed` once anything is running, and `503 app_state_unknown` if `hostnsoft-deploy` can't be reached to confirm that (fails closed — a deploy whose record callback failed leaves a live app with no `currentDeploymentId` here). Other codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`, `409 app_name_reserved`/`app_name_taken`. Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect, and the freed name is re-claimable by anyone. Dashboard-only, deliberately: deploy tokens are company-wide, so an agent moving an app would strand every other agent and CI job still using the old name. Audited as `project.slug_change`. |
 | `DELETE /companies/:companyId/projects/:projectId` | any member | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
 
 ### Tokens (company-scoped deploy tokens)
@@ -517,7 +518,34 @@ deploy execution capability in one place.
    explicitly to whoever owns `hostnsoft-deploy` rather than working
    around it (e.g. by leaving orphaned Nomad jobs running after a
    project's DB row is deleted).
-8. **Company deletion cascade behavior**: the API surface above blocks
+8. **Renaming a LIVE app** — `PATCH .../projects/:projectId/slug` today
+   refuses anything that has ever deployed. Making it work needs a new
+   internal endpoint on `hostnsoft-deploy` (nothing there can rename:
+   `POST /internal/apps/:appName/config` under a new name would start a
+   SECOND Nomad job on a new, empty data directory while the old one kept
+   serving, and `DELETE /internal/apps/:appName` deletes the data
+   directory and every image, so it can't be reused either). The sequence
+   that repo's code actually demands: stop the old job → move
+   `$APP_DATA_ROOT/<old>` → re-tag `<old>:<ver>` images → run the new job
+   → **wait for a valid certificate on the new hostname** → purge the old
+   job → rewrite `app_name` in both analytics tables → move the
+   `deploy-status` map entry. Roll back by moving the data directory back
+   if any step fails.
+
+   **Verified 2026-09-18 — the platform zone has NO wildcard certificate.**
+   Checked against Certificate Transparency and a live TLS handshake:
+   every app holds its own single-name Let's Encrypt cert
+   (`CN=<slug>.app.embarko.ai`, one SAN). The `*.embarko.ai` cert that
+   exists is Cloudflare's universal cert and, being single-label, does
+   not cover `<slug>.app.embarko.ai`. Consequences for the above: each
+   rename spends a certificate from the zone's weekly issuance budget —
+   the same budget new signups draw on — and the new hostname serves
+   Traefik's self-signed default (a hard browser warning) until the order
+   completes. Hence "wait for the cert before purging the old job", and
+   hence a per-app cooldown. **DNS, by contrast, IS a wildcard** — a
+   never-before-seen `*.app.embarko.ai` name already resolves to the
+   origin — so a rename needs no DNS work at all.
+9. **Company deletion cascade behavior**: the API surface above blocks
    deleting a company that still has projects, rather than silently
    cascade-deleting running apps. Confirm this is the right default
    before building — the alternative (force-delete everything) is more
