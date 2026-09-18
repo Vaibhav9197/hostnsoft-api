@@ -296,7 +296,7 @@ it has an endpoint here (removed 2026-09-04).
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |
-| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. **Only for apps that have never deployed**: refused `409 app_is_deployed` once anything is running, and `503 app_state_unknown` if `hostnsoft-deploy` can't be reached to confirm that (fails closed — a deploy whose record callback failed leaves a live app with no `currentDeploymentId` here). Other codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`, `409 app_name_reserved`/`app_name_taken`. Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect, and the freed name is re-claimable by anyone. Dashboard-only, deliberately: deploy tokens are company-wide, so an agent moving an app would strand every other agent and CI job still using the old name. Audited as `project.slug_change`. |
+| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename`, and this endpoint **blocks for minutes** while that runs (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). The new slug is written here only after that succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect, and the freed name is re-claimable by anyone. Dashboard-only, deliberately: deploy tokens are company-wide, so an agent moving an app would strand every other agent and CI job still using the old name. Audited as `project.slug_change`. |
 | `DELETE /companies/:companyId/projects/:projectId` | any member | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
 
 ### Tokens (company-scoped deploy tokens)
@@ -486,9 +486,16 @@ deploy execution capability in one place.
    explicitly to whoever owns `hostnsoft-deploy` rather than working
    around it (e.g. by leaving orphaned Nomad jobs running after a
    project's DB row is deleted).
-8. **Renaming a LIVE app** — `PATCH .../projects/:projectId/slug` today
-   refuses anything that has ever deployed. Making it work needs a new
-   internal endpoint on `hostnsoft-deploy` (nothing there can rename:
+8. ~~**Renaming a LIVE app**~~ — **built.** `hostnsoft-deploy` now has
+   `POST /internal/apps/:appName/rename` (`rename-app.js`), called from
+   `src/services/appRename.ts`. The sequence and the reasoning below are
+   what it implements; kept here because the two constraints that drive
+   the ordering are not obvious from the code alone. **Not yet exercised
+   against real Nomad/Docker/ACME — must be run on a throwaway app in the
+   test environment before any real app uses it.** Original note follows.
+
+   Making it work needed a new internal endpoint on `hostnsoft-deploy`
+   (nothing there could rename:
    `POST /internal/apps/:appName/config` under a new name would start a
    SECOND Nomad job on a new, empty data directory while the old one kept
    serving, and `DELETE /internal/apps/:appName` deletes the data
