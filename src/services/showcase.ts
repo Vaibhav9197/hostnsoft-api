@@ -139,13 +139,21 @@ export function canListOn(collection: Pick<ShowcaseCollection, "type" | "company
 // Not its own config file for one constant — see env.ts for the same pattern.
 const APP_PUBLIC_DOMAIN = (process.env.APP_PUBLIC_DOMAIN ?? "app.embarko.ai").replace(/^https?:\/\//, "");
 
+// The hostname an app is served under when it has no custom domain.
+// Exported so services/projectSlugChange.ts can recognise (and rewrite)
+// exactly those listing snapshots that point at a slug that just changed,
+// without having to rebuild this string — and get it subtly wrong — there.
+export function platformAppUrl(slug: string): string {
+  return `https://${slug}.${APP_PUBLIC_DOMAIN}`;
+}
+
 // The project's active custom domain if it has one, else the platform hostname.
 export async function resolveAppUrl(project: Pick<Project, "id" | "slug">): Promise<string> {
   const custom = await prisma.domain.findFirst({
     where: { projectId: project.id, status: "active" },
     orderBy: { createdAt: "asc" },
   });
-  return custom ? `https://${custom.domain}` : `https://${project.slug}.${APP_PUBLIC_DOMAIN}`;
+  return custom ? `https://${custom.domain}` : platformAppUrl(project.slug);
 }
 
 // ---- submission input
@@ -196,7 +204,7 @@ export const showcaseSubmissionSchema = z.object({
   projectId: z.string().trim().min(1),
   name: z.string().trim().min(1, "App name is required").max(80),
   tagline: z.string().trim().min(1, "Tell us what it does").max(160),
-  whatItDoes: optionalText(600),
+  whatItDoes: optionalText(4000),
   whyBuilt: optionalText(600),
   creatorName: z.string().trim().min(1, "Creator name is required").max(80),
   creatorProfile: optionalUrl,
