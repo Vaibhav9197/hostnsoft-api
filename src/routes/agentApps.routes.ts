@@ -36,6 +36,12 @@ import {
   toOwnerProject,
   uniqueProjectSlug,
 } from "../services/showcase";
+import { classifyDomain, isPlatformDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
+import { verifyDomainDns } from "../lib/dnsVerify";
+import { activateDomain, pushCustomDomainConfig } from "../services/customDomainActivation";
+import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, PLATFORM_DOMAIN } from "../lib/customDomainConfig";
+import { fetchAppAnalytics, type AnalyticsRange } from "../services/appAnalytics";
+import { tearDownApp } from "../services/appTeardown";
 
 export const agentAppsRouter = Router();
 
@@ -75,6 +81,57 @@ appScoped.get("/", async (req, res) => {
       finishedAt: current.finishedAt,
     },
   });
+});
+
+const renameAppSchema = z.object({ name: z.string().min(1) });
+
+// Display name only — the slug (and so the live URL) never changes after
+// creation, same as projects.routes.ts's rename.
+appScoped.patch("/", async (req, res) => {
+  const { name } = renameAppSchema.parse(req.body);
+  const project = await prisma.project.update({ where: { id: req.project!.id }, data: { name } });
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: project.id,
+    action: "project.rename",
+    details: `${name} (${agentActor(req)})`,
+  });
+
+  res.json({ id: project.id, name: project.name, slug: project.slug });
+});
+
+// Irreversible, no backup — see limitations-and-recommendations.md. A
+// deploy token can be requested by email alone (no further verification),
+// so this requires an explicit confirmation on top of the token itself:
+// naming the app again is cheap for an agent that means it, and costly
+// for one acting on a misread instruction.
+const deleteAppSchema = z.object({ confirmAppName: z.string().min(1) });
+
+appScoped.delete("/", async (req, res) => {
+  const { confirmAppName } = deleteAppSchema.parse(req.body ?? {});
+  const project = req.project!;
+
+  if (confirmAppName !== project.slug) {
+    return res.status(400).json({
+      error: `Deleting is irreversible. Resend with { "confirmAppName": "${project.slug}" } to confirm.`,
+      code: "confirmation_required",
+    });
+  }
+
+  await tearDownApp(project.slug);
+  await prisma.project.delete({ where: { id: project.id } });
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: project.id,
+    action: "project.delete",
+    details: agentActor(req),
+  });
+
+  res.status(204).end();
 });
 
 // Keys only, never values.
@@ -436,6 +493,137 @@ appScoped.post("/rollback", async (req, res) => {
     statusUrl: `/api/apps/${project.slug}/deployments/${outcome.deployment.id}`,
     terminal: false,
   });
+});
+
+// Custom domains — same services domains.routes.ts calls for the
+// dashboard (customDomainActivation.ts, dnsVerify.ts), just addressed by
+// app name and deploy-token authenticated. The DNS record itself still
+// has to be created by a person at their own registrar; what this opens
+// up is the register/verify/delete calls around that step, so an agent
+// doesn't have to hand the whole flow to a human.
+function dnsInstructionsFor(domain: string, type: DomainType) {
+  return type === "apex"
+    ? { type: "A" as const, name: domain, value: ORIGIN_SERVER_IP }
+    : { type: "CNAME" as const, name: domain, value: EDGE_HOSTNAME };
+}
+
+const registerDomainSchema = z.object({ domain: z.string().min(1) });
+
+appScoped.get("/domains", async (req, res) => {
+  const domains = await prisma.domain.findMany({ where: { projectId: req.project!.id } });
+  res.json({ domains });
+});
+
+appScoped.post("/domains", async (req, res) => {
+  const { domain: rawDomain } = registerDomainSchema.parse(req.body);
+  const domain = rawDomain.toLowerCase().trim();
+
+  if (!isValidDomainSyntax(domain)) {
+    return res.status(400).json({ error: "Not a valid domain name", code: "invalid_domain" });
+  }
+  if (isPlatformDomain(domain, PLATFORM_DOMAIN)) {
+    return res.status(400).json({
+      error: `"${domain}" is part of ${PLATFORM_DOMAIN} and can't be registered as a custom domain. Use a domain you own.`,
+      code: "domain_reserved",
+    });
+  }
+
+  const type = classifyDomain(domain);
+
+  let created;
+  try {
+    created = await prisma.domain.create({ data: { projectId: req.project!.id, domain, type } });
+  } catch (err) {
+    if (!isUniqueConstraintViolation(err)) throw err;
+    return res.status(409).json({ error: `"${domain}" is already registered to a project`, code: "domain_taken" });
+  }
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "domain.register",
+    details: `${domain} (${agentActor(req)})`,
+  });
+
+  res.status(201).json({
+    domain: created.domain,
+    status: created.status,
+    instructions: dnsInstructionsFor(created.domain, created.type as DomainType),
+  });
+});
+
+appScoped.post("/domains/:domain/verify", async (req, res) => {
+  const domain = await prisma.domain.findFirst({
+    where: { domain: req.params.domain, projectId: req.project!.id },
+  });
+  if (!domain) return res.status(404).json({ error: "Domain not found", code: "domain_not_found" });
+
+  const type = domain.type as DomainType;
+  const dnsOk = await verifyDomainDns(domain.domain, type);
+
+  if (!dnsOk) {
+    await prisma.domain.update({ where: { id: domain.id }, data: { status: "failed" } });
+    return res.status(422).json({
+      domain: domain.domain,
+      status: "failed",
+      error: "DNS does not yet point at the platform — check the instructions below and retry once it propagates",
+      instructions: dnsInstructionsFor(domain.domain, type),
+    });
+  }
+
+  const result = await activateDomain(domain.id);
+  if (!result.activated) {
+    return res.status(502).json({
+      domain: domain.domain,
+      status: "pending_dns",
+      error: `DNS verified, but activating routing failed: ${result.error}`,
+    });
+  }
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "domain.verify",
+    details: `${domain.domain} (${agentActor(req)})`,
+  });
+
+  res.json({ domain: domain.domain, status: "active" });
+});
+
+appScoped.delete("/domains/:domain", async (req, res) => {
+  const domain = await prisma.domain.findFirst({
+    where: { domain: req.params.domain, projectId: req.project!.id },
+  });
+  if (!domain) return res.status(404).json({ error: "Domain not found", code: "domain_not_found" });
+
+  await prisma.domain.delete({ where: { id: domain.id } });
+  await pushCustomDomainConfig(domain.projectId);
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "domain.delete",
+    details: `${domain.domain} (${agentActor(req)})`,
+  });
+
+  res.status(204).end();
+});
+
+// Analytics — read-only, same fetchAppAnalytics as analytics.routes.ts.
+// 503, not a fabricated empty result, when hostnsoft-deploy's analytics
+// subsystem is unreachable — see analytics.routes.ts for why.
+const analyticsRangeSchema = z.enum(["24h", "7d", "30d", "90d", "all"]).default("24h");
+
+appScoped.get("/analytics", async (req, res) => {
+  const range: AnalyticsRange = analyticsRangeSchema.parse(req.query.range);
+  const analytics = await fetchAppAnalytics(req.project!.slug, range);
+  if (!analytics) {
+    return res.status(503).json({ error: "Analytics are temporarily unavailable for this app" });
+  }
+  res.json(analytics);
 });
 
 const SHOWCASE_COLLECTION_UNKNOWN = {
