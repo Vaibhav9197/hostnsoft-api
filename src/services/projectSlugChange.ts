@@ -150,7 +150,7 @@ function takenReason(slug: string): string {
  * second source of truth for the same fact — and one that a migration
  * would have to backfill.
  */
-async function cooldownRemainingMs(projectId: string): Promise<number> {
+export async function cooldownRemainingMs(projectId: string): Promise<number> {
   if (SLUG_CHANGE_COOLDOWN_MS <= 0) return 0;
   const last = await prisma.auditLog.findFirst({
     where: { projectId, action: SLUG_CHANGE_AUDIT_ACTION },

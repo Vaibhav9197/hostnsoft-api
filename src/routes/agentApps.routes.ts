@@ -24,7 +24,10 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
-import { requireDeployToken, loadAppBySlug } from "../middleware/deployTokenContext";
+import { requireDeployToken, loadAppBySlug, loadAppById } from "../middleware/deployTokenContext";
+import { startSlugChange, resolveSlugChangeStatus, SLUG_CHANGE_STATUS } from "../services/slugChangeFlow";
+import { cooldownRemainingMs as slugChangeCooldownRemainingMs } from "../services/projectSlugChange";
+import { platformAppUrl } from "../services/showcase";
 import { logAudit } from "../services/audit";
 import { applyCurrentConfig, rollbackToDeployment, type RedeployOutcome } from "../services/redeploy";
 import {
@@ -51,6 +54,23 @@ export const agentAppsRouter = Router();
 // relying on how Express populates params for a path-mounted .use().
 const appScoped = Router({ mergeParams: true });
 appScoped.use(requireDeployToken, loadAppBySlug);
+
+// Where an address change reports its outcome. Addressed by project id,
+// NOT by name, and therefore deliberately outside the /apps/:appName
+// tree: the name is the thing in motion. During a migration the old name
+// still resolves and the new one does not (this service writes the new
+// slug only once the move succeeds), and afterwards it is the other way
+// round — so a name-addressed status URL would be answering about a
+// moving target. The id is stable across all of it, and the agent
+// already has one: GET /apps/:appName returns it.
+//
+// Registered before the mount below because Express matches in order,
+// and because loadAppBySlug — which this must not use — is applied to
+// everything under it.
+agentAppsRouter.get("/slug-changes/:projectId", requireDeployToken, loadAppById, async (req, res) => {
+  res.json(await resolveSlugChangeStatus(req.project!));
+});
+
 agentAppsRouter.use("/apps/:appName", appScoped);
 
 // Records who did it, so deployment history and the audit log can tell a
@@ -402,6 +422,96 @@ appScoped.delete("/env-vars/:key", async (req, res) => {
     details: `${req.params.key} (${agentActor(req)})`,
   });
   res.status(204).end();
+});
+
+// The app's name IS its address, so this is a rename and a migration at
+// once: a new hostname, a new Nomad job, a new certificate, and the old
+// address gone with no redirect.
+//
+// `newName`, not `slug`: this surface calls it a name everywhere — the
+// header is X-App-Name, GET / returns `name`, the failures are
+// app_name_taken and app_not_found — and hostnsoft-deploy's own wire
+// field for this is newName too. `slug` is dashboard vocabulary.
+//
+// No confirmation flag. One was considered and dropped: a model that has
+// decided to call will set a boolean, so it buys nothing an agent's own
+// instructions don't already buy, and the guidance belongs where the
+// agent reads before acting (the docs and the deploy skill). What DOES
+// guard against acting on stale information is the path itself — if
+// something else moved this app first, `:appName` no longer resolves and
+// the call fails with app_renamed rather than renaming the wrong thing.
+const slugChangeSchema = z.object({ newName: z.string().trim().min(1).max(63) });
+
+appScoped.post("/slug-change", async (req, res) => {
+  const project = req.project!;
+  const { newName } = slugChangeSchema.parse(req.body ?? {});
+
+  const started = await startSlugChange({
+    project,
+    requestedSlug: newName,
+    companyId: req.company!.id,
+    actorUserId: req.userId,
+    actorNote: agentActor(req),
+  });
+
+  if (!started.ok) {
+    const body: Record<string, unknown> = { error: started.reason, code: started.code };
+    // A cooldown is the one refusal that resolves purely by waiting, so
+    // say how long in a field rather than only in prose a machine would
+    // have to parse out of a sentence.
+    if (started.code === "slug_change_cooldown") {
+      const retryAfterMs = await slugChangeCooldownRemainingMs(project.id);
+      body.retryAfterMs = retryAfterMs;
+      res.set("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+    }
+    return res.status(SLUG_CHANGE_STATUS[started.code]).json(body);
+  }
+
+  // Everything the caller needs to update its own state, because the
+  // thing that just changed is how it addresses this app at all.
+  const describe = (name: string) => ({
+    projectId: project.id,
+    name,
+    appUrl: platformAppUrl(name),
+    // The commonest next action after a rename is a deploy, and the
+    // commonest way to break it is sending the old app name. Spell it
+    // out rather than making an agent infer it.
+    deployWith: { "X-App-Name": name },
+  });
+
+  if (started.kind === "unchanged") {
+    return res.json({ ...describe(project.slug), moved: false, terminal: true });
+  }
+
+  if (started.kind === "applied") {
+    return res.json({
+      ...describe(started.project.slug),
+      moved: true,
+      from: started.previousSlug,
+      terminal: true,
+      oldAddressStops: true,
+    });
+  }
+
+  // Live: the migration is running behind this response.
+  const domains = await prisma.domain.findMany({
+    where: { projectId: project.id, status: "active" },
+    select: { domain: true },
+  });
+
+  res.status(202).json({
+    ...describe(started.to),
+    moving: true,
+    terminal: false,
+    from: started.from,
+    to: started.to,
+    statusUrl: `/api/slug-changes/${project.id}`,
+    // True and worth stating: the rename carries active custom domains
+    // over to the new job, so for an app that has one, its canonical
+    // public address does not change at all.
+    customDomainsUnaffected: domains.map((d) => d.domain),
+    oldAddressStops: true,
+  });
 });
 
 // Deployment history — what a rollback needs in order to pick a target.
