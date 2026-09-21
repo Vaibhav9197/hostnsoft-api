@@ -39,6 +39,15 @@ export type RenameStatus =
       reason: string;
     };
 
+// The company each in-flight rename belongs to, kept alongside rather
+// than on RenameStatus so the shape a caller reads back is unchanged.
+// Needed because two lookups below are keyed by NAME rather than by
+// project id, and a name is only unique platform-wide for projects that
+// currently exist — a rename in flight has a target that belongs to
+// nobody yet, so the company is the only thing that makes "is this
+// mine?" answerable.
+const companyByProjectId = new Map<string, string>();
+
 const byProjectId = new Map<string, RenameStatus>();
 
 // A finished entry is kept only long enough for the client that started
@@ -47,7 +56,8 @@ const byProjectId = new Map<string, RenameStatus>();
 // reader may be a person who walked away from the tab.
 const KEEP_FINISHED_MS = 30 * 60 * 1000;
 
-export function markRenameStarted(projectId: string, from: string, to: string): void {
+export function markRenameStarted(projectId: string, companyId: string, from: string, to: string): void {
+  companyByProjectId.set(projectId, companyId);
   byProjectId.set(projectId, { state: "in_progress", from, to, startedAt: new Date().toISOString() });
 }
 
@@ -73,6 +83,7 @@ export function markRenameFinished(
     const current = byProjectId.get(projectId);
     if (current && current.state !== "in_progress" && current.startedAt === started.startedAt) {
       byProjectId.delete(projectId);
+      companyByProjectId.delete(projectId);
     }
   }, KEEP_FINISHED_MS).unref?.();
 
@@ -87,4 +98,40 @@ export function getRenameStatus(projectId: string): RenameStatus | null {
 
 export function isRenameInProgress(projectId: string): boolean {
   return byProjectId.get(projectId)?.state === "in_progress";
+}
+
+/**
+ * Is a rename currently moving some app in this company ONTO this name?
+ *
+ * The target of an in-flight rename is a name no project holds yet —
+ * this service writes it only once the migration succeeds. So a
+ * uniqueness check against the Project table cannot see it, and a deploy
+ * claiming that name mid-migration would create a second project on it
+ * (see routes/internalProjects.routes.ts). This is the only way to
+ * refuse that before it happens.
+ */
+export function isRenameTargeting(companyId: string, slug: string): boolean {
+  for (const [projectId, status] of byProjectId) {
+    if (status.state !== "in_progress") continue;
+    if (status.to !== slug) continue;
+    if (companyByProjectId.get(projectId) === companyId) return true;
+  }
+  return false;
+}
+
+/**
+ * Where an app that USED to answer to this name went, if this process
+ * carried out the move. Lets a caller still holding the old name be told
+ * the new one instead of a bare "no such app".
+ *
+ * In-memory only, so it answers for roughly KEEP_FINISHED_MS after a
+ * rename and not at all after a restart. Callers fall back to the audit
+ * log, which is durable — this is just the fast path.
+ */
+export function findRenameFrom(companyId: string, oldSlug: string): RenameStatus | null {
+  for (const [projectId, status] of byProjectId) {
+    if (status.from !== oldSlug) continue;
+    if (companyByProjectId.get(projectId) === companyId) return status;
+  }
+  return null;
 }

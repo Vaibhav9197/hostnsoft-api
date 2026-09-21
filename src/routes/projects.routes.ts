@@ -7,19 +7,8 @@ import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 import { checkSlug } from "../lib/reservedSlugs";
-import {
-  prepareSlugChange,
-  applyDatabaseOnlySlugChange,
-  runSlugMigration,
-  type SlugChangeFailure,
-} from "../services/projectSlugChange";
-import {
-  markRenameStarted,
-  markRenameFinished,
-  getRenameStatus,
-  isRenameInProgress,
-} from "../services/renameStatus";
-import { logger } from "../lib/logger";
+import { startSlugChange, SLUG_CHANGE_STATUS } from "../services/slugChangeFlow";
+import { getRenameStatus } from "../services/renameStatus";
 import { tearDownApp } from "../services/appTeardown";
 import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
@@ -29,9 +18,11 @@ projectsRouter.use(requireProxyToken);
 
 const createProjectSchema = z.object({ name: z.string().min(1) });
 
-// slug is derived from name and immutable afterward — it's the
-// subdomain/X-App-Name hostnsoft-deploy routes by. See docs/CLAUDE.md
-// "Projects" on why slug and name are separate fields.
+// slug is derived from name here — it's the subdomain/X-App-Name
+// hostnsoft-deploy routes by. It is not immutable: it can be changed
+// afterwards, deliberately and at some cost, via the slug endpoint
+// below. See docs/CLAUDE.md "Projects" on why slug and name are
+// separate fields.
 projectsRouter.post(
   "/companies/:companyId/projects",
   loadCompanyContext,
@@ -150,43 +141,34 @@ projectsRouter.patch(
 // where the caller isn't picking an address at all.)
 const changeSlugSchema = z.object({ slug: z.string().trim().min(1).max(63) });
 
-// Which failures are the caller's malformed input vs. a genuine conflict
-// with platform state. Reserved names sit with the conflicts, matching
-// how POST /internal/projects/claim already reports them.
-const SLUG_CHANGE_STATUS: Record<SlugChangeFailure, number> = {
-  invalid_app_name: 400,
-  app_name_too_short: 400,
-  app_name_too_long: 400,
-  app_name_reserved: 409,
-  app_name_taken: 409,
-  deploy_in_progress: 409,
-  no_current_deployment: 409,
-  slug_change_cooldown: 429,
-  app_state_unknown: 503,
-  // The move was attempted and did not happen; the app is untouched and
-  // still on its old address. 502 because the failure is downstream.
-  rename_failed: 502,
-  // The move DID happen and we couldn't record it. 500: this one is
-  // ours, and it needs a person, not a retry.
-  rename_desynced: 500,
-};
-
 // Changes the app's WEB ADDRESS — a different thing from the rename
 // above, and deliberately a different endpoint: this one can be refused
 // for reasons the display-name rename never can, and it is the caller's
-// only warning that the old address dies. Dashboard-only on purpose
-// (no agent-facing equivalent on /apps/:appName): deploy tokens are
-// company-wide, so letting one agent move an app would strand every
-// other agent and CI job still holding the old name.
+// only warning that the old address dies.
 //
-// For an app that has already deployed this is SLOW: it holds the
-// request for a real migration on hostnsoft-deploy, including a fresh
-// certificate order for the new hostname. Nothing in front of this
-// service will hold a request that long — the dashboard's own proxy
-// gives up after ten seconds — so a live move answers 202 straight away
-// and continues behind the response. Poll the companion GET below for
-// the outcome. An app that has never deployed still answers 200 with the
-// updated project, because that really is finished by then.
+// An agent can do this too, with its deploy token, at
+// POST /apps/:appName/slug-change (routes/agentApps.routes.ts). This
+// used to be dashboard-only, on the grounds that a company-wide token
+// meant one agent could strand every other agent and CI job holding the
+// old name. That reasoning didn't survive examination: it describes the
+// slug, not the caller — a person clicking rename here strands them just
+// as completely, and is the party least likely to know who holds it.
+// What makes it safe on both surfaces is that stranding is no longer
+// terminal: a caller arriving on the old name is told the new one
+// (`app_renamed`, middleware/deployTokenContext.ts), and the cooldown
+// bounds how often anyone can move an app at all.
+//
+// For an app that has already deployed this is SLOW: a real migration on
+// hostnsoft-deploy, including a fresh certificate order for the new
+// hostname. Nothing in front of this service will hold a request that
+// long — the dashboard's own proxy gives up after ten seconds — so a
+// live move answers 202 straight away and continues behind the response.
+// Poll the companion GET below for the outcome. An app that has never
+// deployed still answers 200 with the updated project, because that
+// really is finished by then.
+//
+// The work itself is services/slugChangeFlow.ts, shared with the agent
+// route; what stays here is this surface's addressing and reply shape.
 projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/slug",
   loadCompanyContext,
@@ -195,67 +177,29 @@ projectsRouter.patch(
     const { slug } = changeSlugSchema.parse(req.body);
     const project = req.project!;
 
-    if (isRenameInProgress(project.id)) {
-      return res.status(409).json({
-        error: "This app's address is already being changed. Wait for that to finish.",
-        code: "rename_in_progress",
-      });
-    }
-
-    const plan = await prepareSlugChange(project, slug);
-    if (!plan.ok) {
-      return res.status(SLUG_CHANGE_STATUS[plan.code]).json({ error: plan.reason, code: plan.code });
-    }
-
-    // Re-submitting the address it already has changes nothing, so no
-    // audit row — an audit log should record what happened, and nothing
-    // did.
-    if (plan.unchanged) return res.json(project);
-
-    const audit = (previousSlug: string, nextSlug: string) =>
-      logAudit({
-        actorUserId: req.userId,
-        companyId: req.company!.id,
-        projectId: project.id,
-        action: "project.slug_change",
-        details: `${previousSlug} -> ${nextSlug}`,
-      });
-
-    if (!plan.live) {
-      const outcome = await applyDatabaseOnlySlugChange(project, plan.slug);
-      if (!outcome.ok) {
-        return res.status(SLUG_CHANGE_STATUS[outcome.code]).json({ error: outcome.reason, code: outcome.code });
-      }
-      await audit(outcome.previousSlug, outcome.project.slug);
-      return res.json(outcome.project);
-    }
-
-    // Live: answer now, migrate behind it.
-    markRenameStarted(project.id, project.slug, plan.slug);
-    res.status(202).json({
-      moving: true,
-      from: project.slug,
-      to: plan.slug,
-      statusUrl: `/companies/${req.company!.id}/projects/${project.id}/slug`,
+    const started = await startSlugChange({
+      project,
+      requestedSlug: slug,
+      companyId: req.company!.id,
+      actorUserId: req.userId,
     });
 
-    // Intentionally not awaited — the response is already sent. Never
-    // throws outward: there is nothing left to answer to, so every
-    // outcome is recorded for the poller instead.
-    void (async () => {
-      try {
-        const outcome = await runSlugMigration(project, plan.slug);
-        if (outcome.ok) await audit(outcome.previousSlug, outcome.project.slug);
-        markRenameFinished(
-          project.id,
-          outcome.ok ? { ok: true } : { ok: false, code: outcome.code, reason: outcome.reason }
-        );
-      } catch (e) {
-        const reason = (e as Error).message;
-        logger.error(`[projects] slug migration for ${project.id} threw: ${reason}`);
-        markRenameFinished(project.id, { ok: false, code: "rename_failed", reason });
-      }
-    })();
+    if (!started.ok) {
+      return res.status(SLUG_CHANGE_STATUS[started.code]).json({ error: started.reason, code: started.code });
+    }
+
+    if (started.kind === "moving") {
+      return res.status(202).json({
+        moving: true,
+        from: started.from,
+        to: started.to,
+        statusUrl: `/companies/${req.company!.id}/projects/${project.id}/slug`,
+      });
+    }
+
+    // "unchanged" answers with the project as it already is; "applied"
+    // with the updated row. Both are finished by the time we reply.
+    res.json(started.project);
   }
 );
 

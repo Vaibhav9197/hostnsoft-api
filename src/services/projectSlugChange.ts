@@ -163,6 +163,42 @@ async function cooldownRemainingMs(projectId: string): Promise<number> {
 }
 
 /**
+ * The `details` of a slug-change audit row, written and read in one
+ * place.
+ *
+ * Reading structure back out of a log field is grubby, and the
+ * alternative — a dedicated table — was considered and rejected for the
+ * same reason the cooldown reads the audit log: the row is already
+ * written for every change and is the authoritative record of one, so a
+ * table would be a second source of truth for a fact we already store.
+ *
+ * What makes that safe is that nothing outside this pair knows the
+ * format. Both consumers (the cooldown above, and the status/"where did
+ * this app go" lookups in slugChangeFlow.ts) go through these. Revisit
+ * the table if a third consumer needs more than the two names.
+ */
+const SLUG_CHANGE_DETAIL_SEPARATOR = " -> ";
+
+export function slugChangeDetails(from: string, to: string, note?: string): string {
+  const base = `${from}${SLUG_CHANGE_DETAIL_SEPARATOR}${to}`;
+  return note ? `${base} (${note})` : base;
+}
+
+export function parseSlugChangeDetails(details: string | null): { from: string; to: string } | null {
+  if (!details) return null;
+  // The optional "(agent:label)" suffix a non-dashboard caller appends
+  // is not part of the pair, and a label could itself contain the
+  // separator — so strip the suffix before splitting, not after.
+  const withoutNote = details.replace(/\s*\([^)]*\)\s*$/, "");
+  const at = withoutNote.indexOf(SLUG_CHANGE_DETAIL_SEPARATOR);
+  if (at <= 0) return null;
+  const from = withoutNote.slice(0, at).trim();
+  const to = withoutNote.slice(at + SLUG_CHANGE_DETAIL_SEPARATOR.length).trim();
+  if (!from || !to) return null;
+  return { from, to };
+}
+
+/**
  * Rewrite this project's recorded image tags from the old app name to
  * the new one, mirroring the `docker tag` pass hostnsoft-deploy just
  * did. Only the repository half changes; the version is untouched.
