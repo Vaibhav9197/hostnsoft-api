@@ -22,13 +22,15 @@ import type { Deployment, Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { pushAppConfig } from "./customDomainActivation";
 import { createDeploymentWithNextVersion } from "./deploymentVersioning";
+import { isRenameInProgress } from "./renameStatus";
 
 type Succeeded = { ok: true; deployment: Deployment; target: Deployment };
 
 // Failures the push itself can produce, whichever image it was given.
 type PushFailure =
   | { ok: false; code: "rollback_image_unavailable"; retainCount: number }
-  | { ok: false; code: "rollback_push_failed"; error: string };
+  | { ok: false; code: "rollback_push_failed"; error: string }
+  | { ok: false; code: "rename_in_progress" };
 
 type PushOutcome = Succeeded | PushFailure;
 
@@ -57,6 +59,21 @@ async function pushWithImage(
   target: Deployment,
   triggeredBy: string
 ): Promise<PushOutcome> {
+  // Every push below addresses hostnsoft-deploy by project.slug, read
+  // once here. An address change moves that job out from under us — it
+  // stops the old Nomad job partway through — so a push landing in that
+  // window targets a job that is being torn down, and hostnsoft-deploy's
+  // purgeIfNotRunning can then purge it out from under the rollback
+  // path. projectSlugChange.ts refuses a rename while a deploy is in
+  // flight for exactly this reason; this is the same interlock in the
+  // other direction, which was missing.
+  //
+  // Here rather than in the two entry points because both funnel through
+  // this function, and a third would inherit it for free.
+  if (isRenameInProgress(project.id)) {
+    return { ok: false, code: "rename_in_progress" };
+  }
+
   const activeDomains = await prisma.domain.findMany({
     where: { projectId: project.id, status: "active" },
     select: { domain: true },

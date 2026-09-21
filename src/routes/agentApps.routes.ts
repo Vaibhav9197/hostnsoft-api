@@ -199,6 +199,17 @@ function sendRedeployFailure(res: Response, outcome: Extract<RedeployOutcome, { 
         code: "rollback_image_unavailable",
         retainCount: outcome.retainCount,
       });
+    case "rename_in_progress":
+      // The app's address is moving right now, which means its Nomad job
+      // is being stopped and recreated under a new name. Pushing into
+      // that window targets a job that is going away. Retryable, unlike
+      // most 409s here — say so.
+      return res.status(409).json({
+        error:
+          "This app's address is being changed right now. Wait for that to finish, then try again — " +
+          "the app may answer to a new name afterwards.",
+        code: "rename_in_progress",
+      });
     // Narrows to rollback_push_failed once every other member is handled.
     default:
       return res.status(502).json({ error: `Re-deploy failed: ${outcome.error}`, code: "rollback_push_failed" });

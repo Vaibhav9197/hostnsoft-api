@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
 import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 
 export const internalProjectsRouter = Router();
@@ -37,6 +38,44 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   const resolved = await resolveDeployActor(req, credentials);
   if (!resolved.ok) {
     return res.status(resolved.status).json(resolved.body);
+  }
+
+  // Refuse a deploy that would collide with an address change running
+  // right now. Two distinct collisions, and neither is caught by the
+  // uniqueness check inside the claim:
+  //
+  //  - Deploying under the app's CURRENT name, while the migration is
+  //    stopping that Nomad job. The build would create a job
+  //    hostnsoft-deploy is concurrently tearing down.
+  //  - Deploying under the name the migration is moving TO. No project
+  //    holds that name yet — this service writes it only once the
+  //    migration succeeds — so the claim would happily CREATE a second
+  //    project on it. The migration's own final update then hits the
+  //    unique constraint and reports `rename_desynced`: the app has
+  //    moved but we can't record it, which is the one failure that
+  //    needs a person.
+  //
+  // projectSlugChange.ts refuses a rename while a deploy is in flight;
+  // this is the missing other half of that interlock, and this endpoint
+  // is the cheapest place for it — it exists to refuse before any build
+  // or Nomad resources are spent. Anonymous deploys are exempt because
+  // an orphan has no company, so nothing of theirs can be mid-rename.
+  if (resolved.actor.companyId) {
+    const existing = await prisma.project.findFirst({
+      where: { slug, companyId: resolved.actor.companyId },
+      select: { id: true },
+    });
+    if (
+      (existing && isRenameInProgress(existing.id)) ||
+      isRenameTargeting(resolved.actor.companyId, slug)
+    ) {
+      return res.status(409).json({
+        error:
+          `The app "${slug}" is having its web address changed right now. ` +
+          `Wait for that to finish, then deploy again — check the name first, it may have moved.`,
+        code: "rename_in_progress",
+      });
+    }
   }
 
   // A company-identified caller claims/adopts under that company; an
