@@ -46,8 +46,10 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                 ▼                     ▼
                                     DeployToken (label, created_at, revoked_at, last_used_at)
                                     Project — one deployed app on hostnsoft-deploy
-                                      ├─ slug (immutable — the identifier hostnsoft-deploy
-                                      │   uses; app-name convention: lowercase + dashes)
+                                      ├─ slug (the identifier hostnsoft-deploy uses;
+                                      │   app-name convention: lowercase + dashes.
+                                      │   Changeable, at real cost — see the slug
+                                      │   endpoint below; not immutable as it once was)
                                       ├─ name (mutable display name, independent of slug)
                                       ├─ Deployments (versioned history — one row per attempt)
                                       ├─ EnvVars (key/value, scoped to the project)
@@ -296,7 +298,7 @@ it has an endpoint here (removed 2026-09-04).
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |
-| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename` (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). That takes minutes, and nothing in front of this service will hold a request that long — the dashboard's BFF proxy aborts at 10s — so a live move answers **`202 {moving, from, to, statusUrl}`** and continues behind the response; poll **`GET /companies/:companyId/projects/:projectId/slug`** (`{state: in_progress|succeeded|failed, ...}`, `404 no_rename` once forgotten) for the outcome. Status is in-memory only, same reasoning as `hostnsoft-deploy`'s `deploy-status.js` — see `services/renameStatus.ts`, including what it costs if this service is ever run multi-instance. A second PATCH while one is running is `409 rename_in_progress`. The new slug is written here only after the migration succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect, and the freed name is re-claimable by anyone. Dashboard-only, deliberately: deploy tokens are company-wide, so an agent moving an app would strand every other agent and CI job still using the old name. Audited as `project.slug_change`. |
+| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename` (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). That takes minutes, and nothing in front of this service will hold a request that long — the dashboard's BFF proxy aborts at 10s — so a live move answers **`202 {moving, from, to, statusUrl}`** and continues behind the response; poll **`GET /companies/:companyId/projects/:projectId/slug`** (`{state: in_progress|succeeded|failed, ...}`, `404 no_rename` once forgotten) for the outcome. Status is in-memory only, same reasoning as `hostnsoft-deploy`'s `deploy-status.js` — see `services/renameStatus.ts`, including what it costs if this service is ever run multi-instance. A second PATCH while one is running is `409 rename_in_progress`. The new slug is written here only after the migration succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect, and the freed name is re-claimable by anyone. **Also available to agents** at `POST /apps/:appName/slug-change` (see the agent control plane below); this was dashboard-only until 2026-09-21, on the grounds that a company-wide deploy token meant one agent could strand every other agent and CI job holding the old name. That reasoning did not survive examination — it describes the slug, not the caller, and a person clicking rename here strands them just as completely. What made it safe on both surfaces was making stranding non-terminal: a caller arriving on a name that has moved now gets `404 app_renamed` carrying the new name and a retry URL, rather than `app_not_found`. Audited as `project.slug_change`, with `(agent:<token label>)` appended to the detail when an agent did it — the cooldown reads that action with no actor filter, so it is shared across both surfaces and one cannot be used to reset the other. The orchestration is `services/slugChangeFlow.ts`, shared by both routes; `services/projectSlugChange.ts` keeps the policy and mechanics. |
 | `DELETE /companies/:companyId/projects/:projectId` | any member | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
 
 ### Tokens (company-scoped deploy tokens)
@@ -524,7 +526,23 @@ deploy execution capability in one place.
    what it implements; kept here because the two constraints that drive
    the ordering are not obvious from the code alone. **Not yet exercised
    against real Nomad/Docker/ACME — must be run on a throwaway app in the
-   test environment before any real app uses it.** Original note follows.
+   test environment before any real app uses it.** That is still true now
+   that agents can trigger it too: the migration is the same code either
+   way, so testing it once covers both callers, but it has not been done.
+
+   Two interlocks were missing and have been added alongside the agent
+   endpoint (2026-09-21). The rename path already refused to start while
+   a deploy was in flight, but nothing refused the converse: a rollback
+   or env-var apply could push to a Nomad job the migration was tearing
+   down (now guarded in `services/redeploy.ts`'s `pushWithImage`, which
+   both entry points funnel through), and — worse — a deploy claiming the
+   name the migration was moving TO would create a SECOND project on it,
+   since no project holds that name until the migration succeeds. The
+   migration's own final update then failed the unique constraint and
+   reported `rename_desynced`, the one outcome that needs a person. Both
+   are reachable from the dashboard-only feature as it shipped; the agent
+   endpoint only makes them likelier, because "rename, then deploy" is a
+   natural agent sequence within the same minute. Original note follows.
 
    Making it work needed a new internal endpoint on `hostnsoft-deploy`
    (nothing there could rename:
