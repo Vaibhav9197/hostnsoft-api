@@ -67,6 +67,23 @@ model Project {
   // what's fundamentally just a pointer.
   currentDeploymentId String?
 
+  // How the app is currently deployed: "service" (built and run as a
+  // job) or "static" (files served directly, no server process — see
+  // hostnsoft-deploy's docs/Static-apps-req.md). A string rather than a
+  // boolean so further kinds can be added later without a schema change
+  // (same convention as Domain.status / Deployment.status). Reported by
+  // hostnsoft-deploy on every SUCCESSFUL deploy via
+  // POST /internal/deployments/record (`kind`), since only it knows what
+  // railpack detected; never set from this API's own routes. Read by the
+  // dashboard to hide the env-var and memory controls for a static app,
+  // which has no use for them (nothing runs that could read an env var).
+  // Not a separate Deployment column: an app's kind only ever moves
+  // service -> static, and a rollback can't change it, so the project is
+  // the right place for it. Defaults to "service" — every app that
+  // predates this column is treated as a server app until its next
+  // successful deploy says otherwise.
+  kind String @default("service")
+
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]

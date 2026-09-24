@@ -33,6 +33,17 @@ const recordSchema = z.object({
   imageTag: z.string().optional(),
   memoryMb: z.number().int().optional(),
   errorDetail: z.string().optional(),
+  // "static" (files served directly, no server process) or "service"
+  // (built and run as a job) — what hostnsoft-deploy actually deployed,
+  // per railpack's own inspection (its build-plan.js). Persisted onto
+  // Project.kind on success only: a static upload can still fail
+  // before it's live (and be undone on hostnsoft-deploy's side), and an
+  // in_progress row says nothing about what will end up serving. Optional
+  // so an older hostnsoft-deploy that doesn't send it keeps working; the
+  // column is then simply left as it was. Extend this enum (and
+  // hostnsoft-deploy's finishDeploySuccess callers) when a new kind
+  // of app is introduced.
+  kind: z.enum(["static", "service"]).optional(),
   // If set, updates this existing row (must belong to the resolved
   // project) instead of allocating a new version — the second call for a
   // given deploy attempt (transitioning in_progress -> success/failed),
@@ -159,7 +170,13 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   // in-flight update finishing after a newer one already succeeded is
   // not a case this endpoint needs to guard against today).
   if (body.status === "success") {
-    await markProjectDeploymentLive(claim.project.id, deployment.id, body.memoryMb, claim.project.memoryMb);
+    await markProjectDeploymentLive(
+      claim.project.id,
+      deployment.id,
+      body.memoryMb,
+      claim.project.memoryMb,
+      body.kind
+    );
   }
 
   res.status(201).json(deployment);

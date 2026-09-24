@@ -349,6 +349,12 @@ Mutable, by any company member:
   other mechanism `hostnsoft-deploy` needs to expose. This is a real
   integration point with `hostnsoft-deploy` that needs designing, not just a
   database table.
+  - **Static apps have no env vars.** Since 2026-09-24 `Project.kind`
+    (`"service"` | `"static"`, a string so further kinds can be added)
+    records how an app is deployed. `hostnsoft-deploy` reports `kind` on
+    the success call to `POST /internal/deployments/record`; the dashboard
+    should hide the env-var and memory controls when it is `"static"`.
+    The API itself does not reject env-var writes for a static project.
 - **Memory allocation** — override the platform default (256MB for every
   app; the old 512MB PGlite tier was removed when PGlite support was
   dropped). Note this value is the task's burst *ceiling* (`memory_max`),

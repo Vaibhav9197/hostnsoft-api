@@ -45,16 +45,24 @@ export async function createDeploymentWithNextVersion(
 // same "this is now the live version" bookkeeping. See
 // Project.currentDeploymentId's own schema comment for why this is a
 // plain field rather than something derived by query each time.
+export type DeployKind = "static" | "service";
+
 export async function markProjectDeploymentLive(
   projectId: string,
   deploymentId: string,
   appliedMemoryMb: number | null | undefined,
-  currentProjectMemoryMb: number
+  currentProjectMemoryMb: number,
+  // What hostnsoft-deploy actually deployed this time — see
+  // Project.kind's schema comment. Omitted when the caller can't know
+  // (a rollback's /complete callback redeploys a past image and never
+  // changes the app's kind), in which case the column is left alone.
+  kind?: DeployKind
 ): Promise<void> {
   await prisma.project.update({
     where: { id: projectId },
     data: {
       currentDeploymentId: deploymentId,
+      ...(kind ? { kind } : {}),
       // Never downward — see internalDeployments.routes.ts's original
       // comment on this exact reasoning (an explicit higher configured
       // value must never be undercut by a lower auto-detected one).

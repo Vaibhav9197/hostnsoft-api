@@ -131,6 +131,14 @@ same deploy. Mixing them (claim with a PAT, record with a token) isn't
 rejected — both resolve to a company — but the resulting history row
 would be attributed to the wrong actor.
 
+Optional `kind: "static" | "service"` (added 2026-09-24) — what
+hostnsoft-deploy actually shipped, per railpack's inspection. On a
+`success` call it is written to `Project.kind` (a string column, default
+`"service"`, so more kinds can be added later), which the dashboard reads
+to hide the env-var and memory controls when it is `"static"` (no process
+runs, so neither applies). Ignored on `in_progress`/`failed`, and the
+column is left untouched when the field is absent.
+
 ### `POST /apps` itself
 
 - The PAT comes from the `proxy_auth_token` header (a raw header, not

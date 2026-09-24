@@ -844,7 +844,7 @@
             <pre><code><span class="tok-punc">[</span>
   <span class="tok-punc">{</span>
     <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
     <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
     <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"running"</span>
   <span class="tok-punc">}</span>
@@ -866,7 +866,7 @@
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
   <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span>
   <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"running"</span>
 <span class="tok-punc">}</span></code></pre>
@@ -1727,6 +1727,7 @@ X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, i
             <tr><td class="fname">name</td><td class="ftype">string</td></tr>
             <tr><td class="fname">memoryMb</td><td class="ftype">int</td><td class="fdesc">default 256, floor-adjustable override</td></tr>
             <tr><td class="fname">isOrphan / orphanExpiresAt</td><td class="ftype">bool / date|null</td><td class="fdesc">anonymous-deploy state</td></tr>
+            <tr><td class="fname">kind</td><td class="ftype">"service" | "static"</td><td class="fdesc">how the app is deployed — <code>"static"</code> means files served directly with no server process; reported by hostnsoft-deploy on each successful deploy. A static app has no use for env vars or memory, so the dashboard hides those controls for it. Defaults <code>"service"</code>; corrected on the project's next successful credentialed deploy. A string so more kinds can be added later</td></tr>
             <tr><td class="fname">currentDeploymentId</td><td class="ftype">string | null</td><td class="fdesc">the Deployment currently live — set on every successful deploy and every successful rollback; null only before the project's first successful deploy</td></tr>
             <tr><td class="fname">health</td><td class="ftype">string</td><td class="fdesc">only on GET one — see <a href="#ep-projects-get">Get one</a>, not a stored column</td></tr>
           </tbody>
