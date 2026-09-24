@@ -57,7 +57,33 @@ export const PLATFORM_DOMAIN: string = (() => {
   return parsed.domain;
 })();
 
-// Say out loud, at boot, which zone is actually being protected.
+/**
+ * Every zone a customer must never register a "custom" domain inside:
+ * PLATFORM_DOMAIN plus the registrable zone of the apps suffix and of the
+ * legacy apps suffix (app.embarko.ai -> embarko.app moved apps onto their
+ * own zone, which PLATFORM_DOMAIN alone no longer covers — without this a
+ * customer could claim <anything>.embarko.app: it resolves to the origin,
+ * so verification passes and Traefik gets a router for a platform host).
+ * Derived here rather than as one more env var, so the guard cannot drift
+ * from what APP_PUBLIC_DOMAIN actually is.
+ */
+export const PLATFORM_DOMAINS: string[] = (() => {
+  const zones = new Set<string>([PLATFORM_DOMAIN]);
+  for (const raw of [process.env.APP_PUBLIC_DOMAIN, process.env.LEGACY_APP_PUBLIC_DOMAIN]) {
+    const host = raw?.toLowerCase().trim().replace(/^https?:\/\//, "");
+    if (!host) continue;
+    const parsed = psl.parse(host);
+    zones.add("error" in parsed || !parsed.domain ? host : parsed.domain);
+  }
+  return [...zones];
+})();
+
+/** The platform zone `domain` falls inside, or null if it is a genuine customer domain. */
+export function platformZoneOf(domain: string): string | null {
+  return PLATFORM_DOMAINS.find((zone) => isPlatformDomain(domain, zone)) ?? null;
+}
+
+// Say out loud, at boot, which zones are actually being protected.
 //
 // This guard fails silently when it's wrong: a typo'd PLATFORM_DOMAIN
 // matches nothing, every check passes, and registration of a platform
@@ -70,7 +96,7 @@ export const PLATFORM_DOMAIN: string = (() => {
 // edge host onto a separate domain is a legitimate (if unusual) setup, and
 // refusing to boot over it would be worse than saying so clearly.
 if (isPlatformDomain(EDGE_HOSTNAME, PLATFORM_DOMAIN)) {
-  logger.info(`[customDomainConfig] custom domains refused inside "${PLATFORM_DOMAIN}"`);
+  logger.info(`[customDomainConfig] custom domains refused inside: ${PLATFORM_DOMAINS.map((z) => `"${z}"`).join(", ")}`);
 } else {
   logger.warn(
     `[customDomainConfig] PLATFORM_DOMAIN is "${PLATFORM_DOMAIN}" but EDGE_HOSTNAME ` +

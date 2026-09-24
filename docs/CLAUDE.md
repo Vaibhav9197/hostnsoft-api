@@ -292,7 +292,7 @@ it has an endpoint here (removed 2026-09-04).
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/projects` `{name}` | any member | Generates an immutable `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.embarko.ai`). |
+| `POST /companies/:companyId/projects` `{name}` | any member | Generates an immutable `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.embarko.app`). |
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — `slug` never changes after creation. See open questions on why. |

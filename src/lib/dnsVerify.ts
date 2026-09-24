@@ -9,8 +9,8 @@
  * the expected, common case here, not an exceptional one.
  */
 import { promises as dns } from "node:dns";
-import { isPlatformDomain, type DomainType } from "./customDomain";
-import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, PLATFORM_DOMAIN } from "./customDomainConfig";
+import { type DomainType } from "./customDomain";
+import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, platformZoneOf } from "./customDomainConfig";
 import { logger } from "./logger";
 
 function normalizeHostname(host: string): string {
@@ -64,9 +64,10 @@ export async function verifyDomainDns(domain: string, type: DomainType): Promise
   // This also cleans up after itself. Any such domain registered before
   // this check existed is `active` today; the next re-verification pass
   // sees false and deactivates it, with no migration to write.
-  if (isPlatformDomain(domain, PLATFORM_DOMAIN)) {
+  const platformZone = platformZoneOf(domain);
+  if (platformZone) {
     logger.warn(
-      `[dnsVerify] refusing "${domain}": inside the platform zone ${PLATFORM_DOMAIN}, never a valid custom domain`
+      `[dnsVerify] refusing "${domain}": inside the platform zone ${platformZone}, never a valid custom domain`
     );
     return false;
   }
