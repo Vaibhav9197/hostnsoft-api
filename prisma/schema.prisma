@@ -35,9 +35,18 @@ model DeployToken {
   @@index([companyId])
 }
 
-// One Project == one deployed app on hostnsoft-deploy. slug is immutable —
-// it's the subdomain hostnsoft-deploy routes by (<slug>.app.embarko.ai)
-// and the X-App-Name it expects; name is just a display label.
+// One Project == one deployed app on hostnsoft-deploy. slug is the
+// subdomain hostnsoft-deploy routes by (<slug>.app.embarko.ai) and the
+// X-App-Name it expects; name is just a display label.
+//
+// slug is changeable — see src/services/projectSlugChange.ts and
+// PATCH .../projects/:id/slug. For an app that has never deployed that
+// is one UPDATE. For a live one it is a migration on hostnsoft-deploy
+// (its POST /internal/apps/:appName/rename), because over there the slug
+// is also the Nomad job name, the Traefik router names, the Docker image
+// repository, the app's data directory on the host and its analytics
+// rows. The new slug is written here only after that reports success, so
+// this column never runs ahead of what is actually serving.
 // companyId/createdBy are null only for orphan (anonymous) projects — see
 // docs/Anonymous-deploy-req.md — until a real deploy token claims them.
 model Project {
@@ -203,6 +212,13 @@ model AuditLog {
   updatedAt   DateTime @updatedAt
 
   @@index([companyId, createdAt])
+  // Both slug-change lookups filter on `action` and take the newest
+  // match: the cooldown (by project) and "where did this app go" (by
+  // company, on an agent 404). Without these the residual `action`
+  // filter walks every audit row the company or project has, which on
+  // the 404 path is a request an unknown app name can trigger at will.
+  @@index([projectId, action, createdAt])
+  @@index([companyId, action, createdAt])
 }
 // ---------------------------------------------------------------- Showcase
 // See docs/showcase.md. Two kinds of public page, both /showcase/<slug>:

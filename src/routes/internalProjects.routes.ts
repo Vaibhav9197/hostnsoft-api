@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
 import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 
 export const internalProjectsRouter = Router();
@@ -37,6 +38,34 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   const resolved = await resolveDeployActor(req, credentials);
   if (!resolved.ok) {
     return res.status(resolved.status).json(resolved.body);
+  }
+
+  // Refuse a deploy that would collide with a running address change.
+  // Two collisions, neither caught by the claim's uniqueness check:
+  // deploying under the app's CURRENT name builds a job the migration is
+  // tearing down; deploying under the name it is moving TO creates a
+  // SECOND project, since no project holds that name until the migration
+  // succeeds — which then fails the unique constraint as rename_desynced.
+  //
+  // The other half of the interlock in projectSlugChange.ts, here because
+  // it refuses before any build resources are spent. Orphans are exempt:
+  // no company, so nothing of theirs can be mid-rename.
+  if (resolved.actor.companyId) {
+    const existing = await prisma.project.findFirst({
+      where: { slug, companyId: resolved.actor.companyId },
+      select: { id: true },
+    });
+    if (
+      (existing && isRenameInProgress(existing.id)) ||
+      isRenameTargeting(resolved.actor.companyId, slug)
+    ) {
+      return res.status(409).json({
+        error:
+          `The app "${slug}" is having its web address changed right now. ` +
+          `Wait for that to finish, then deploy again — check the name first, it may have moved.`,
+        code: "rename_in_progress",
+      });
+    }
   }
 
   // A company-identified caller claims/adopts under that company; an
