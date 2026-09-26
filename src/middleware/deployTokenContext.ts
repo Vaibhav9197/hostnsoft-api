@@ -19,6 +19,8 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma";
 import { findLiveDeployToken } from "../services/deployTokenAuth";
+import { findRenamedApp } from "../services/slugChangeFlow";
+import { platformAppUrl } from "../services/showcase";
 
 export async function requireDeployToken(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
@@ -58,15 +60,55 @@ export async function requireDeployToken(req: Request, res: Response, next: Next
 // `slug` is the app name an agent already has: it's what it passed as
 // X-App-Name, and it's the live subdomain.
 export async function loadAppBySlug(req: Request, res: Response, next: NextFunction) {
+  const companyId = req.deployToken!.companyId;
   const project = await prisma.project.findFirst({
-    where: { slug: req.params.appName, companyId: req.deployToken!.companyId },
+    where: { slug: req.params.appName, companyId },
   });
 
   if (!project) {
+    // It may not be missing, just moved: every caller still holding the
+    // old name arrives here, and "no such app" is both false and
+    // unrecoverable for them. Answering with the new name is what makes
+    // a rename non-terminal for agents and CI — an extra lookup on a
+    // path that was going to 404 anyway.
+    const moved = await findRenamedApp(companyId, req.params.appName);
+    if (moved) {
+      // Same path, new name — so a caller can retry without having to
+      // understand which part of its URL was the app.
+      const retryUrl = req.originalUrl.replace(
+        `/apps/${encodeURIComponent(moved.from)}`,
+        `/apps/${encodeURIComponent(moved.to)}`
+      );
+      return res.status(404).json({
+        error: `The app "${moved.from}" was renamed to "${moved.to}". Use the new name.`,
+        code: "app_renamed",
+        newName: moved.to,
+        appUrl: platformAppUrl(moved.to),
+        retryUrl,
+      });
+    }
+
     return res.status(404).json({
       error: `No app named "${req.params.appName}" in this company.`,
       code: "app_not_found",
     });
+  }
+
+  req.project = project;
+  next();
+}
+
+// Addresses an app by its stable id instead of its name, for the one
+// case where the name is the thing in motion: reading how an address
+// change ended. Same company check and same 404-not-403 rule as
+// loadAppBySlug — the id is a cuid, but that is not an access control.
+export async function loadAppById(req: Request, res: Response, next: NextFunction) {
+  const project = await prisma.project.findFirst({
+    where: { id: req.params.projectId, companyId: req.deployToken!.companyId },
+  });
+
+  if (!project) {
+    return res.status(404).json({ error: "No such app in this company.", code: "app_not_found" });
   }
 
   req.project = project;

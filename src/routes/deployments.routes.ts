@@ -105,6 +105,15 @@ deploymentsRouter.post(
           retainCount: outcome.retainCount,
         });
       }
+      // The app's address is being changed, so its Nomad job is being
+      // stopped and recreated under a new name — a push into that window
+      // targets a job that is going away. Retryable once it settles.
+      if (outcome.code === "rename_in_progress") {
+        return res.status(409).json({
+          error: "This app's address is being changed right now. Wait for that to finish, then try again.",
+          code: "rename_in_progress",
+        });
+      }
       // Everything else narrows to rollback_push_failed, the only remaining
       // member of RollbackOutcome and the only one carrying `error`.
       return res.status(502).json({ error: `Rollback failed: ${outcome.error}` });
