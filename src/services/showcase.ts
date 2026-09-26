@@ -143,31 +143,21 @@ const APP_PUBLIC_DOMAIN = (process.env.APP_PUBLIC_DOMAIN ?? "embarko.app").repla
 // Exported so services/projectSlugChange.ts can recognise (and rewrite)
 // exactly those listing snapshots that point at a slug that just changed,
 // without having to rebuild this string — and get it subtly wrong — there.
-export function platformAppUrl(slug: string, createdAt?: Date | string | null): string {
-  return `https://${slug}.${platformAppDomainFor(createdAt)}`;
-}
-
-// Domain move (app.embarko.ai -> embarko.app): apps deployed before the
-// cutover were deliberately not migrated and still serve on the legacy
-// suffix (hostnsoft-deploy keeps the hostname from their saved spec).
-// Which one a project is on is decided by its createdAt against the
-// instant the new suffix went live on this environment. Both optional:
-// with either unset, everything is on APP_PUBLIC_DOMAIN.
-const LEGACY_APP_PUBLIC_DOMAIN = (process.env.LEGACY_APP_PUBLIC_DOMAIN ?? "").replace(/^https?:\/\//, "") || null;
-const APP_DOMAIN_CUTOVER_AT = process.env.APP_DOMAIN_CUTOVER_AT ? new Date(process.env.APP_DOMAIN_CUTOVER_AT) : null;
-
-export function platformAppDomainFor(createdAt?: Date | string | null): string {
-  if (!LEGACY_APP_PUBLIC_DOMAIN || !APP_DOMAIN_CUTOVER_AT || !createdAt) return APP_PUBLIC_DOMAIN;
-  return new Date(createdAt) < APP_DOMAIN_CUTOVER_AT ? LEGACY_APP_PUBLIC_DOMAIN : APP_PUBLIC_DOMAIN;
+//
+// Every app is on APP_PUBLIC_DOMAIN. The app.embarko.ai -> embarko.app
+// move is complete, so the per-project fork on createdAt that used to
+// pick between the two suffixes is gone.
+export function platformAppUrl(slug: string): string {
+  return `https://${slug}.${APP_PUBLIC_DOMAIN}`;
 }
 
 // The project's active custom domain if it has one, else the platform hostname.
-export async function resolveAppUrl(project: Pick<Project, "id" | "slug" | "createdAt">): Promise<string> {
+export async function resolveAppUrl(project: Pick<Project, "id" | "slug">): Promise<string> {
   const custom = await prisma.domain.findFirst({
     where: { projectId: project.id, status: "active" },
     orderBy: { createdAt: "asc" },
   });
-  return custom ? `https://${custom.domain}` : platformAppUrl(project.slug, project.createdAt);
+  return custom ? `https://${custom.domain}` : platformAppUrl(project.slug);
 }
 
 // ---- submission input

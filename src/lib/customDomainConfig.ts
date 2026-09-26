@@ -59,19 +59,17 @@ export const PLATFORM_DOMAIN: string = (() => {
 
 /**
  * Every zone a customer must never register a "custom" domain inside:
- * PLATFORM_DOMAIN plus the registrable zone of the apps suffix and of the
- * legacy apps suffix (app.embarko.ai -> embarko.app moved apps onto their
- * own zone, which PLATFORM_DOMAIN alone no longer covers — without this a
- * customer could claim <anything>.embarko.app: it resolves to the origin,
- * so verification passes and Traefik gets a router for a platform host).
- * Derived here rather than as one more env var, so the guard cannot drift
- * from what APP_PUBLIC_DOMAIN actually is.
+ * PLATFORM_DOMAIN plus the registrable zone of the apps suffix (apps live
+ * on embarko.app, their own zone, which PLATFORM_DOMAIN alone does not
+ * cover — without this a customer could claim <anything>.embarko.app: it
+ * resolves to the origin, so verification passes and Traefik gets a router
+ * for a platform host). Derived here rather than as one more env var, so
+ * the guard cannot drift from what APP_PUBLIC_DOMAIN actually is.
  */
 export const PLATFORM_DOMAINS: string[] = (() => {
   const zones = new Set<string>([PLATFORM_DOMAIN]);
-  for (const raw of [process.env.APP_PUBLIC_DOMAIN, process.env.LEGACY_APP_PUBLIC_DOMAIN]) {
-    const host = raw?.toLowerCase().trim().replace(/^https?:\/\//, "");
-    if (!host) continue;
+  const host = process.env.APP_PUBLIC_DOMAIN?.toLowerCase().trim().replace(/^https?:\/\//, "");
+  if (host) {
     const parsed = psl.parse(host);
     zones.add("error" in parsed || !parsed.domain ? host : parsed.domain);
   }
