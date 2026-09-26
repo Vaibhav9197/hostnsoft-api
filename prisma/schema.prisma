@@ -36,7 +36,7 @@ model DeployToken {
 }
 
 // One Project == one deployed app on hostnsoft-deploy. slug is the
-// subdomain hostnsoft-deploy routes by (<slug>.app.embarko.ai) and the
+// subdomain hostnsoft-deploy routes by (<slug>.embarko.app) and the
 // X-App-Name it expects; name is just a display label.
 //
 // slug is changeable — see src/services/projectSlugChange.ts and

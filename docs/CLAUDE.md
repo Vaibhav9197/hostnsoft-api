@@ -294,7 +294,7 @@ it has an endpoint here (removed 2026-09-04).
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/projects` `{name}` | any member | Generates a `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — checked unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.app.embarko.ai`), and checked against `lib/reservedSlugs.ts` (added with the slug-change endpoint below; before that this route enforced the reserved list nowhere, so the dashboard could mint an app called `login` or `api`). |
+| `POST /companies/:companyId/projects` `{name}` | any member | Generates a `slug` from `name` (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — checked unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.embarko.app`), and checked against `lib/reservedSlugs.ts` (added with the slug-change endpoint below; before that this route enforced the reserved list nowhere, so the dashboard could mint an app called `login` or `api`). |
 | `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |

@@ -39,10 +39,10 @@ import {
   toOwnerProject,
   uniqueProjectSlug,
 } from "../services/showcase";
-import { classifyDomain, isPlatformDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
+import { classifyDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
 import { verifyDomainDns } from "../lib/dnsVerify";
 import { activateDomain, pushCustomDomainConfig } from "../services/customDomainActivation";
-import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, PLATFORM_DOMAIN } from "../lib/customDomainConfig";
+import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, platformZoneOf } from "../lib/customDomainConfig";
 import { fetchAppAnalytics, type AnalyticsRange } from "../services/appAnalytics";
 import { tearDownApp } from "../services/appTeardown";
 
@@ -639,9 +639,10 @@ appScoped.post("/domains", async (req, res) => {
   if (!isValidDomainSyntax(domain)) {
     return res.status(400).json({ error: "Not a valid domain name", code: "invalid_domain" });
   }
-  if (isPlatformDomain(domain, PLATFORM_DOMAIN)) {
+  const platformZone = platformZoneOf(domain);
+  if (platformZone) {
     return res.status(400).json({
-      error: `"${domain}" is part of ${PLATFORM_DOMAIN} and can't be registered as a custom domain. Use a domain you own.`,
+      error: `"${domain}" is part of ${platformZone} and can't be registered as a custom domain. Use a domain you own.`,
       code: "domain_reserved",
     });
   }

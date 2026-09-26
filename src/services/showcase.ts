@@ -137,23 +137,37 @@ export function canListOn(collection: Pick<ShowcaseCollection, "type" | "company
 // ---- app URL
 
 // Not its own config file for one constant — see env.ts for the same pattern.
-const APP_PUBLIC_DOMAIN = (process.env.APP_PUBLIC_DOMAIN ?? "app.embarko.ai").replace(/^https?:\/\//, "");
+const APP_PUBLIC_DOMAIN = (process.env.APP_PUBLIC_DOMAIN ?? "embarko.app").replace(/^https?:\/\//, "");
 
 // The hostname an app is served under when it has no custom domain.
 // Exported so services/projectSlugChange.ts can recognise (and rewrite)
 // exactly those listing snapshots that point at a slug that just changed,
 // without having to rebuild this string — and get it subtly wrong — there.
-export function platformAppUrl(slug: string): string {
-  return `https://${slug}.${APP_PUBLIC_DOMAIN}`;
+export function platformAppUrl(slug: string, createdAt?: Date | string | null): string {
+  return `https://${slug}.${platformAppDomainFor(createdAt)}`;
+}
+
+// Domain move (app.embarko.ai -> embarko.app): apps deployed before the
+// cutover were deliberately not migrated and still serve on the legacy
+// suffix (hostnsoft-deploy keeps the hostname from their saved spec).
+// Which one a project is on is decided by its createdAt against the
+// instant the new suffix went live on this environment. Both optional:
+// with either unset, everything is on APP_PUBLIC_DOMAIN.
+const LEGACY_APP_PUBLIC_DOMAIN = (process.env.LEGACY_APP_PUBLIC_DOMAIN ?? "").replace(/^https?:\/\//, "") || null;
+const APP_DOMAIN_CUTOVER_AT = process.env.APP_DOMAIN_CUTOVER_AT ? new Date(process.env.APP_DOMAIN_CUTOVER_AT) : null;
+
+export function platformAppDomainFor(createdAt?: Date | string | null): string {
+  if (!LEGACY_APP_PUBLIC_DOMAIN || !APP_DOMAIN_CUTOVER_AT || !createdAt) return APP_PUBLIC_DOMAIN;
+  return new Date(createdAt) < APP_DOMAIN_CUTOVER_AT ? LEGACY_APP_PUBLIC_DOMAIN : APP_PUBLIC_DOMAIN;
 }
 
 // The project's active custom domain if it has one, else the platform hostname.
-export async function resolveAppUrl(project: Pick<Project, "id" | "slug">): Promise<string> {
+export async function resolveAppUrl(project: Pick<Project, "id" | "slug" | "createdAt">): Promise<string> {
   const custom = await prisma.domain.findFirst({
     where: { projectId: project.id, status: "active" },
     orderBy: { createdAt: "asc" },
   });
-  return custom ? `https://${custom.domain}` : platformAppUrl(project.slug);
+  return custom ? `https://${custom.domain}` : platformAppUrl(project.slug, project.createdAt);
 }
 
 // ---- submission input

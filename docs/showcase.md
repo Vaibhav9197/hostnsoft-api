@@ -182,7 +182,7 @@ is not audited: it is a side effect of company creation, not a user action.
 
 | Env | Default | Purpose |
 | --- | --- | --- |
-| `APP_PUBLIC_DOMAIN` | `app.embarko.ai` | Hostname deployed apps are served under as `<slug>.<domain>`; used to derive `appUrl`. Read directly in `resolveAppUrl` (`src/services/showcase.ts`) — no dedicated config file for one constant. |
+| `APP_PUBLIC_DOMAIN` | `embarko.app` | Hostname deployed apps are served under as `<slug>.<domain>`; used to derive `appUrl`. Read directly in `resolveAppUrl` (`src/services/showcase.ts`) — no dedicated config file for one constant. |
 
 ## Frontend (hostnsoft)
 
