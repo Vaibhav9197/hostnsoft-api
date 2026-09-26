@@ -225,7 +225,10 @@ export type SlugChangeView =
  * the app is from an HTTP status.
  */
 export async function resolveSlugChangeStatus(project: Project): Promise<SlugChangeView> {
-  const where = { currentSlug: project.slug, appUrl: platformAppUrl(project.slug) };
+  const where = {
+    currentSlug: project.slug,
+    appUrl: platformAppUrl(project.slug, project.createdAt),
+  };
 
   const live = getRenameStatus(project.id);
   if (live) return { ...live, ...where };

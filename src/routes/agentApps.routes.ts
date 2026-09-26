@@ -469,7 +469,10 @@ appScoped.post("/slug-change", async (req, res) => {
   const describe = (name: string) => ({
     projectId: project.id,
     name,
-    appUrl: platformAppUrl(name),
+    // createdAt too: since the domain move the suffix depends on whether
+    // the app predates the cutover, and without it this answers
+    // embarko.app while GET /apps/<name> answers app.embarko.ai.
+    appUrl: platformAppUrl(name, project.createdAt),
     // The commonest next action after a rename is a deploy, and the
     // commonest way to break it is sending the old app name. Spell it
     // out rather than making an agent infer it.

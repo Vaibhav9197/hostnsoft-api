@@ -557,19 +557,22 @@ deploy execution capability in one place.
    `deploy-status` map entry. Roll back by moving the data directory back
    if any step fails.
 
-   **Verified 2026-09-18 — the platform zone has NO wildcard certificate.**
-   Checked against Certificate Transparency and a live TLS handshake:
-   every app holds its own single-name Let's Encrypt cert
-   (`CN=<slug>.app.embarko.ai`, one SAN). The `*.embarko.ai` cert that
-   exists is Cloudflare's universal cert and, being single-label, does
-   not cover `<slug>.app.embarko.ai`. Consequences for the above: each
-   rename spends a certificate from the zone's weekly issuance budget —
-   the same budget new signups draw on — and the new hostname serves
-   Traefik's self-signed default (a hard browser warning) until the order
-   completes. Hence "wait for the cert before purging the old job", and
-   hence a per-app cooldown. **DNS, by contrast, IS a wildcard** — a
-   never-before-seen `*.app.embarko.ai` name already resolves to the
-   origin — so a rename needs no DNS work at all.
+   **Certificates: one wildcard for the whole apps zone.** Until
+   2026-09-25 every app held its own single-name cert and a rename spent
+   one from the zone's weekly issuance budget. That model hit Let's
+   Encrypt's cap of 50 new certificates per registered domain per week
+   in production, hours after apps moved to `embarko.app`, and
+   hostnsoft-deploy now asks for a single `*.embarko.app` instead
+   (`wildcardDomainsFor` in `nomad-job-spec.js`). So a rename issues
+   nothing and the new hostname is normally certificated the moment its
+   router exists. The "wait for the cert" step stays — it separates "the
+   app answers under its new name" from "Traefik is still serving its
+   self-signed default" — but it usually returns on the first poll. The
+   cooldown stays too, now justified on churn rather than cost. Custom
+   domains are unaffected: HTTP-01 cannot issue wildcards, so each keeps
+   its own certificate. **DNS is also a wildcard** — a never-before-seen
+   `*.embarko.app` name already resolves to the origin — so a rename
+   needs no DNS work at all.
 9. **Company deletion cascade behavior**: the API surface above blocks
    deleting a company that still has projects, rather than silently
    cascade-deleting running apps. Confirm this is the right default

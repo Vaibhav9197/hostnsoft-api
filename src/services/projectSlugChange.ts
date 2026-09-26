@@ -13,11 +13,13 @@
  * Moving those is a real migration with real downtime, delegated to that
  * service (services/appRename.ts) and recorded here only on success.
  *
- * The platform zone has no wildcard certificate: every app holds its own
- * single-name Let's Encrypt cert, so a live rename spends one from the
- * zone's weekly budget and takes as long as an ACME order. Hence the
- * cooldown, and why it applies only to the deployed path. DNS *is* a
- * wildcard, so neither path does DNS work.
+ * The apps zone is covered by ONE wildcard certificate (since
+ * 2026-09-25 — a cert per app hit Let's Encrypt's 50-per-week cap in
+ * production), so a live rename issues nothing and the new hostname is
+ * normally certificated as soon as its router exists. hostnsoft-deploy
+ * still waits for it before destroying the old name, but that wait now
+ * usually returns on the first poll. DNS *is* a wildcard too, so neither
+ * path does DNS work.
  */
 import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -33,12 +35,13 @@ import { platformAppUrl } from "./showcase";
 /**
  * How long an app must wait between address changes, once it is live.
  *
- * Not an anti-abuse throttle so much as a budget guard: every live
- * rename orders a fresh Let's Encrypt certificate for the new hostname,
- * and that budget is per registered domain per week and shared with
- * every new app signing up. A week matches the shape of the limit it is
- * protecting. Only the deployed path consults it — an app that has never
- * deployed has no hostname in service and spends no certificate.
+ * Not a certificate-budget guard any more — the zone wildcard means a
+ * rename issues nothing. What it limits is churn: a live rename stops
+ * the old address with no redirect, and every agent, CI job and bookmark
+ * still on the old name is stranded until its next call learns the new
+ * one. Only the deployed path consults it; an app that has never
+ * deployed strands nobody. The week is inherited from the issuance limit
+ * this used to protect and is now a policy choice.
  */
 export const SLUG_CHANGE_COOLDOWN_MS: number = envNumber(
   "SLUG_CHANGE_COOLDOWN_MS",
@@ -123,12 +126,22 @@ async function isLive(project: Project): Promise<boolean | "unknown"> {
  * listing snapshotted against a custom domain is still accurate, and
  * "fixing" it would silently swap a listing's address for a different
  * one the submitter never chose.
+ *
+ * Both URLs are built with createdAt, the way resolveAppUrl built the
+ * snapshot being matched. Since the domain move the suffix depends on
+ * whether the project predates the cutover, so a `stale` without it
+ * never matches a pre-cutover listing and the repoint silently does
+ * nothing, leaving the listing on an address that no longer resolves.
  */
-async function repointShowcaseListings(projectId: string, previousSlug: string, nextSlug: string): Promise<void> {
-  const stale = platformAppUrl(previousSlug);
-  const fresh = platformAppUrl(nextSlug);
+async function repointShowcaseListings(
+  project: Pick<Project, "id" | "createdAt">,
+  previousSlug: string,
+  nextSlug: string
+): Promise<void> {
+  const stale = platformAppUrl(previousSlug, project.createdAt);
+  const fresh = platformAppUrl(nextSlug, project.createdAt);
   const { count } = await prisma.showcaseProject.updateMany({
-    where: { projectId, appUrl: stale },
+    where: { projectId: project.id, appUrl: stale },
     data: { appUrl: fresh },
   });
   if (count > 0) {
@@ -299,7 +312,7 @@ export async function applyDatabaseOnlySlugChange(project: Project, slug: string
       return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
     }
 
-    await repointShowcaseListings(project.id, previousSlug, slug);
+    await repointShowcaseListings(project, previousSlug, slug);
 
     // Best-effort cleanup of anything a FAILED build left behind under
     // the old name — an empty data directory and any half-built images.
@@ -421,7 +434,7 @@ export async function runSlugMigration(project: Project, slug: string): Promise<
   // which replays exactly that string and checks it with `docker image
   // inspect` first — would fail with image_unavailable on all of them.
   await retagDeploymentHistory(project.id, previousSlug, slug);
-  await repointShowcaseListings(project.id, previousSlug, slug);
+  await repointShowcaseListings(project, previousSlug, slug);
 
   return { ok: true, project: updated, previousSlug, unchanged: false };
 }

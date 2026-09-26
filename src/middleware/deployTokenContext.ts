@@ -83,7 +83,7 @@ export async function loadAppBySlug(req: Request, res: Response, next: NextFunct
         error: `The app "${moved.from}" was renamed to "${moved.to}". Use the new name.`,
         code: "app_renamed",
         newName: moved.to,
-        appUrl: platformAppUrl(moved.to),
+        appUrl: platformAppUrl(moved.to, moved.project.createdAt),
         retryUrl,
       });
     }
