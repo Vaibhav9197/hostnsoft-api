@@ -1588,6 +1588,9 @@ X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, i
               <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
                 Body is the source tarball, exactly as the CLI/agent path sends it. <code>X-Company-Id</code> is required <strong>because a PAT isn't company-scoped</strong> — a person can belong to several companies, so the dashboard has to say which one this app belongs to. It's verified against proxy membership server-side, never taken at face value.
               </p>
+              <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+                <strong>Or a JSON body (2026-09-28):</strong> with <code>Content-Type: application/json</code>, send <code>{ "appName", "files": [{ "path", "content", "encoding"? }], "version"? }</code> instead of the tarball. <code>encoding</code> is <code>utf8</code> (default) or <code>base64</code>. It's packed into the same tarball server-side, so auth, response and errors are identical. It exists for MCP tool calls, which can only carry JSON. Limits: 25 MB, 2000 files. New error codes: <code>invalid_file_path</code>, <code>invalid_file_content</code>, <code>invalid_file_encoding</code>, <code>invalid_json</code> (400), <code>source_too_large</code>, <code>too_many_files</code> (413).
+              </p>
             </div>
           </div>
         </div>
