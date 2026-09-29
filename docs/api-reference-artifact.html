@@ -915,7 +915,7 @@
           </div>
         </div>
         <div class="endpoint-note">Takes effect on the <strong>next deploy or rollback</strong> for this project, not instantly on a currently-running app — see <a href="#gaps">Known gaps</a>.</div>
-        <div class="endpoint-note"><strong>Static sites:</strong> refused with <code>409</code> <code>not_supported_for_static</code> when the project's <code>kind</code> is <code>"static"</code> — nothing runs on the server, so there is no memory to size. The body carries <code>error</code>, <code>code</code> and a <code>next</code> step.</div>
+        <div class="endpoint-note"><strong>Static sites:</strong> refused with <code>409</code> <code>not_supported_for_static</code> when the project's <code>kind</code> is <code>"static"</code> — nothing runs on the server, so there is no memory to size. The body carries <code>error</code>, <code>code</code>, a <code>next</code> step and <code>links.help</code> (the deploy service's <code>/capabilities/static-sites</code> topic).</div>
       </article>
 
       <article class="endpoint" id="ep-projects-delete">
@@ -1623,14 +1623,14 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
             <div class="panel-head"><span class="label">202 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code>{
   &quot;success&quot;: true,
-  &quot;status&quot;: &quot;building&quot;,            // &quot;publishing&quot; for a static site
+  &quot;status&quot;: &quot;building&quot;,            // a static site usually answers 200 &quot;live&quot; instead (see below)
   &quot;app&quot;: {
     &quot;name&quot;: &quot;my-app&quot;,
     &quot;kind&quot;: &quot;service&quot;,             // or &quot;static&quot;
     &quot;claimed&quot;: false,
     &quot;expiresAt&quot;: &quot;2026-09-30T10:04:00.000Z&quot;   // only while unclaimed
   },
-  &quot;next&quot;: &quot;Accepted, not live yet. … Poll links.status every 10 seconds until status is \&quot;live\&quot; or \&quot;failed\&quot; …&quot;,
+  &quot;next&quot;: &quot;Building: poll links.status every 10 seconds until it says \&quot;live\&quot; or \&quot;failed\&quot;.&quot;,
   &quot;links&quot;: {
     &quot;status&quot;: &quot;https://ship.embarko.ai/apps/my-app/status&quot;,
     &quot;feedback&quot;: &quot;https://ship.embarko.ai/apps/my-app/customer-query&quot;
@@ -1638,7 +1638,7 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
 }</code></pre>
           </div>
         </div>
-        <div class="endpoint-note info"><strong>Reply shape (2026-09-29):</strong> every reply from <code>POST /apps</code>, <code>/status</code> and <code>/logs</code> is <code>{ status, app, next, links }</code>. <code>next</code> is <strong>one</strong> instruction for the app's current state; later steps (claim, showcase) appear in later replies, once they apply. <code>links</code> holds <strong>every</strong> URL in the reply and nothing else carries one: the URLs <code>next</code> refers to, plus <code>feedback</code> on every reply. The app's own address is <code>links.app</code>, present once it's live; <code>app</code> holds no URL. Errors keep <code>error</code> + <code>code</code> and add <code>next</code> + <code>links</code>. Removed from the 202: <code>accepted</code>, <code>memory</code>, <code>image</code>, <code>version</code>, <code>support</code>, <code>orphan</code>, <code>statusUrl</code>, <code>logsUrl</code>, <code>url</code> and <code>app.url</code>.</div>
+        <div class="endpoint-note info"><strong>Reply shape (2026-09-29):</strong> every reply from <code>POST /apps</code>, <code>/status</code> and <code>/logs</code> is <code>{ status, app, next, links }</code>. <code>next</code> is <strong>one</strong> instruction for the app's current state; later steps (claim, showcase) appear in later replies, once they apply. <code>links</code> holds <strong>every</strong> URL in the reply and nothing else carries one: the URLs <code>next</code> refers to, plus <code>feedback</code> on every reply. The app's own address is <code>links.app</code>, present once it's live; <code>app</code> holds no URL. Errors keep <code>error</code> + <code>code</code> and add <code>next</code> + <code>links</code>. Removed from the 202: <code>accepted</code>, <code>memory</code>, <code>image</code>, <code>version</code>, <code>support</code>, <code>orphan</code>, <code>statusUrl</code>, <code>logsUrl</code>, <code>url</code> and <code>app.url</code>. <strong>Static sites:</strong> the request waits for the publish (up to 5&nbsp;s), so the reply is normally <code>200</code> with <code>status: "live"</code> and the claim or showcase step in <code>next</code>; a larger site falls back to <code>202</code> <code>"publishing"</code>, and a failed publish is <code>500</code> <code>publish_failed</code>.</div>
         <div class="endpoint-note info"><strong>Only a completely absent credential deploys anonymously.</strong> A <code>proxy_auth_token</code> that's present and fails is an error, never a quiet downgrade — <code>401</code> <code>PROXY_TOKEN_REJECTED</code> if the PAT is expired (send the user back through the widget), <code>403</code> <code>not_a_company_member</code> if they're valid but no longer in the company the dashboard is pointed at (refresh <a href="#ep-companies-list">GET /companies</a> and let them pick again), <code>400</code> <code>company_id_required</code> if <code>X-Company-Id</code> was dropped, <code>409</code> if the app name already belongs to someone else. Don't treat any of these as "deploy without a token instead" — the user would get a temporary app they think is permanent.</div>
       </article>
 
@@ -1667,15 +1667,16 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
             <pre><code>{
   &quot;status&quot;: &quot;live&quot;,   // building | publishing | starting | live | failed | crashed | not_deployed | unknown
   &quot;app&quot;: { &quot;name&quot;: &quot;my-app&quot;, &quot;kind&quot;: &quot;service&quot;, &quot;claimed&quot;: false, &quot;expiresAt&quot;: &quot;…&quot; },
-  &quot;next&quot;: &quot;Live. Give the user links.app. Tell the user it is temporary … To claim it: …&quot;,
+  &quot;next&quot;: &quot;Live: give the user links.app and tell them it will be deleted at … unless claimed. To claim it, follow links.help.&quot;,
   &quot;links&quot;: {
     &quot;app&quot;: &quot;https://my-app.embarko.app&quot;,
-    &quot;claim&quot;: &quot;https://ship.embarko.ai/api/public/deploy-tokens/request&quot;,   // &quot;showcase&quot; once claimed
-    &quot;feedback&quot;: &quot;https://ship.embarko.ai/apps/my-app/customer-query&quot;
+    &quot;feedback&quot;: &quot;https://ship.embarko.ai/apps/my-app/customer-query&quot;,
+    &quot;help&quot;: &quot;https://ship.embarko.ai/capabilities/claim&quot;   // capabilities/showcase once claimed
   },
   &quot;deploy&quot;: { &quot;status&quot;: &quot;success&quot; }   // deprecated: in_progress | success | failed | unknown
 }
-// failed / crashed add &quot;error&quot; and links.logs (?stream=stderr)</code></pre>
+// failed / crashed add &quot;error&quot; and links.logs (?stream=stderr)
+// next is one short sentence; links.help points to the capabilities topic with the full steps</code></pre>
           </div>
         </div>
         <div class="endpoint-note info">Errors (<code>400</code> <code>invalid_app_name</code>, <code>401</code> <code>unauthorized</code>, <code>404</code> <code>not_found</code>, <code>502</code> <code>lookup_failed</code>) now carry a <code>code</code>, <code>next</code> and <code>links.feedback</code>.</div>

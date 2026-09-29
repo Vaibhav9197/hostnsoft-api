@@ -77,9 +77,9 @@ look for in a response body or `GET .../logs` output) → `cause` → `fix`.
 ## Async deploy flow (not actual failures)
 
 ### 202 Accepted misread as "live"
-- match: `{"accepted":true}`, HTTP 202
+- match: `{"success":true,"status":"building"}`, HTTP 202 (a static site usually answers `200` with `"status":"live"` instead)
 - cause: not a failure — the deploy API responds immediately and the build continues in the background
-- fix: poll `statusUrl` from the response until `deploy.status` is `"success"` or `"failed"`; never treat
+- fix: poll `links.status` from the response until `status` is `"live"` or `"failed"`, and follow each reply's `next`; never treat
   `202` itself as done
 
 ### 524 timeout (historical, should be rare now)
