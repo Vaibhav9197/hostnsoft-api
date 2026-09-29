@@ -142,6 +142,9 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     // when it's true, so hostnsoft-deploy can check one field to decide
     // whether to inject the banner and include `orphan` in its response.
     isOrphan: project.isOrphan,
+    // This deploy is the one that claimed a previously anonymous app, so
+    // hostnsoft-deploy can tell the agent it is permanent now.
+    claimedNow: claim.adopted === true,
     ...(project.isOrphan && project.orphanExpiresAt
       ? {
           orphanExpiresAt: project.orphanExpiresAt.toISOString(),
@@ -168,5 +171,11 @@ internalProjectsRouter.post("/internal/projects/lookup", async (req, res) => {
   if (!project) {
     return res.json({ exists: false });
   }
-  res.json({ exists: true, companyId: project.companyId, isOrphan: project.isOrphan });
+  res.json({
+    exists: true,
+    companyId: project.companyId,
+    isOrphan: project.isOrphan,
+    // The deadline hostnsoft-deploy's status reply relays to the agent.
+    orphanExpiresAt: project.isOrphan && project.orphanExpiresAt ? project.orphanExpiresAt.toISOString() : null,
+  });
 });

@@ -5,7 +5,9 @@ import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
 import { checkSlug, type SlugRejection } from "../lib/reservedSlugs";
 
 export type ClaimResult =
-  | { project: Project; conflict: false; rejected: null }
+  // adopted: this claim just moved a previously anonymous (orphan) app
+  // into the caller's company.
+  | { project: Project; conflict: false; rejected: null; adopted?: boolean }
   | { project: null; conflict: true; rejected: null }
   | { project: null; conflict: false; rejected: SlugRejection };
 
@@ -78,7 +80,7 @@ export async function claimProjectForCompany(
       where: { id: project.id },
       data: { companyId, isOrphan: false, orphanExpiresAt: null },
     });
-    return { project: adopted, conflict: false, rejected: null };
+    return { project: adopted, conflict: false, rejected: null, adopted: true };
   }
 
   // Slug already belongs to a DIFFERENT, already-claimed company (slugs
