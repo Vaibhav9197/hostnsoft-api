@@ -844,7 +844,7 @@
             <pre><code><span class="tok-punc">[</span>
   <span class="tok-punc">{</span>
     <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"appType"</span><span class="tok-punc">:</span> <span class="tok-str">"portfolio"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
     <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
     <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"running"</span>
   <span class="tok-punc">}</span>
@@ -866,7 +866,7 @@
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span> <span class="tok-key">"appType"</span><span class="tok-punc">:</span> <span class="tok-str">"portfolio"</span><span class="tok-punc">,</span> <span class="tok-key">"currentDeploymentId"</span><span class="tok-punc">:</span> <span class="tok-str">"dep_x8r..."</span><span class="tok-punc">,</span>
   <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span>
   <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"running"</span>
 <span class="tok-punc">}</span></code></pre>
@@ -949,6 +949,7 @@
     <span class="tok-key">"imageTag"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site:2"</span><span class="tok-punc">,</span> <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">512</span><span class="tok-punc">,</span>
     <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-key">"errorDetail"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
     <span class="tok-key">"triggeredBy"</span><span class="tok-punc">:</span> <span class="tok-str">"rollback:usr_9f2..."</span><span class="tok-punc">,</span> <span class="tok-comment">// or a deploy token label, for a real build</span>
+    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span><span class="tok-punc">,</span> <span class="tok-key">"agentName"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-comment">// new — "agent" + e.g. "claude-code" for a token deploy</span>
     <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:44.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"finishedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:44.000Z"</span><span class="tok-punc">,</span>
     <span class="tok-key">"isCurrent"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span>
   <span class="tok-punc">}</span>
@@ -1502,7 +1503,9 @@
     <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-08-01T12:00:00.000Z"</span><span class="tok-punc">,</span>
     <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span>
     <span class="tok-key">"deploymentCount"</span><span class="tok-punc">:</span> <span class="tok-num">14</span><span class="tok-punc">,</span>
-    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
+    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
+    <span class="tok-key">"lastDeploySource"</span><span class="tok-punc">:</span> <span class="tok-str">"agent"</span><span class="tok-punc">,</span> <span class="tok-comment">// new — latest deployment's source, or null</span>
+    <span class="tok-key">"lastDeployAgentName"</span><span class="tok-punc">:</span> <span class="tok-str">"claude-code"</span> <span class="tok-comment">// new — latest deployment's agentName, or null</span>
   <span class="tok-punc">}</span>
 <span class="tok-punc">]</span></code></pre>
           </div>
@@ -1584,12 +1587,20 @@
               <pre class="mono" style="margin:0 0 10px;font-size:12.5px;background:var(--surface-2);padding:9px 12px;border-radius:6px;">proxy_auth_token: &lt;the same PAT you send this API&gt;
 X-Company-Id:     &lt;the company the user is currently viewing&gt;
 X-App-Name:       my-app     <span style="color:var(--ink-faint)">// lowercase/digits/dashes, unique platform-wide</span>
-X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, image tag only</span></pre>
+X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, image tag only</span>
+X-App-Type:       portfolio  <span style="color:var(--ink-faint)">// optional, what the app is for (≤60 printable ASCII chars)</span>
+X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, which agent is deploying (≤60 printable ASCII chars); the dashboard sends none</span></pre>
               <p style="margin:0;color:var(--ink-dim);font-size:13.5px;">
                 Body is the source tarball, exactly as the CLI/agent path sends it. <code>X-Company-Id</code> is required <strong>because a PAT isn't company-scoped</strong> — a person can belong to several companies, so the dashboard has to say which one this app belongs to. It's verified against proxy membership server-side, never taken at face value.
               </p>
               <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
-                <strong>Or a JSON body (2026-09-28):</strong> with <code>Content-Type: application/json</code>, send <code>{ "appName", "files": [{ "path", "content", "encoding"? }], "version"? }</code> instead of the tarball. <code>encoding</code> is <code>utf8</code> (default) or <code>base64</code>. It's packed into the same tarball server-side, so auth, response and errors are identical. It exists for MCP tool calls, which can only carry JSON. Limits: 25 MB, 2000 files. New error codes: <code>invalid_file_path</code>, <code>invalid_file_content</code>, <code>invalid_file_encoding</code>, <code>invalid_json</code> (400), <code>source_too_large</code>, <code>too_many_files</code> (413).
+                <strong>Or a JSON body (2026-09-28):</strong> with <code>Content-Type: application/json</code>, send <code>{ "appName", "files": [{ "path", "content", "encoding"? }], "version"?, "appType"?, "agentName"? }</code> instead of the tarball. <code>encoding</code> is <code>utf8</code> (default) or <code>base64</code>. It's packed into the same tarball server-side, so auth, response and errors are identical. It exists for MCP tool calls, which can only carry JSON. Limits: 25 MB, 2000 files. New error codes: <code>invalid_file_path</code>, <code>invalid_file_content</code>, <code>invalid_file_encoding</code>, <code>invalid_json</code> (400), <code>source_too_large</code>, <code>too_many_files</code> (413).
+              </p>
+              <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+                <strong>App type (2026-09-29):</strong> the optional <code>X-App-Type</code> header (<code>appType</code> in a JSON body) records what the app is for, as a short label: <code>personal website</code>, <code>portfolio</code>, <code>task management</code>, <code>feedback system</code>, and so on. It's stored as the project's <a href="#ep-projects-get"><code>appType</code></a> and doesn't change how the app is built. At most 60 printable ASCII characters, otherwise <code>400</code> <code>invalid_app_type</code>. Leaving it out keeps any earlier value. Agents are told to fill it from context or ask the user once; the dashboard doesn't ask.
+              </p>
+              <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+                <strong>Agent name (2026-09-29):</strong> the optional <code>X-Agent-Name</code> header (<code>agentName</code> in a JSON body) is stored on the new deployment as <a href="#models"><code>agentName</code></a>, next to a <code>source</code> of <code>"dashboard"</code> (PAT) or <code>"agent"</code> (deploy token) that's derived from the credential. Same limits as <code>X-App-Type</code>; otherwise <code>400</code> <code>invalid_agent_name</code>. Self-reported, never used for access. The agent API's rollback and env-var apply calls read the same header (a malformed value there is ignored, not rejected).
               </p>
             </div>
           </div>
@@ -1731,6 +1742,7 @@ X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, i
             <tr><td class="fname">memoryMb</td><td class="ftype">int</td><td class="fdesc">default 256, floor-adjustable override</td></tr>
             <tr><td class="fname">isOrphan / orphanExpiresAt</td><td class="ftype">bool / date|null</td><td class="fdesc">anonymous-deploy state</td></tr>
             <tr><td class="fname">kind</td><td class="ftype">"service" | "static"</td><td class="fdesc">how the app is deployed — <code>"static"</code> means files served directly with no server process; reported by hostnsoft-deploy on each successful deploy. A static app has no use for env vars or memory, so the dashboard hides those controls for it. Defaults <code>"service"</code>; corrected on the project's next successful credentialed deploy. A string so more kinds can be added later</td></tr>
+            <tr><td class="fname">appType</td><td class="ftype">string | null</td><td class="fdesc"><strong>New 2026-09-29.</strong> What the app is for, in the deployer's words (<code>"portfolio"</code>, <code>"task management"</code>, <code>"feedback system"</code>…). Set from the deploy's optional <code>X-App-Type</code> header (agents only — the dashboard upload doesn't send one). <code>null</code> until a deploy sends one; a later deploy without it keeps the value, one with a new value replaces it. Also returned by the agent <code>GET /apps/:name</code></td></tr>
             <tr><td class="fname">currentDeploymentId</td><td class="ftype">string | null</td><td class="fdesc">the Deployment currently live — set on every successful deploy and every successful rollback; null only before the project's first successful deploy</td></tr>
             <tr><td class="fname">health</td><td class="ftype">string</td><td class="fdesc">only on GET one — see <a href="#ep-projects-get">Get one</a>, not a stored column</td></tr>
           </tbody>
@@ -1748,6 +1760,8 @@ X-App-Version:    abc1234    <span style="color:var(--ink-faint)">// optional, i
             <tr><td class="fname">status</td><td class="ftype">"success" | "failed" | "in_progress"</td></tr>
             <tr><td class="fname">errorDetail</td><td class="ftype">string | null</td></tr>
             <tr><td class="fname">triggeredBy</td><td class="ftype">string | null</td><td class="fdesc">a deploy token label, or <code>rollback:&lt;userId&gt;</code></td></tr>
+            <tr><td class="fname">source</td><td class="ftype">"dashboard" | "agent" | null</td><td class="fdesc"><strong>New 2026-09-29.</strong> Derived from the credential, never the request: a <code>proxy_auth_token</code> (upload, rollback) is <code>"dashboard"</code>; a deploy token (AI agent, CI, script) is <code>"agent"</code>. Backfilled from <code>triggeredBy</code> for older rows; <code>null</code> where that couldn't tell. Anonymous deploys still record no row</td></tr>
+            <tr><td class="fname">agentName</td><td class="ftype">string | null</td><td class="fdesc"><strong>New 2026-09-29.</strong> The deploy's <code>X-Agent-Name</code> (<code>"claude-code"</code>, <code>"chatgpt"</code>…), self-reported. Always <code>null</code> for a dashboard deploy. Also on the agent API's deployment list and get-one</td></tr>
           </tbody>
         </table>
       </div>

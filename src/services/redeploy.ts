@@ -23,6 +23,7 @@ import { prisma } from "../lib/prisma";
 import { pushAppConfig } from "./customDomainActivation";
 import { createDeploymentWithNextVersion } from "./deploymentVersioning";
 import { isRenameInProgress } from "./renameStatus";
+import type { DeployAttribution } from "../lib/deployAttribution";
 
 type Succeeded = { ok: true; deployment: Deployment; target: Deployment };
 
@@ -57,7 +58,7 @@ export type RedeployOutcome = RollbackOutcome | ApplyConfigOutcome;
 async function pushWithImage(
   project: Project,
   target: Deployment,
-  triggeredBy: string
+  attribution: DeployAttribution
 ): Promise<PushOutcome> {
   // Every push below addresses hostnsoft-deploy by project.slug, read
   // once here. An address change moves that job out from under us — it
@@ -99,7 +100,7 @@ async function pushWithImage(
     imageTag: target.imageTag,
     memoryMb: effectiveMemoryMb,
     status: "in_progress",
-    triggeredBy,
+    ...attribution,
   });
 
   const result = await pushAppConfig(project, {
@@ -126,7 +127,7 @@ async function pushWithImage(
 export async function rollbackToDeployment(
   project: Project,
   targetDeploymentId: string,
-  triggeredBy: string
+  attribution: DeployAttribution
 ): Promise<RollbackOutcome> {
   const target = await prisma.deployment.findFirst({
     where: { id: targetDeploymentId, projectId: project.id },
@@ -135,7 +136,7 @@ export async function rollbackToDeployment(
   if (target.status !== "success" || !target.imageTag) {
     return { ok: false, code: "rollback_not_successful_deployment" };
   }
-  return pushWithImage(project, target, triggeredBy);
+  return pushWithImage(project, target, attribution);
 }
 
 /**
@@ -150,7 +151,7 @@ export async function rollbackToDeployment(
  */
 export async function applyCurrentConfig(
   project: Project,
-  triggeredBy: string
+  attribution: DeployAttribution
 ): Promise<ApplyConfigOutcome> {
   if (!project.currentDeploymentId) {
     return { ok: false, code: "no_current_deployment" };
@@ -163,5 +164,5 @@ export async function applyCurrentConfig(
   if (!current || current.status !== "success" || !current.imageTag) {
     return { ok: false, code: "no_current_deployment" };
   }
-  return pushWithImage(project, current, triggeredBy);
+  return pushWithImage(project, current, attribution);
 }

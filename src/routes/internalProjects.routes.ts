@@ -18,6 +18,10 @@ export const internalProjectsRouter = Router();
 const claimSchema = z.object({
   ...deployCredentialFields,
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  // Optional — see schema.prisma's Project.appType. hostnsoft-deploy has
+  // already validated the X-App-Type header it came from; re-checked here
+  // so nothing longer or stranger can reach the column another way.
+  appType: z.string().trim().min(1).max(60).optional(),
 });
 
 // Called by hostnsoft-deploy BEFORE it spends any build/Nomad resources
@@ -33,7 +37,7 @@ const claimSchema = z.object({
 // usage. No requireProxyToken — the credential in the body is the
 // credential, same trust shape as the other /internal/* endpoints.
 internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
-  const { slug, ...credentials } = claimSchema.parse(req.body);
+  const { slug, appType, ...credentials } = claimSchema.parse(req.body);
 
   const resolved = await resolveDeployActor(req, credentials);
   if (!resolved.ok) {
@@ -94,7 +98,13 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     });
   }
 
-  const { project } = claim;
+  // Recorded here rather than on a successful deploy: it describes what
+  // the app is meant to be, which a failed build doesn't change. Only set
+  // when sent, so a redeploy without the header keeps the earlier value.
+  const project =
+    appType && appType !== claim.project.appType
+      ? await prisma.project.update({ where: { id: claim.project.id }, data: { appType } })
+      : claim.project;
 
   // Include this project's already-active custom domains (see
   // docs/Customdomain-req.md) so every fresh deploy/rebuild regenerates

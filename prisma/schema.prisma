@@ -84,6 +84,14 @@ model Project {
   // successful deploy says otherwise.
   kind String @default("service")
 
+  // What the app is FOR, in the deployer's own words ("portfolio", "task
+  // management", "feedback system"...). Optional and free text: sent by
+  // the deploying agent/person as hostnsoft-deploy's X-App-Type header,
+  // relayed here through POST /internal/projects/claim. Only ever
+  // overwritten by a deploy that sends one — a redeploy without the
+  // header keeps the previous value rather than clearing it.
+  appType String?
+
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]
@@ -136,6 +144,19 @@ model Deployment {
   status      String // "success" | "failed" | "in_progress"
   errorDetail String?
   triggeredBy String? // proxy userId, or a deploy token label/prefix
+
+  // Where this deploy came from, as a category: "dashboard" (a person in
+  // the dashboard — upload, rollback) or "agent" (anything holding a
+  // deploy token: an AI agent, CI, a script). Derived here from the
+  // credential, never taken from the request. Null only on rows older
+  // than this column that the migration couldn't classify.
+  source String?
+
+  // Which agent, in its own words ("claude-code", "chatgpt", "cursor"...),
+  // from the optional X-Agent-Name header. Self-reported and unverified —
+  // useful for "who's deploying with us", not for access decisions. Null
+  // when not sent, and always null for a dashboard deploy.
+  agentName String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   finishedAt  DateTime?

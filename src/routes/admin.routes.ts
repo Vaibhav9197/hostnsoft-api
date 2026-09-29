@@ -46,6 +46,10 @@ adminRouter.get("/admin/apps", async (req, res) => {
       memoryMb: p.memoryMb,
       deploymentCount: p._count.deployments,
       status: latest?.status ?? "no_deployments",
+      // Who made the latest deploy — see schema.prisma's Deployment.source
+      // and agentName. Null when there are no deployments.
+      lastDeploySource: latest?.source ?? null,
+      lastDeployAgentName: latest?.agentName ?? null,
     };
   });
 

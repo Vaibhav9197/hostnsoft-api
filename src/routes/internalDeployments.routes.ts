@@ -7,6 +7,7 @@ import { claimProjectForCompany } from "../services/projectClaim";
 import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
 import { logAudit } from "../services/audit";
 import { requireInternalSecret } from "../middleware/requireInternalSecret";
+import { agentNameSchema } from "../lib/deployAttribution";
 
 export const internalDeploymentsRouter = Router();
 
@@ -49,6 +50,10 @@ const recordSchema = z.object({
   // given deploy attempt (transitioning in_progress -> success/failed),
   // as opposed to the first call that created it.
   deploymentId: z.string().min(1).optional(),
+  // The deploy's X-Agent-Name, already validated by hostnsoft-deploy.
+  // Only read on the row-creating call, and ignored for a dashboard
+  // deploy — see schema.prisma's Deployment.agentName.
+  agentName: agentNameSchema.optional(),
 });
 
 // Called by hostnsoft-deploy (server-to-server) once a deploy attempt has
@@ -129,6 +134,10 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       status: body.status,
       errorDetail: body.errorDetail,
       triggeredBy: actor.triggeredBy,
+      // From the credential, not the request: a proxy_auth_token is a
+      // person in the dashboard, a deploy token is an agent/CI/script.
+      source: actor.kind === "proxyAuth" ? "dashboard" : "agent",
+      agentName: actor.kind === "proxyAuth" ? null : body.agentName ?? null,
       finishedAt,
     });
 

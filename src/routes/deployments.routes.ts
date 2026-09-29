@@ -82,7 +82,7 @@ deploymentsRouter.post(
     const outcome = await rollbackToDeployment(
       project,
       req.params.deploymentId,
-      `re-deploy:${req.userId}`
+      { triggeredBy: `re-deploy:${req.userId}`, source: "dashboard", agentName: null }
     );
 
     if (!outcome.ok) {

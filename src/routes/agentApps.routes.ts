@@ -45,6 +45,7 @@ import { activateDomain, pushCustomDomainConfig } from "../services/customDomain
 import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, platformZoneOf } from "../lib/customDomainConfig";
 import { fetchAppAnalytics, type AnalyticsRange } from "../services/appAnalytics";
 import { tearDownApp } from "../services/appTeardown";
+import { readAgentName, type DeployAttribution } from "../lib/deployAttribution";
 
 export const agentAppsRouter = Router();
 
@@ -80,6 +81,13 @@ function agentActor(req: Pick<Request, "deployToken">): string {
   return `agent:${req.deployToken!.label}`;
 }
 
+// The same, for a call that creates a Deployment row (rollback, config
+// apply): adds the category and whichever agent said it was calling, via
+// the optional X-Agent-Name header — see lib/deployAttribution.ts.
+function agentAttribution(req: Request, triggeredBy: string): DeployAttribution {
+  return { triggeredBy, source: "agent", agentName: readAgentName(req.headers["x-agent-name"]) };
+}
+
 // The app itself — its stable id, its URL, and what's currently live.
 // An agent that only ever knew the name now has an id it can hold onto.
 appScoped.get("/", async (req, res) => {
@@ -91,6 +99,8 @@ appScoped.get("/", async (req, res) => {
   res.json({
     id: project.id,
     name: project.slug,
+    // null until a deploy sends X-App-Type — see schema.prisma.
+    appType: project.appType,
     memoryMb: project.memoryMb,
     createdAt: project.createdAt,
     currentDeployment: current && {
@@ -278,7 +288,7 @@ appScoped.put("/env-vars", async (req, res) => {
     return res.json({ vars: written, applied: false, appliesOn: "next_deploy" });
   }
 
-  const outcome = await applyCurrentConfig(req.project!, `config:${agentActor(req)}`);
+  const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
   if (!outcome.ok) {
     // The values ARE saved — only applying them failed. Say so, or an
     // agent retries the write it already completed.
@@ -307,7 +317,7 @@ appScoped.put("/env-vars", async (req, res) => {
 // anything first. This is what follows a DELETE, or several separate
 // writes an agent wants to land in one restart.
 appScoped.post("/env-vars/apply", async (req, res) => {
-  const outcome = await applyCurrentConfig(req.project!, `config:${agentActor(req)}`);
+  const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
   if (!outcome.ok) return sendRedeployFailure(res, outcome);
 
   await logAudit({
@@ -378,7 +388,7 @@ appScoped.put("/env-vars/:key", async (req, res) => {
     return res.json({ ...written, applied: false, appliesOn: "next_deploy" });
   }
 
-  const outcome = await applyCurrentConfig(req.project!, `config:${agentActor(req)}`);
+  const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
   if (!outcome.ok) {
     // The value IS saved — only applying it failed. Say so, or an agent
     // retries a write that already succeeded.
@@ -532,6 +542,8 @@ appScoped.get("/deployments", async (req, res) => {
       createdAt: d.createdAt,
       finishedAt: d.finishedAt,
       triggeredBy: d.triggeredBy,
+      source: d.source,
+      agentName: d.agentName,
     })),
   });
 });
@@ -555,6 +567,10 @@ appScoped.get("/deployments/:deploymentId", async (req, res) => {
     errorDetail: deployment.errorDetail,
     createdAt: deployment.createdAt,
     finishedAt: deployment.finishedAt,
+    // Same attribution fields as the history list above.
+    triggeredBy: deployment.triggeredBy,
+    source: deployment.source,
+    agentName: deployment.agentName,
   });
 });
 
@@ -589,7 +605,7 @@ appScoped.post("/rollback", async (req, res) => {
     targetId = previous.id;
   }
 
-  const outcome = await rollbackToDeployment(project, targetId, agentActor(req));
+  const outcome = await rollbackToDeployment(project, targetId, agentAttribution(req, agentActor(req)));
 
   if (!outcome.ok) return sendRedeployFailure(res, outcome);
 
