@@ -198,7 +198,7 @@ model SuperAdmin {
 // that doc's field table) rather than every field always being present.
 model FeatureRequest {
   id          String   @id @default(cuid())
-  type        String // "feature" | "feedback"
+  type        String // see FEATURE_REQUEST_TYPES in src/services/featureRequests.ts
   message     String
   source      String // "dashboard" | "public" | "agent"
   email       String?
