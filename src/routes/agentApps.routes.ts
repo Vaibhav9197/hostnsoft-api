@@ -29,6 +29,7 @@ import { startSlugChange, resolveSlugChangeStatus, SLUG_CHANGE_STATUS } from "..
 import { cooldownRemainingMs as slugChangeCooldownRemainingMs } from "../services/projectSlugChange";
 import { platformAppUrl } from "../services/showcase";
 import { logAudit } from "../services/audit";
+import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { applyCurrentConfig, rollbackToDeployment, type RedeployOutcome } from "../services/redeploy";
 import {
   agentShowcaseSubmissionSchema,
@@ -255,7 +256,7 @@ function sendRedeployFailure(res: Response, outcome: Extract<RedeployOutcome, { 
 // can't boot, and an agent has no source to re-upload in that situation.
 // Default false so an agent writing several variables can batch them and
 // pay one restart.
-appScoped.put("/env-vars", async (req, res) => {
+appScoped.put("/env-vars", refuseForStaticApp("env_vars"), async (req, res) => {
   const { vars, apply } = upsertEnvVarsSchema.parse(req.body);
   const projectId = req.project!.id;
   const actor = req.userId!;
@@ -316,7 +317,7 @@ appScoped.put("/env-vars", async (req, res) => {
 // Apply configuration already saved — the same re-push, without changing
 // anything first. This is what follows a DELETE, or several separate
 // writes an agent wants to land in one restart.
-appScoped.post("/env-vars/apply", async (req, res) => {
+appScoped.post("/env-vars/apply", refuseForStaticApp("env_vars"), async (req, res) => {
   const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
   if (!outcome.ok) return sendRedeployFailure(res, outcome);
 
@@ -350,7 +351,7 @@ const updateEnvVarSchema = z.object({
   apply: z.boolean().optional().default(false),
 });
 
-appScoped.put("/env-vars/:key", async (req, res) => {
+appScoped.put("/env-vars/:key", refuseForStaticApp("env_vars"), async (req, res) => {
   const key = req.params.key;
   // The key arrives as a path segment here rather than through the body
   // schema, so it needs the same check: hostnsoft-deploy embeds it as a

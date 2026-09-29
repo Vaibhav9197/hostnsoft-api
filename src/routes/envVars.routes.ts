@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
+import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { logAudit } from "../services/audit";
 
 export const envVarsRouter = Router();
@@ -45,6 +46,7 @@ envVarsRouter.put(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
   loadProjectContext,
+  refuseForStaticApp("env_vars"),
   async (req, res) => {
     const { vars } = upsertEnvVarsSchema.parse(req.body);
     const projectId = req.project!.id;

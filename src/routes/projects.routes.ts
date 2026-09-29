@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
+import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { logAudit } from "../services/audit";
 import { slugify } from "../lib/slug";
 import { checkSlug } from "../lib/reservedSlugs";
@@ -209,6 +210,7 @@ projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/memory",
   loadCompanyContext,
   loadProjectContext,
+  refuseForStaticApp("memory"),
   async (req, res) => {
     const { memoryMb } = updateMemorySchema.parse(req.body);
 

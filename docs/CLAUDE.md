@@ -356,8 +356,11 @@ Mutable, by any company member:
     (`"service"` | `"static"`, a string so further kinds can be added)
     records how an app is deployed. `hostnsoft-deploy` reports `kind` on
     the success call to `POST /internal/deployments/record`; the dashboard
-    should hide the env-var and memory controls when it is `"static"`.
-    The API itself does not reject env-var writes for a static project.
+    hides the env-var and memory controls when it is `"static"`. Since
+    2026-09-29 the API also refuses env-var writes/applies and memory
+    changes for a static project with `409 not_supported_for_static`
+    (`src/middleware/refuseForStaticApp.ts`, dashboard and agent routes);
+    reads and deletes still work.
 - **Memory allocation** — override the platform default (256MB for every
   app; the old 512MB PGlite tier was removed when PGlite support was
   dropped). Note this value is the task's burst *ceiling* (`memory_max`),
