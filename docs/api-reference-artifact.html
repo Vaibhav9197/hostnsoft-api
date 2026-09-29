@@ -823,7 +823,7 @@
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"prj_7c2..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"co_4a1..."</span><span class="tok-punc">,</span>
   <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span> <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">"marketing-site"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"orphanExpiresAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+  <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span> <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"orphanExpiresAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"service"</span><span class="tok-punc">,</span>
   <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:00:00.000Z"</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
@@ -915,6 +915,7 @@
           </div>
         </div>
         <div class="endpoint-note">Takes effect on the <strong>next deploy or rollback</strong> for this project, not instantly on a currently-running app — see <a href="#gaps">Known gaps</a>.</div>
+        <div class="endpoint-note"><strong>Static sites:</strong> refused with <code>409</code> <code>not_supported_for_static</code> when the project's <code>kind</code> is <code>"static"</code> — nothing runs on the server, so there is no memory to size. The body carries <code>error</code>, <code>code</code> and a <code>next</code> step.</div>
       </article>
 
       <article class="endpoint" id="ep-projects-delete">
@@ -1043,6 +1044,7 @@
             <pre><code><span class="tok-punc">{</span> <span class="tok-key">"vars"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span> <span class="tok-punc">{</span> <span class="tok-key">"key"</span><span class="tok-punc">:</span> <span class="tok-str">"API_URL"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-str">"https://api.acme.dev"</span> <span class="tok-punc">}</span> <span class="tok-punc">]</span> <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
+        <div class="endpoint-note"><strong>Static sites:</strong> refused with <code>409</code> <code>not_supported_for_static</code> when the project's <code>kind</code> is <code>"static"</code> — nothing runs on the server to read env vars. The same refusal applies to the agent API's <code>PUT /api/apps/:name/env-vars</code>, <code>PUT .../env-vars/:key</code> and <code>POST .../env-vars/apply</code>. <code>GET</code> and <code>DELETE</code> still work.</div>
       </article>
 
       <article class="endpoint" id="ep-envvars-delete">
@@ -1616,6 +1618,27 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
           </tbody>
         </table>
 
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">202 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{
+  &quot;success&quot;: true,
+  &quot;status&quot;: &quot;building&quot;,            // &quot;publishing&quot; for a static site
+  &quot;app&quot;: {
+    &quot;name&quot;: &quot;my-app&quot;,
+    &quot;kind&quot;: &quot;service&quot;,             // or &quot;static&quot;
+    &quot;claimed&quot;: false,
+    &quot;expiresAt&quot;: &quot;2026-09-30T10:04:00.000Z&quot;   // only while unclaimed
+  },
+  &quot;next&quot;: &quot;Accepted, not live yet. … Poll links.status every 10 seconds until status is \&quot;live\&quot; or \&quot;failed\&quot; …&quot;,
+  &quot;links&quot;: {
+    &quot;status&quot;: &quot;https://ship.embarko.ai/apps/my-app/status&quot;,
+    &quot;feedback&quot;: &quot;https://ship.embarko.ai/apps/my-app/customer-query&quot;
+  }
+}</code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info"><strong>Reply shape (2026-09-29):</strong> every reply from <code>POST /apps</code>, <code>/status</code> and <code>/logs</code> is <code>{ status, app, next, links }</code>. <code>next</code> is <strong>one</strong> instruction for the app's current state; later steps (claim, showcase) appear in later replies, once they apply. <code>links</code> holds <strong>every</strong> URL in the reply and nothing else carries one: the URLs <code>next</code> refers to, plus <code>feedback</code> on every reply. The app's own address is <code>links.app</code>, present once it's live; <code>app</code> holds no URL. Errors keep <code>error</code> + <code>code</code> and add <code>next</code> + <code>links</code>. Removed from the 202: <code>accepted</code>, <code>memory</code>, <code>image</code>, <code>version</code>, <code>support</code>, <code>orphan</code>, <code>statusUrl</code>, <code>logsUrl</code>, <code>url</code> and <code>app.url</code>.</div>
         <div class="endpoint-note info"><strong>Only a completely absent credential deploys anonymously.</strong> A <code>proxy_auth_token</code> that's present and fails is an error, never a quiet downgrade — <code>401</code> <code>PROXY_TOKEN_REJECTED</code> if the PAT is expired (send the user back through the widget), <code>403</code> <code>not_a_company_member</code> if they're valid but no longer in the company the dashboard is pointed at (refresh <a href="#ep-companies-list">GET /companies</a> and let them pick again), <code>400</code> <code>company_id_required</code> if <code>X-Company-Id</code> was dropped, <code>409</code> if the app name already belongs to someone else. Don't treat any of these as "deploy without a token instead" — the user would get a temporary app they think is permanent.</div>
       </article>
 
@@ -1637,20 +1660,25 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
           <span class="path">/apps/:appName/status</span>
           <span class="role-chip">deploy token or proxy_auth_token (optional for an orphan app)</span>
         </div>
-        <p class="endpoint-desc">The in-flight/last-completed deploy attempt (build/deploy progress, tracked in-process) alongside the app's real live health (a Nomad allocation check) — reported separately so "still building" and "built but crashed" read differently instead of both just looking like silence.</p>
+        <p class="endpoint-desc">Where the app stands, and the one thing to do next. <code>status</code> combines the last deploy attempt (tracked in-process) with the app's live state: Nomad health for a server app; for a <strong>static site</strong>, which has no job, <code>live</code> means its files are published. Live and unclaimed → <code>next</code> gives the claim steps; live and claimed → it points at <code>links.showcase</code> (<code>https://embarko.ai/showcase</code>); failed/crashed → it points at the logs. A sleeping scale-to-zero app reads <code>live</code>.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"appName"</span><span class="tok-punc">:</span> <span class="tok-str">"my-app"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"deploy"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span>
-    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// or "in_progress" | "failed" | "unknown"</span>
-    <span class="tok-key">"appVersion"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"startedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"finishedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"errorDetail"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span>
-  <span class="tok-punc">}</span><span class="tok-punc">,</span>
-  <span class="tok-key">"health"</span><span class="tok-punc">:</span> <span class="tok-str">"healthy"</span> <span class="tok-comment">// or "unhealthy" | "unknown"</span>
-<span class="tok-punc">}</span></code></pre>
+            <pre><code>{
+  &quot;status&quot;: &quot;live&quot;,   // building | publishing | starting | live | failed | crashed | not_deployed | unknown
+  &quot;app&quot;: { &quot;name&quot;: &quot;my-app&quot;, &quot;kind&quot;: &quot;service&quot;, &quot;claimed&quot;: false, &quot;expiresAt&quot;: &quot;…&quot; },
+  &quot;next&quot;: &quot;Live. Give the user links.app. Tell the user it is temporary … To claim it: …&quot;,
+  &quot;links&quot;: {
+    &quot;app&quot;: &quot;https://my-app.embarko.app&quot;,
+    &quot;claim&quot;: &quot;https://ship.embarko.ai/api/public/deploy-tokens/request&quot;,   // &quot;showcase&quot; once claimed
+    &quot;feedback&quot;: &quot;https://ship.embarko.ai/apps/my-app/customer-query&quot;
+  },
+  &quot;deploy&quot;: { &quot;status&quot;: &quot;success&quot; }   // deprecated: in_progress | success | failed | unknown
+}
+// failed / crashed add &quot;error&quot; and links.logs (?stream=stderr)</code></pre>
           </div>
         </div>
+        <div class="endpoint-note info">Errors (<code>400</code> <code>invalid_app_name</code>, <code>401</code> <code>unauthorized</code>, <code>404</code> <code>not_found</code>, <code>502</code> <code>lookup_failed</code>) now carry a <code>code</code>, <code>next</code> and <code>links.feedback</code>.</div>
       </article>
 
       <article class="endpoint" id="ep-deploy-logs">
@@ -1668,9 +1696,12 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
 <span class="tok-comment">// or, when there are no runtime logs yet but a build has run (e.g. the build failed):</span>
 <span class="tok-punc">{</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"build"</span><span class="tok-punc">,</span> <span class="tok-key">"stream"</span><span class="tok-punc">:</span> <span class="tok-str">"combined"</span><span class="tok-punc">,</span> <span class="tok-key">"logs"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"capturedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"note"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span>
 <span class="tok-comment">// or, if neither is available:</span>
-<span class="tok-punc">{</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"reason"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span> <span class="tok-punc">}</span></code></pre>
+<span class="tok-punc">{</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"reason"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"next"</span><span class="tok-punc">:</span> <span class="tok-str">"..."</span><span class="tok-punc">,</span> <span class="tok-key">"links"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-str">…</span> <span class="tok-punc">}</span> <span class="tok-punc">}</span>
+<span class="tok-comment">// or, for a static site (nothing runs on the server):</span>
+<span class="tok-punc">{</span> <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"not_available"</span><span class="tok-punc">,</span> <span class="tok-key">"available"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span> <span class="tok-key">"reason"</span><span class="tok-punc">:</span> <span class="tok-str">"This is a static site, so there are no app logs …"</span><span class="tok-punc">,</span> <span class="tok-key">"app"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-str">…</span> <span class="tok-punc">}</span><span class="tok-punc">,</span> <span class="tok-key">"next"</span><span class="tok-punc">:</span> <span class="tok-str">"…"</span><span class="tok-punc">,</span> <span class="tok-key">"links"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span> <span class="tok-key">"feedback"</span><span class="tok-punc">:</span> <span class="tok-str">"…"</span> <span class="tok-punc">}</span> <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
+        <div class="endpoint-note info"><strong>Failed redeploy (2026-09-29):</strong> when the latest attempt failed and its build log is from that attempt, the build log is returned even though the previous version's allocation still exists — the old runtime logs said nothing about why the new build failed.</div>
       </article>
     </section>
 
@@ -1678,7 +1709,7 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
 
     <section class="resource" id="feature-requests">
       <div class="resource-head"><h2>Customer queries <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
-      <p class="resource-intro">One <code>type</code> (<code>"feature"</code>, <code>"feedback"</code>, or <code>"other"</code>) and a <code>message</code> — submitted through three independent paths that all feed the same store. Submission-only from here; see <a href="#ep-admin-feature-requests">the admin listing</a> to read them back. <strong>Renamed 2026-09-09</strong> from <code>.../feature-requests</code> to <code>.../customer-query</code> on all three paths — same data, same behavior.</p>
+      <p class="resource-intro">One <code>type</code> and a <code>message</code>. <code>type</code> is <code>"platform_bug"</code>, <code>"missing_capability"</code>, <code>"docs_issue"</code>, <code>"unexpected_behavior"</code> or <code>"other"</code> (added 2026-09-29 so agent reports can be triaged by kind), and <code>"feature"</code> / <code>"feedback"</code> are still accepted, which is what the dashboard widget and contact form send. An unknown type is <code>400</code> (on the deploy endpoint's path, <code>code: "invalid_feedback_type"</code>). Submissions come through three independent paths that all feed the same store. Submission-only from here; see <a href="#ep-admin-feature-requests">the admin listing</a> to read them back. <strong>Renamed 2026-09-09</strong> from <code>.../feature-requests</code> to <code>.../customer-query</code> on all three paths — same data, same behavior.</p>
 
       <article class="endpoint" id="ep-feature-requests-dashboard">
         <div class="endpoint-head">
@@ -1721,7 +1752,7 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
       <div class="callout">
         <div class="eyebrow">Third path lives on the deploy endpoint, not here</div>
         <p>An AI agent (Claude Code, Claude in a chat client, ChatGPT, whatever) can submit a request, piece of feedback, or other query about the app it's deploying — <code>POST /apps/:appName/customer-query</code> on the deploy endpoint (<code>ship.embarko.ai</code>), <strong>not</strong> this API. Exact same auth as <a href="#deploy-status-logs">.../status and .../logs</a> above (all three share one check): a deploy token or a dashboard <code>proxy_auth_token</code> is optional, required to match the app's own company once claimed, not needed while it's still an unclaimed orphan. A required <code>X-Agent-Name</code> header records which agent made the request — free text on purpose, so a new agent is never blocked on a code change here to be recognized. Body: <code>{type, message}</code>, same as the paths above. This API never receives a deploy token or proxy_auth_token directly for this path (see the Auth model section) — the deploy endpoint resolves the app to a company and forwards the query here internally.</p>
-        <p><strong>Self-advertised at deploy time (added 2026-09-13):</strong> the deploy endpoint's own <code>POST /apps</code> accepted-response (<code>202</code>, both orphan and claimed) now includes a top-level <code>support</code> object — <code>{message, customerQueryUrl, docsUrl}</code> — written as a direct instruction to whichever AI agent just deployed, telling it to call this exact endpoint automatically the moment a deploy/build/fix attempt fails or behaves unexpectedly, rather than silently working around it. This is deliberately not something an agent has to already know from documentation — it's handed to it in every deploy response. <code>docsUrl</code> is <code>https://embarko.ai/docs</code>.</p>
+        <p><strong>Self-advertised in every reply (changed 2026-09-29):</strong> the old <code>support</code> block on the <code>POST /apps</code> 202 is gone. Instead every reply from <code>POST /apps</code>, <code>/status</code> and <code>/logs</code>, errors included, carries <code>links.feedback</code> — this endpoint once the app exists, <a href="#ep-feature-requests-public">the public one</a> (which takes an <code>email</code>) before it does. When a reply's <code>next</code> tells the agent to report something, it spells out the request body and the <code>X-Agent-Name</code> header right there.</p>
       </div>
     </section>
 
@@ -1741,7 +1772,7 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
             <tr><td class="fname">name</td><td class="ftype">string</td></tr>
             <tr><td class="fname">memoryMb</td><td class="ftype">int</td><td class="fdesc">default 256, floor-adjustable override</td></tr>
             <tr><td class="fname">isOrphan / orphanExpiresAt</td><td class="ftype">bool / date|null</td><td class="fdesc">anonymous-deploy state</td></tr>
-            <tr><td class="fname">kind</td><td class="ftype">"service" | "static"</td><td class="fdesc">how the app is deployed — <code>"static"</code> means files served directly with no server process; reported by hostnsoft-deploy on each successful deploy. A static app has no use for env vars or memory, so the dashboard hides those controls for it. Defaults <code>"service"</code>; corrected on the project's next successful credentialed deploy. A string so more kinds can be added later</td></tr>
+            <tr><td class="fname">kind</td><td class="ftype">"service" | "static"</td><td class="fdesc">how the app is deployed — <code>"static"</code> means files served directly with no server process; reported by hostnsoft-deploy on each successful deploy. A static app has no use for env vars or memory, so the dashboard hides those controls for it and the API refuses writes to them (<code>409 not_supported_for_static</code>). Defaults <code>"service"</code>; corrected on the project's next successful credentialed deploy. A string so more kinds can be added later</td></tr>
             <tr><td class="fname">appType</td><td class="ftype">string | null</td><td class="fdesc"><strong>New 2026-09-29.</strong> What the app is for, in the deployer's words (<code>"portfolio"</code>, <code>"task management"</code>, <code>"feedback system"</code>…). Set from the deploy's optional <code>X-App-Type</code> header (agents only — the dashboard upload doesn't send one). <code>null</code> until a deploy sends one; a later deploy without it keeps the value, one with a new value replaces it. Also returned by the agent <code>GET /apps/:name</code></td></tr>
             <tr><td class="fname">currentDeploymentId</td><td class="ftype">string | null</td><td class="fdesc">the Deployment currently live — set on every successful deploy and every successful rollback; null only before the project's first successful deploy</td></tr>
             <tr><td class="fname">health</td><td class="ftype">string</td><td class="fdesc">only on GET one — see <a href="#ep-projects-get">Get one</a>, not a stored column</td></tr>
@@ -1826,7 +1857,7 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
     </section>
 
     <footer class="doc-footer">
-      Embarko API Reference · last refreshed 2026-09-08 · flag anything stale to backend rather than guessing.
+      Embarko API Reference · last refreshed 2026-09-29 · flag anything stale to backend rather than guessing.
     </footer>
   </main>
 </div>
