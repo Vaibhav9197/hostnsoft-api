@@ -5,6 +5,9 @@ import { claimProjectForCompany, claimOrphanProject } from "../services/projectC
 import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
 import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
+import { getActiveSubscription } from "../lib/lago";
+import { FREE_PLAN_CODE } from "../lib/billingUtility";
+import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
 
 export const internalProjectsRouter = Router();
 
@@ -131,9 +134,23 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     select: { key: true, value: true },
   });
 
+  // Free-plan flag for hostnsoft-deploy's banner. A claimed company with no active
+  // subscription counts as free. Billing being unreachable must never
+  // block a deploy, so a failure just means "no banner".
+  let isFreePlan = false;
+  if (project.companyId) {
+    try {
+      const sub = await getActiveSubscription(project.companyId);
+      isFreePlan = !sub || sub.plan_code === FREE_PLAN_CODE;
+    } catch (err) {
+      console.warn(`[claim] free-plan check failed for ${project.companyId}: ${(err as Error).message}`);
+    }
+  }
+
   res.json({
     projectId: project.id,
     slug: project.slug,
+    isFreePlan,
     memoryMb: project.memoryMb,
     customDomains: activeDomains.map((d) => d.domain),
     envVars,
@@ -147,11 +164,11 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     claimedNow: claim.adopted === true,
     ...(project.isOrphan && project.orphanExpiresAt
       ? {
-          orphanExpiresAt: project.orphanExpiresAt.toISOString(),
-          orphanMessage: buildOrphanMessage(project.orphanExpiresAt),
-          orphanLoginUrl: ORPHAN_LOGIN_URL,
-          howToGetToken: buildTokenSteps(),
-        }
+        orphanExpiresAt: project.orphanExpiresAt.toISOString(),
+        orphanMessage: buildOrphanMessage(project.orphanExpiresAt),
+        orphanLoginUrl: ORPHAN_LOGIN_URL,
+        howToGetToken: buildTokenSteps(),
+      }
       : {}),
   });
 });
