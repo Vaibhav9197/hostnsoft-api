@@ -1,4 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
+import { API_PUBLIC_URL } from "../lib/publicTokenConfig";
+
+// The deploy service answers on the same host, without /api: that is where
+// its capabilities topics live.
+const STATIC_SITES_HELP = `${API_PUBLIC_URL.replace(/\/api$/, "")}/capabilities/static-sites`;
 
 // A static site (Project.kind "static") is served straight from its files:
 // no process runs, so nothing reads env vars and there is no memory to
@@ -20,8 +25,9 @@ export function refuseForStaticApp(feature: "env_vars" | "memory") {
       code: "not_supported_for_static",
       next:
         feature === "env_vars"
-          ? "If the site needs configuration, put it in the files (for example a config.js), or deploy it as a server app under a new app name."
-          : "A static site needs no memory setting. To run server code, deploy it as a server app under a new app name.",
+          ? "Put the config in the site's files instead, or deploy it as a server app under a new name (see links.help)."
+          : "Static sites need no memory setting; to run server code, deploy it as a server app under a new name (see links.help).",
+      links: { help: STATIC_SITES_HELP },
     });
   };
 }
