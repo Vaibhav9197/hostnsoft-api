@@ -151,6 +151,7 @@ const optionalOneOf = (allowed: readonly string[]) =>
 // send just a screenshotUrl. Empty string clears a field. name, tagline and
 // creatorName are required on the first submit (see upsertAppDetails).
 export const appDetailsInputSchema = z.object({
+  // Writes Project.name — the app has one name, on the dashboard and here.
   name: z.string().trim().min(1, "App name is required").max(80).optional(),
   tagline: z.string().trim().min(1, "Tell us what it does").max(160).optional(),
   description: optionalText(4000),
@@ -233,16 +234,16 @@ export async function resolveTarget(collectionSlug: string): Promise<PlaceTarget
   return event ? { kind: "event", event } : null;
 }
 
-// First submit must carry the three fields every card needs.
+// First submit must carry the fields every card needs (name comes from
+// the project).
 const firstSubmitSchema = z.object({
-  name: z.string({ required_error: "App name is required" }),
   tagline: z.string({ required_error: "Tell us what it does" }),
   creatorName: z.string({ required_error: "Creator name is required" }),
 });
 
 // An app's details with the project it belongs to — the slug lives there.
-export type AppWithProject = AppDetails & { project: Pick<Project, "slug"> };
-export const WITH_PROJECT = { project: { select: { slug: true } } } as const;
+export type AppWithProject = AppDetails & { project: Pick<Project, "slug" | "name"> };
+export const WITH_PROJECT = { project: { select: { slug: true, name: true } } } as const;
 
 // screenshotUrls wins; a lone screenshotUrl means [url], "" means clear.
 function screenshotUrlsJson(input: AppDetailsInput): string | undefined {
@@ -260,8 +261,9 @@ export async function upsertAppDetails(
   userId: string,
   input: AppDetailsInput
 ): Promise<AppWithProject> {
+  if (input.name) await prisma.project.update({ where: { id: project.id }, data: { name: input.name } });
+
   const sent = {
-    name: input.name,
     tagline: input.tagline,
     description: input.description,
     story: input.story,
@@ -420,7 +422,7 @@ export function toPublicApp(app: AppWithProject, page: PageSummary) {
   return {
     id: app.id,
     slug: app.project.slug,
-    name: app.name,
+    name: app.project.name,
     tagline: app.tagline,
     description: app.description,
     story: app.story,

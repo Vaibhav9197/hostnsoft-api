@@ -80,7 +80,7 @@ adminShowcaseRouter.get("/admin/showcase/projects", async (req, res) => {
   const where: Prisma.AppDetailsWhereInput = {
     ...(query.collectionId === PUBLIC_PAGE_ID && { isPublic: true }),
     ...(query.collectionId && query.collectionId !== PUBLIC_PAGE_ID && { listings: { some: { eventId: query.collectionId } } }),
-    ...(query.q && { OR: [{ name: { contains: query.q } }, { creatorName: { contains: query.q } }, { appUrl: { contains: query.q } }] }),
+    ...(query.q && { OR: [{ project: { name: { contains: query.q } } }, { creatorName: { contains: query.q } }, { appUrl: { contains: query.q } }] }),
   };
 
   const [total, items] = await Promise.all([

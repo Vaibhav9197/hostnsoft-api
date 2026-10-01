@@ -254,7 +254,6 @@ model AppDetails {
   // Proxy userId of whoever wrote the details.
   createdBy String
 
-  name        String
   tagline     String
   description String?
   story       String?

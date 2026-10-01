@@ -32,7 +32,7 @@ token); the console form does the same.
 | --- | --- |
 | projectId | `Project.id`, unique; relation to `Project`, cascade. The Showcase address is `/showcase/app/<Project.slug>` — no slug copy here, so it follows a rename. |
 | companyId, createdBy | Owner company and first writer. |
-| name, tagline, creatorName | Required on the first submit only. |
+| tagline, creatorName | Required on the first submit only. `name` in the body writes `Project.name`; replies read it from there. |
 | description, story, creatorProfile | Optional. |
 | contactEmail | Optional, opt-in. Returned as `userEmail`; the panel's server-side contact route reads it for "Contact Dev" and strips it before render. |
 | appUrl | Active custom domain, else `https://<slug>.<APP_PUBLIC_DOMAIN>`. Never typed; re-derived each submit, repointed by `services/projectSlugChange.ts` on rename. |
@@ -118,7 +118,7 @@ Mounted before the docs router and every `requireProxyToken` router.
 `code`, `name`, `tagline`, `creatorName`, `description`, `story`,
 `creatorProfile`, `contactEmail`, `builtWith`, `category`, `tags[]`, `screenshotUrls[]` (or `screenshotUrl`),
 `videoUrl`, `customHtml`. **Merge semantics:** absent = untouched,
-`""` = cleared; `name`/`tagline`/`creatorName` required on first submit only.
+`""` = cleared; `tagline`/`creatorName` required on first submit only; `name` updates `Project.name`.
 `whatItDoes`/`whyBuilt` still accepted as aliases for the older skill.
 Validation (`appDetailsInputSchema`): http(s) URLs, unknown
 `builtWith`/`category` dropped, tags capped at 8, `customHtml` ≤ 50k.
@@ -187,6 +187,7 @@ Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
 
 ## Migrations
 
+- `20261001090000_drop_app_details_name`: drops `AppDetails.name`; the name is `Project.name`.
 - `20260930090000_showcase_v3`: drops `ShowcaseCollection` / `ShowcaseProject`
   (no data carried), creates the three tables with the approval columns and
   `submitCode`; company pages and their auto-creation hooks removed.

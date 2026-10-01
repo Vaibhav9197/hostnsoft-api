@@ -46,17 +46,17 @@ const escapeHtml = (s: string) =>
 // contactEmail (nothing is sent) — the caller answers 404 like a missing app.
 async function mailDeveloper(body: z.infer<typeof publicSchema>): Promise<boolean> {
   const app = body.appSlug
-    ? await prisma.appDetails.findFirst({ where: { project: { slug: body.appSlug } }, select: { name: true, contactEmail: true } })
+    ? await prisma.appDetails.findFirst({ where: { project: { slug: body.appSlug } }, select: { contactEmail: true, project: { select: { name: true } } } })
     : null;
   if (!app?.contactEmail || app.contactEmail !== body.toEmail) return false;
 
   const from = body.name ? `${escapeHtml(body.name)} (${escapeHtml(body.email)})` : escapeHtml(body.email);
   await callWebhook(Webhook.SHOWCASE_CONTACT_EMAIL, {
     to: [{ email: app.contactEmail }],
-    subject: `${body.name || body.email} wants to contact you about ${app.name}`,
+    subject: `${body.name || body.email} wants to contact you about ${app.project.name}`,
     variables: {
       content:
-        `<p><b>${from}</b> sent you a message about <b>${escapeHtml(app.name)}</b> on Embarko Showcase:</p>` +
+        `<p><b>${from}</b> sent you a message about <b>${escapeHtml(app.project.name)}</b> on Embarko Showcase:</p>` +
         `<p style="white-space:pre-wrap">${escapeHtml(body.message)}</p>` +
         `<p style="color:#888;font-size:12px">Reply to <a href="mailto:${escapeHtml(body.email)}">${escapeHtml(body.email)}</a> to answer. ` +
         `You get these because your app lists a contact email on Embarko Showcase.</p>`,
