@@ -4,13 +4,15 @@
 events; company pages removed) plus event approvals and a submit code.**
 Single reference for the feature.
 
-An app deployed on Embarko is described once, then shown in one or both of:
+Embarko Showcase (`embarko.ai/showcase`) is a public gallery of apps built
+with AI agents. A listing is a page about one app at `/showcase/app/<slug>`:
+what it does, who built it, screenshots, link to the live app. Indexed by
+search engines. An app is described once (`AppDetails`), then shown on:
 
-- **Public gallery** — `/showcase`. A flag on the app. Live at once.
-- **Event page** — `/showcase/<event-slug>`, made by a company for a
-  hackathon or demo day. Anyone's app can be listed; it shows once the
-  organiser approves it, or at once if the submitter gave the event's code
-  or the app belongs to the organiser's company.
+| Page | Where | Live |
+| --- | --- | --- |
+| Public | `/showcase` (a flag on the app) | at once |
+| Event | `/showcase/<event-slug>`, made by a company for a hackathon or demo day | when the organiser approves, or at once with the event's code or if the app is the organiser's own |
 
 Submissions come mostly from the **agent** that deployed the app (deploy
 token); the console form does the same.
@@ -112,7 +114,7 @@ Mounted before the docs router and every `requireProxyToken` router.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| PUT | `/apps/:appName/showcase` | App from the token + `:appName`. 201 newly placed (or revived from rejected), 200 already there (merged). Reply: the listing + `status` + one-line `next` ("Live at …", "Awaiting the organiser's approval…", or the rejection reason; "Details updated." prefix on 200). 404 `SHOWCASE_COLLECTION_UNKNOWN`. |
+| PUT | `/apps/:appName/showcase` | App from the token + `:appName`. 201 newly placed (or revived from rejected), 200 already there (merged). Reply: the listing + `status` + one-line `next` ("Live at …" followed by promotion guidance, which also asks for a demo video when `videoUrl` is empty; "Awaiting the organiser's approval…"; or the rejection reason; "Details updated." prefix on 200). 404 `SHOWCASE_COLLECTION_UNKNOWN`. |
 
 **Body** (agent and console): `collectionSlug` (absent/`""` = gallery),
 `code`, `name`, `tagline`, `creatorName`, `description`, `story`,
@@ -141,7 +143,7 @@ All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 other
 | DELETE | `/collections/:id` | Events only (409 `SHOWCASE_PUBLIC_PAGE`), while empty (409 `SHOWCASE_COLLECTION_NOT_EMPTY`). |
 | PATCH | `/collections/:id/projects/:listingId` `{approve}` / `{reject, reason?}` / `{isPrivate}` / `{remove}` | Event: review a pending listing (409 `SHOWCASE_LISTING_NOT_PENDING` otherwise), hide/unhide (200), remove (204). Public page: hide/remove unpublishes own app, unhide republishes; review 409 `SHOWCASE_PUBLIC_PAGE`. |
 | GET | `/pages` | Where an app can go: public stand-in, then every event. |
-| POST | `/submissions` | Agent body + `projectId` **or** `appSlug` (slug, `<slug>.embarko.app`, URL, or custom domain). Same 201/200 replies with `status`, `next`. |
+| POST | `/submissions` | Agent body + `projectId` **or** `appSlug` (slug, `<slug>.embarko.app`, URL, or custom domain). Same 201/200 replies with `status` (no `next`; that is agent-only). Resending `{collectionSlug, projectId, code}` for a pending listing approves it when the code matches — the UI's "enter event code" uses this, no separate endpoint. |
 | GET | `/submissions?projectId=` | Every placement of the company's apps, with status. |
 | DELETE | `/submissions/:listingId` | Withdraw. `listingId` = `AppDetails` id (public) or event listing id. |
 

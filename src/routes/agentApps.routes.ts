@@ -767,6 +767,13 @@ const SHOWCASE_COLLECTION_UNKNOWN = {
 // PUT rather than POST: calling it again with new details refreshes the
 // app's details instead of erroring, since an agent iterating on
 // tagline/screenshot shouldn't have to look up and delete first.
+// Once live, the agent's job turns to promotion.
+const PROMOTE =
+  "Help the user promote it with platform-specific posts focused on what they built, who it helps, and why people should try it.";
+const PROMOTE_IG = "For Social Media, suggest tagging @Embarko and inviting @Embarko as collaborator for possible additional reach.";
+const PROMOTE_NO_VIDEO = `App is publicly discoverable. ${PROMOTE} Suggest adding a short demo video to make the app easier to understand; qualifying approved videos get 1 year of Embarko Pro for this project. ${PROMOTE_IG}`;
+const PROMOTE_WITH_VIDEO = `App is publicly discoverable with a demo video. ${PROMOTE} ${PROMOTE_IG}`;
+
 appScoped.put("/showcase", async (req, res) => {
   const body = agentShowcaseSubmissionSchema.parse(req.body);
   const project = req.project!;
@@ -789,6 +796,7 @@ appScoped.put("/showcase", async (req, res) => {
 
   // Event listings wait for the organiser unless the code was given, so the
   // agent needs to know whether "listed" means live yet.
-  const next = submitNext(placed.placement, `${FRONTEND_ORIGIN}${where}`, placed.created);
+  let next = submitNext(placed.placement, `${FRONTEND_ORIGIN}${where}`, placed.created);
+  if (status === "approved") next += " " + (placed.app.videoUrl ? PROMOTE_WITH_VIDEO : PROMOTE_NO_VIDEO);
   res.status(placed.created ? 201 : 200).json({ ...toOwnerListing(placed.app, placed.placement), next });
 });
