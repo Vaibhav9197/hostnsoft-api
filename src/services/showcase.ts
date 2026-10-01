@@ -378,6 +378,13 @@ export async function placeApp(
       });
       return { app, placement: eventPlacement(listing, event), created: true };
     }
+    // Pending, and this time the code (or ownership) clears it.
+    if (listing.status === "pending" && autoApprove) {
+      listing = await prisma.showcaseEventListing.update({
+        where: { id: listing.id },
+        data: { status: "approved", reviewedAt: new Date() },
+      });
+    }
     return { app, placement: eventPlacement(listing, event), created: false };
   }
 }
