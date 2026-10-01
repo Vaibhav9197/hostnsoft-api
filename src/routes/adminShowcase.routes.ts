@@ -5,12 +5,21 @@ import { prisma } from "../lib/prisma";
 import { getCompanyById } from "../lib/msg91";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin";
-import { collectionCounts, showcaseTypeSchema, toOwnerCollection, toOwnerProject } from "../services/showcase";
+import {
+  GALLERY_ORDER,
+  PUBLIC_PAGE_ID,
+  eventCounts,
+  eventPlacement,
+  publicPlacement,
+  toOwnerEvent,
+  WITH_PROJECT,
+  toOwnerListing,
+} from "../services/showcase";
 
 // Oversight half of Showcase — see docs/showcase.md. Nothing is approved
-// here: pages and listings go live on creation. The admin sees every page
-// and every listing, and features listings. Super-admin only (404s for
-// non-admins, same as admin.routes.ts). Split out only for file size.
+// here: pages and listings go live on creation. The admin sees every event
+// and every app, and features apps. Super-admin only (404s for non-admins,
+// same as admin.routes.ts). Split out only for file size.
 export const adminShowcaseRouter = Router();
 adminShowcaseRouter.use(requireProxyToken);
 adminShowcaseRouter.use(requireSuperAdmin);
@@ -22,30 +31,33 @@ async function companyNames(ids: string[]): Promise<Map<string, string>> {
   return new Map(unique.map((id, i) => [id, companies[i]?.name ?? "Unknown company"]));
 }
 
-const listCollectionsSchema = z.object({
+const pageSchema = {
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
-  type: showcaseTypeSchema.optional(),
   q: z.string().min(1).optional(),
+};
+
+const listEventsSchema = z.object({
+  ...pageSchema,
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  // Accepted and ignored: every page here is an event now.
+  type: z.string().optional(),
 });
 
-// GET /admin/showcase/collections — every page, newest first.
+// GET /admin/showcase/collections — every event, newest first.
 adminShowcaseRouter.get("/admin/showcase/collections", async (req, res) => {
-  const query = listCollectionsSchema.parse(req.query);
-  const where: Prisma.ShowcaseCollectionWhereInput = {
-    ...(query.type && { type: query.type }),
+  const query = listEventsSchema.parse(req.query);
+  const where: Prisma.ShowcaseEventWhereInput = {
     ...(query.q && { OR: [{ slug: { contains: query.q } }, { title: { contains: query.q } }] }),
   };
 
   const [total, items] = await Promise.all([
-    prisma.showcaseCollection.count({ where }),
-    prisma.showcaseCollection.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.limit, take: query.limit }),
+    prisma.showcaseEvent.count({ where }),
+    prisma.showcaseEvent.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.limit, take: query.limit }),
   ]);
-
-  const [names, counts] = await Promise.all([companyNames(items.map((c) => c.companyId)), collectionCounts(items.map((c) => c.id))]);
+  const [names, counts] = await Promise.all([companyNames(items.map((e) => e.companyId)), eventCounts(items.map((e) => e.id))]);
 
   res.json({
-    items: items.map((c) => ({ ...toOwnerCollection(c, counts.get(c.id)!), companyName: names.get(c.companyId) })),
+    items: items.map((e) => ({ ...toOwnerEvent(e, counts.get(e.id)!), companyName: names.get(e.companyId) })),
     page: query.page,
     limit: query.limit,
     total,
@@ -53,40 +65,42 @@ adminShowcaseRouter.get("/admin/showcase/collections", async (req, res) => {
   });
 });
 
-const listProjectsSchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
+const listAppsSchema = z.object({
+  ...pageSchema,
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  // "public" narrows to the gallery; an event id to that event's apps.
   collectionId: z.string().min(1).optional(),
-  q: z.string().min(1).optional(),
 });
 
-// GET /admin/showcase/projects — every listing across every slug, for oversight and featuring.
+// GET /admin/showcase/projects — every app with details, one row each, for
+// oversight and featuring. Shown against its public placement when it has
+// one, else its first event.
 adminShowcaseRouter.get("/admin/showcase/projects", async (req, res) => {
-  const query = listProjectsSchema.parse(req.query);
-  const where: Prisma.ShowcaseProjectWhereInput = {
-    ...(query.collectionId && { collectionId: query.collectionId }),
+  const query = listAppsSchema.parse(req.query);
+  const where: Prisma.AppDetailsWhereInput = {
+    ...(query.collectionId === PUBLIC_PAGE_ID && { isPublic: true }),
+    ...(query.collectionId && query.collectionId !== PUBLIC_PAGE_ID && { listings: { some: { eventId: query.collectionId } } }),
     ...(query.q && { OR: [{ name: { contains: query.q } }, { creatorName: { contains: query.q } }, { appUrl: { contains: query.q } }] }),
   };
 
   const [total, items] = await Promise.all([
-    prisma.showcaseProject.count({ where }),
-    prisma.showcaseProject.findMany({
+    prisma.appDetails.count({ where }),
+    prisma.appDetails.findMany({
       where,
-      orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
+      orderBy: [...GALLERY_ORDER],
       skip: (query.page - 1) * query.limit,
       take: query.limit,
-      include: { collection: { select: { id: true, slug: true, title: true, type: true, companyId: true } } },
+      include: { ...WITH_PROJECT, listings: { orderBy: { createdAt: "asc" }, include: { event: true } } },
     }),
   ]);
-
-  const names = await companyNames([...items.map((p) => p.companyId), ...items.map((p) => p.collection.companyId)]);
+  const names = await companyNames(items.map((a) => a.companyId));
 
   res.json({
-    items: items.map((p) => ({
-      ...toOwnerProject(p, p.collection),
-      submitterCompany: { id: p.companyId, name: names.get(p.companyId) },
-      ownerCompany: { id: p.collection.companyId, name: names.get(p.collection.companyId) },
-    })),
+    items: items.map((a) => {
+      const placement = a.isPublic || a.listings.length === 0 ? publicPlacement(a) : eventPlacement(a.listings[0], a.listings[0].event);
+      const company = { id: a.companyId, name: names.get(a.companyId) };
+      return { ...toOwnerListing(a, placement), submitterCompany: company, ownerCompany: company };
+    }),
     page: query.page,
     limit: query.limit,
     total,
@@ -94,17 +108,14 @@ adminShowcaseRouter.get("/admin/showcase/projects", async (req, res) => {
   });
 });
 
-const patchProjectSchema = z.object({ featured: z.boolean() });
+const patchAppSchema = z.object({ featured: z.boolean() });
 
-// PATCH /admin/showcase/projects/:id {featured} — the admin's one lever on a listing.
+// PATCH /admin/showcase/projects/:id {featured} — the admin's one lever on an app.
 adminShowcaseRouter.patch("/admin/showcase/projects/:id", async (req, res) => {
-  const { featured } = patchProjectSchema.parse(req.body);
-  const existing = await prisma.showcaseProject.findUnique({
-    where: { id: req.params.id },
-    include: { collection: { select: { id: true, slug: true, title: true, type: true } } },
-  });
+  const { featured } = patchAppSchema.parse(req.body);
+  const existing = await prisma.appDetails.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Listing not found" });
 
-  const updated = await prisma.showcaseProject.update({ where: { id: existing.id }, data: { featured } });
-  res.json(toOwnerProject(updated, existing.collection));
+  const updated = await prisma.appDetails.update({ where: { id: existing.id }, data: { featured }, include: WITH_PROJECT });
+  res.json(toOwnerListing(updated, publicPlacement(updated)));
 });

@@ -95,6 +95,7 @@ model Project {
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]
+  appDetails  AppDetails?
 
   @@index([companyId])
 }
@@ -233,81 +234,111 @@ model AuditLog {
   @@index([companyId, action, createdAt])
 }
 // ---------------------------------------------------------------- Showcase
-// See docs/showcase.md. Two kinds of public page, both /showcase/<slug>:
-//   company — reserved for every company the moment it's created. Only that
-//             company's own deployed apps can be listed on it.
-//   public  — a public board, created by a company from its console (a
-//             hackathon, a demo day). Live at once; any company's members
-//             can list their own deployed apps on it. No approval, no code.
-model ShowcaseCollection {
-  id        String   @id @default(cuid())
-  // The public URL segment. Immutable once created — it's an address people
-  // will have shared. Lowercase letters, digits, dashes; see
-  // src/services/showcase.ts for the exact rule and the reserved list.
-  slug      String   @unique
-  title     String
-  intro     String?
-  // "company" | "public" — see the block comment above.
-  type      String   @default("public")
-  // Proxy company id of the owning company
+// See docs/showcase.md. Two places an app can be shown:
+//   public — the home gallery at /showcase. A flag on AppDetails.
+//   event  — a ShowcaseEvent page at /showcase/<slug>, made by a company;
+//            anyone's app can be listed there. One ShowcaseEventListing row
+//            per (app, event).
+// An app's details are written once (AppDetails, one row per Project) and
+// reused by every place it is shown. Public is live at once; an event
+// listing waits for the organiser unless the event's submitCode was given.
+
+// Public-facing details of a deployed app. Not showcase-specific: anything
+// that needs to describe an app can read it.
+model AppDetails {
+  id        String @id @default(cuid())
+  // One row per app. The Showcase address is /showcase/app/<Project.slug>,
+  // read through the relation — nothing here duplicates it.
+  projectId String @unique
   companyId String
-  // Proxy userId of the creator; the company creator for company pages.
+  // Proxy userId of whoever wrote the details.
   createdBy String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  projects ShowcaseProject[]
-
-  @@index([companyId])
-  @@index([type])
-}
-// One deployed app listed under one collection. Always created by a
-// logged-in member of the app's company, so there is a real Project behind
-// every row — appUrl is derived from it, never typed. No review state of
-// its own. Public iff isPrivate == false.
-model ShowcaseProject {
-  id           String @id @default(cuid())
-  collectionId String
-  // The deployed app being shown off — Project.id — and who owns it. Plain
-  // strings rather than a relation, matching Project.currentDeploymentId's
-  // convention: a listing should outlive nothing about the app's row shape.
-  projectId    String
-  companyId    String
-  submittedBy  String
-
-  // Public URL segment, /showcase/apps/<slug>. Derived from name, suffixed
-  // on collision, globally unique.
-  slug           String  @unique
-  name           String
-  tagline        String
-  whatItDoes     String?
-  whyBuilt       String?
-  // Snapshot at submit time: the project's active custom domain if it had
-  // one, else its platform URL. See resolveAppUrl in services/showcase.ts.
+  name        String
+  tagline     String
+  description String?
+  story       String?
+  // Snapshot: the project's active custom domain if it had one, else its
+  // platform URL. Repointed by services/projectSlugChange.ts on a rename.
   appUrl         String
-  screenshotUrl  String?
+  screenshotUrls     String @default("[]")
   videoUrl       String?
   creatorName    String
   creatorProfile String?
-  builtWith      String?
-  category       String?
+  contactEmail   String?
+  // Offered options only; enforced in services/showcase.ts (SQLite has no
+  // enums under Prisma 5).
+  builtWith String?
+  category  String?
   // JSON-encoded string[] — SQLite has no array column.
-  tagsJson       String  @default("[]")
+  tagsJson String @default("[]")
+  // Creator-supplied HTML rendered on the app details page. Stored raw; the
+  // panel sanitises on render.
+  customHtml String?
 
-  // The collection owner's switch: hides this listing from every public
-  // route without removing it.
-  isPrivate Boolean @default(false)
-  // Super admin's: ordered ahead of the rest on public listings.
-  featured  Boolean @default(false)
+  // Shown on the /showcase home gallery.
+  isPublic Boolean @default(false)
+  // Super admin's: ordered ahead of the rest on the home gallery.
+  featured Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  collection ShowcaseCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  project  Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  listings ShowcaseEventListing[]
 
-  // An app is listed under a given slug at most once.
-  @@unique([collectionId, projectId])
   @@index([companyId])
-  @@index([collectionId, isPrivate])
+  @@index([isPublic, featured, createdAt])
+}
+
+// An event page, /showcase/<slug>: a hackathon, a demo day. Made by a
+// company from its console; any company's members can list their own apps.
+model ShowcaseEvent {
+  id String @id @default(cuid())
+  // Immutable once created — it's an address people will have shared.
+  // Lowercase letters, digits, dashes; see eventSlugSchema for the rule.
+  slug  String  @unique
+  title String
+  intro String?
+  // Proxy company id of the organiser.
+  companyId String
+  createdBy String
+  // Handed out by the organiser. A submission carrying it is approved at
+  // once; without it the organiser reviews. Generated in services/showcase.ts.
+  submitCode String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  listings ShowcaseEventListing[]
+
+  @@index([companyId])
+}
+
+// One app shown on one event page.
+model ShowcaseEventListing {
+  id           String @id @default(cuid())
+  appDetailsId String
+  eventId      String
+  // Proxy userId of the member who listed it.
+  addedBy String
+  // pending | approved | rejected (LISTING_STATUSES in services/showcase.ts;
+  // SQLite has no enums). Only approved listings are public.
+  status          String    @default("pending")
+  rejectionReason String?
+  // Organiser member who approved or rejected, and when.
+  reviewedBy String?
+  reviewedAt DateTime?
+  // The organiser's switch: hides an approved listing from the event's
+  // public page without removing it.
+  isHidden Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  app   AppDetails    @relation(fields: [appDetailsId], references: [id], onDelete: Cascade)
+  event ShowcaseEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Once per event; any number of events.
+  @@unique([appDetailsId, eventId])
+  @@index([eventId, status, isHidden])
 }

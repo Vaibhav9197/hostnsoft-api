@@ -1,218 +1,200 @@
-# Showcase — a reserved page per company, open public boards, apps listed by their owners
+# Showcase — public gallery, event pages, approvals
 
-**Added 2026-09-15; approval and submission codes removed 2026-09-16.**
-Showcase lets companies show off the apps they built and deployed on
-Embarko. Two kinds of public page, both at `/showcase/<slug>`:
+**Added 2026-09-15; reworked 2026-09-30 (v3: `AppDetails`, public flag,
+events; company pages removed) plus event approvals and a submit code.**
+Single reference for the feature.
 
-- **Company page** (`type: "company"`) — reserved for every company the
-  moment it is created, slug derived from its name. Only that company's
-  own deployed apps can be listed on it.
-- **Public board** (`type: "public"`) — created by a company from its console
-  (a hackathon, a demo day). Live at once. Members of **any** company list
-  their **own deployed apps** on it by picking the page.
+An app deployed on Embarko is described once, then shown in one or both of:
 
-There is no admin approval, no submission code, no anonymous form and no
-per-app review. Listings go live the moment they are made.
+- **Public gallery** — `/showcase`. A flag on the app. Live at once.
+- **Event page** — `/showcase/<event-slug>`, made by a company for a
+  hackathon or demo day. Anyone's app can be listed; it shows once the
+  organiser approves it, or at once if the submitter gave the event's code
+  or the app belongs to the organiser's company.
 
-## Vocabulary
+Submissions come mostly from the **agent** that deployed the app (deploy
+token); the console form does the same.
 
-| Term | Model | What it is |
+## Roles
+
+| Role | Who | Does |
 | --- | --- | --- |
-| Collection | `ShowcaseCollection` | A public page `/showcase/<slug>`, owned by a company (`companyId`). `type` is `company` or `public`. Slug globally unique and immutable. |
-| Listing | `ShowcaseProject` | One deployed app (`projectId` → `Project.id`) listed under one collection by a member (`submittedBy`) of the app's company (`companyId`). `appUrl` is derived from the project, never typed. Unique per `(collectionId, projectId)`. |
+| Agent | The coding agent holding the app's deploy token | Submits to the gallery or an event, with or without the code. Updates details later, even one field. |
+| App owner | Members of the app's company | Sees placements and status, withdraws, can submit from the console. |
+| Organiser | Members of the event's company | Sees the code, approves / rejects (optional reason), hides / removes. |
+| Super admin | Embarko staff | Features apps on the gallery. Nothing else. |
 
-### The company page
+## Tables
 
-Created by `ensureCompanyCollection` (`src/services/showcase.ts`) from two
-places:
+### `AppDetails` — one row per deployed app
 
-- `POST /companies` — right after proxy creates the company. Best effort:
-  a failure is logged and the response carries `showcaseSlug: null`.
-- `loadCompanyContext` (`src/middleware/companyContext.ts`) — every
-  company-scoped request passes through it, whichever way the company
-  became active in the dashboard (login default, stored choice, or a
-  switch; the dashboard picks locally and only tells the API best-effort).
-  So a company that predates Showcase, or one proxy made itself, gets its
-  page on the first scoped request made for it.
+| Column | Notes |
+| --- | --- |
+| projectId | `Project.id`, unique; relation to `Project`, cascade. The Showcase address is `/showcase/app/<Project.slug>` — no slug copy here, so it follows a rename. |
+| companyId, createdBy | Owner company and first writer. |
+| name, tagline, creatorName | Required on the first submit only. |
+| description, story, creatorProfile | Optional. |
+| contactEmail | Optional, opt-in. Returned as `userEmail`; the panel's server-side contact route reads it for "Contact Dev" and strips it before render. |
+| appUrl | Active custom domain, else `https://<slug>.<APP_PUBLIC_DOMAIN>`. Never typed; re-derived each submit, repointed by `services/projectSlugChange.ts` on rename. |
+| screenshotUrls, videoUrl | Optional. JSON-encoded `string[]`, max 10; returned as `screenshotUrls` plus `screenshotUrl` (the first) for the panel, which shows one and only apps that have it. Input `screenshotUrls[]`, or `screenshotUrl` as a one-item alias. |
+| builtWith | `SHOWCASE_TOOLS`: Claude, Codex, Cursor, Lovable, Replit, Other. |
+| category | `SHOWCASE_CATEGORIES`: AI Tool, Personal, Business, Productivity, Education, Game, Developer Tool, Other. |
+| tagsJson | JSON `string[]`, normalised, max 8. |
+| customHtml | Raw HTML for the app page (panel sanitises). |
+| isPublic, featured | On the gallery; admin's "first in gallery" flag. |
 
-The middleware path goes through `hasCompanyPage` / `ensureCompanyPage`,
-which never throw and cache "already has a page" in Redis for a day, so
-the steady-state cost is one Redis read per request. Idempotent: one `company` collection per
-`companyId`, found by `findFirst` before any create, with a unique-slug
-race absorbed by a retry.
-The slug is the company name slugified (`walkover-web-solutions`), suffixed
-`-2`, `-3`… when taken; a name that yields nothing usable (too short, or a
-reserved word like `admin`) falls back to `company-<companyId>`.
+### `ShowcaseEvent` — one event page
 
-Title is the company name, `intro` null. The company page can't be
-deleted (409 `SHOWCASE_COMPANY_PAGE`); it is the company's address.
+| Column | Notes |
+| --- | --- |
+| slug | Unique, immutable, `^[a-z0-9]+(-[a-z0-9]+)*$`, 3–40 chars, not reserved (`app`, `apps`, `public`, `event`, …). |
+| title, intro, companyId, createdBy | |
+| submitCode | 8 chars, no 0/O/1/I, unique, generated on create. Given on submit, skips approval. |
 
-### Public boards
+### `ShowcaseEventListing` — one app on one event
 
-`POST /companies/:companyId/showcase/collections {slug, title, intro?}`.
-No limit per company. Deletable only while empty. Anyone may list on them.
+| Column | Notes |
+| --- | --- |
+| appDetailsId, eventId | Unique together; cascade on delete. |
+| addedBy | Submitting user (or deploy-token owner). |
+| status | `pending` / `approved` / `rejected` (`LISTING_STATUSES`; no SQLite enums). Only `approved` is public. |
+| rejectionReason, reviewedBy, reviewedAt | Set on review; reason cleared on resubmit. |
+| isHidden | Organiser's soft switch on an approved listing. |
 
-### Who can list where
+Index `[eventId, status, isHidden]` serves the public reads.
 
-`canListOn(collection, companyId)`: **public → anyone; company → only the
-owner.** Enforced in `POST .../submissions` (403
-`SHOWCASE_COLLECTION_PRIVATE`). The submitter names the page by slug
-(`collectionSlug`), and the picker is fed by `GET .../showcase/pages`.
-
-### Listings and visibility
-
-A listing has no review state. One switch decides whether it is public:
-
-| Field | Set by | Effect |
-| --- | --- | --- |
-| `isPrivate` on the listing | the **collection's owner** | Hides it from every public route without removing it. The app's owner still sees it (marked hidden) in their own console. |
-
-**Public ⇔ `isPrivate == false`.** Every public read applies exactly this
-(`PUBLIC_WHERE` in `src/services/showcase.ts`).
-
-The app's owner can **withdraw** a listing (`DELETE .../submissions/:id`),
-and the collection's owner can **remove** it from their page (`PATCH …
-{remove: true}`); both delete the row. `featured` (admin) orders a listing ahead of the rest.
-
-`appUrl` is snapshotted at listing time by `resolveAppUrl`: the project's
-active custom domain if it has one, else `https://<slug>.<APP_PUBLIC_DOMAIN>`.
+**The "public page":** company routes present the gallery as a page with
+id `public`, slug `""`, title "Embarko Showcase", `type: "public"`; its
+"listings" are the company's public apps with `id = AppDetails.id`.
+Events have `type: "event"`.
 
 ## Flow
 
 ```
-organiser (console)                       app owner (console, any company)
-──────────────────                        ────────────────────────────────
-(company page exists since signup:
- /showcase/walkover)
+organiser: POST .../collections {slug, title, intro}
+           → live, empty; submitCode in the reply and on the console page
+           → shares the code (or the "add your app" prompt, which carries it)
 
-POST .../showcase/collections
-  {slug:"iit-indore-2026", title}
-  → live at once, type public
-                                          GET .../showcase/pages
-                                            → own company page + every public board
-                                          POST .../showcase/submissions
-                                            {collectionSlug:"iit-indore-2026", projectId (own app), name, tagline, …}
-                                            → live at once
-GET .../collections/:id
-  sees the listing
-PATCH .../collections/:id/projects/:listingId
-  {isPrivate:true}  ← optional
-                                          GET /showcase/iit-indore-2026 shows it (unless hidden)
-                                          DELETE .../showcase/submissions/:id ← withdraw
+agent:     PUT /apps/<name>/showcase {details, collectionSlug?, code?}
+           → AppDetails created, or MERGED (only sent fields change)
+           ├─ no collectionSlug ─────────────────────────► isPublic → live
+           └─ event
+                ├─ code matches / app's company == organiser ► approved → live
+                └─ no or wrong code ─────────────────────► pending (not public)
+
+organiser: PATCH .../projects/:listingId {approve} | {reject, reason?}
+           then hide / unhide / remove on approved listings
 ```
+
+- Submitting an already-listed app is a success: details merge, `next`
+  says "Details updated…". Same app can be public and on many events.
+- A rejected app resubmitted goes back to `pending` (or `approved` with the
+  code / own company), reason cleared. A wrong code is never an error.
+- Public: `/showcase` = `isPublic`, featured first then newest;
+  `/showcase/<event>` = approved and not hidden; `/showcase/app/<slug>` = the
+  app if public or on any event with an approved visible listing, else 404.
+- Owner: every placement with `status` / `rejectionReason`. **Withdraw**
+  flips `isPublic` off or deletes the event listing; `AppDetails` stays.
 
 ## Endpoints
 
 ### Public (no auth) — `src/routes/publicShowcase.routes.ts`
 
-Reads only. Mounted before the docs router (which serves `GET /public/:slug`)
-and before every `requireProxyToken` router — see `routes/index.ts`. No
-rate limiting anywhere in Showcase: every write is behind a verified proxy
-identity.
+Mounted before the docs router and every `requireProxyToken` router.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/public/showcase?limit=60` | Public listings, featured first then newest. |
-| GET | `/public/showcase/collections` | Collections with ≥1 public listing (the gallery's discover rail). Each carries `type`. |
-| GET | `/public/showcase/collections/:slug` | `{collection, projects}`. 404 for an unknown slug; an empty page still resolves. |
-| GET | `/public/showcase/apps/:slug` | One listing. Hidden 404s like an unknown one. |
-
-### Company (proxy token + company membership) — `src/routes/showcase.routes.ts`
-
-All under `/companies/:companyId/showcase/…`, every lookup scoped by
-`companyId` so another company's ids 404.
-
-**As organiser** (pages this company owns):
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| POST | `/collections` `{slug, title, intro?}` | Create a public board, live at once. 409 `SHOWCASE_SLUG_TAKEN` if anyone holds the slug. Slug: `^[a-z0-9]+(-[a-z0-9]+)*$`, 3–40 chars, not reserved (`apps`, `submit`, …). |
-| GET | `/collections` | Company page first, then public boards, each with `type` and `counts: {total, publicCount}`. |
-| GET | `/collections/:collectionId` | Plus `projects[]` — every listing, hidden or not. |
-| DELETE | `/collections/:collectionId` | Public boards only (409 `SHOWCASE_COMPANY_PAGE`), and only while nothing is listed (409 `SHOWCASE_COLLECTION_NOT_EMPTY`). |
-| PATCH | `/collections/:collectionId/projects/:listingId` `{isPrivate}` or `{remove: true}` | Hide/unhide someone's listing on this page (200), or remove it from the page outright (204). One route for both organiser levers. |
-
-**As submitter** (own apps):
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| GET | `/pages` | Every page this company may list on: its own company page plus every public board (including empty ones). Public shape. |
-| POST | `/submissions` | Body: `collectionSlug, projectId, name, tagline, creatorName` required; `whatItDoes, whyBuilt, creatorProfile, builtWith, category, tags[], videoUrl, screenshotUrl` optional. 404 `SHOWCASE_COLLECTION_UNKNOWN` for an unknown slug; 403 `SHOWCASE_COLLECTION_PRIVATE` for another company's company page. `projectId` must be one of `:companyId`'s projects (404 otherwise). 409 `SHOWCASE_ALREADY_LISTED` if that app is already under that slug. 201 with the listing. |
-| GET | `/submissions?projectId=` | Every listing this company has made, any page; `projectId` narrows to one app (its settings page). |
-| DELETE | `/submissions/:listingId` | Withdraw. |
-
-Validation lives in `showcaseSubmissionSchema` (`src/services/showcase.ts`):
-every URL must parse as http(s), `builtWith`/`category` must be offered
-options or are dropped, tags normalised and capped at 8.
+| GET | `/public/showcase?limit=60` | Public apps, featured first then newest. |
+| GET | `/public/showcase/collections/:slug` | `{collection, projects}`, approved and not hidden. 404 unknown slug; an empty event resolves. |
+| GET | `/public/showcase/apps/:slug` | One app with `customHtml`, `userEmail`. `collection` is the public stand-in when public, else its first visible event. |
 
 ### Agent (deploy token) — `src/routes/agentApps.routes.ts`
 
-The agent-facing equivalent of the submitter endpoints above, for an AI
-agent that has a deploy token and an app name but no dashboard session and
-no `projectId`. Mounted under the same `/apps/:appName/…` control plane as
-env vars and rollback — see that file's header comment and
-`middleware/deployTokenContext.ts`.
+| Method | Path | Notes |
+| --- | --- | --- |
+| PUT | `/apps/:appName/showcase` | App from the token + `:appName`. 201 newly placed (or revived from rejected), 200 already there (merged). Reply: the listing + `status` + one-line `next` ("Live at …", "Awaiting the organiser's approval…", or the rejection reason; "Details updated." prefix on 200). 404 `SHOWCASE_COLLECTION_UNKNOWN`. |
+
+**Body** (agent and console): `collectionSlug` (absent/`""` = gallery),
+`code`, `name`, `tagline`, `creatorName`, `description`, `story`,
+`creatorProfile`, `contactEmail`, `builtWith`, `category`, `tags[]`, `screenshotUrls[]` (or `screenshotUrl`),
+`videoUrl`, `customHtml`. **Merge semantics:** absent = untouched,
+`""` = cleared; `name`/`tagline`/`creatorName` required on first submit only.
+`whatItDoes`/`whyBuilt` still accepted as aliases for the older skill.
+Validation (`appDetailsInputSchema`): http(s) URLs, unknown
+`builtWith`/`category` dropped, tags capped at 8, `customHtml` ≤ 50k.
+
+```bash
+curl -X PUT "https://ship.embarko.ai/api/apps/my-app/showcase" \
+  -H "Authorization: Bearer $DEPLOY_TOKEN" -H "Content-Type: application/json" \
+  -d '{"collectionSlug":"walkover","code":"Z3H63FRD","name":"My App","tagline":"One line","creatorName":"Jane"}'
+```
+
+### Company (proxy token + membership) — `src/routes/showcase.routes.ts`
+
+All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 otherwise).
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| PUT | `/apps/:appName/showcase` | Body: `collectionSlug, name, tagline, creatorName` required; same optional fields as `POST .../submissions`. No `projectId` — the app is already resolved from the deploy token + `:appName`. 404 `SHOWCASE_COLLECTION_UNKNOWN` for an unknown slug; 403 `SHOWCASE_COLLECTION_PRIVATE` for another company's company page. **Create-or-update**: if this app is already listed on that page, updates the existing listing instead of 409ing — an agent re-running the same prompt to fix a tagline or swap a screenshot shouldn't have to withdraw and relist. 201 on create, 200 on update, both with the listing. |
+| POST | `/collections` `{slug, title, intro?}` | Create event; reply has `submitCode`. 409 `SHOWCASE_SLUG_TAKEN`. |
+| GET | `/collections` | Public stand-in first, then own events with `submitCode`, `counts: {total, publicCount, pending}`. |
+| GET | `/collections/:id` | Plus `projects[]` with `status`, `rejectionReason` (every status for an event). |
+| DELETE | `/collections/:id` | Events only (409 `SHOWCASE_PUBLIC_PAGE`), while empty (409 `SHOWCASE_COLLECTION_NOT_EMPTY`). |
+| PATCH | `/collections/:id/projects/:listingId` `{approve}` / `{reject, reason?}` / `{isPrivate}` / `{remove}` | Event: review a pending listing (409 `SHOWCASE_LISTING_NOT_PENDING` otherwise), hide/unhide (200), remove (204). Public page: hide/remove unpublishes own app, unhide republishes; review 409 `SHOWCASE_PUBLIC_PAGE`. |
+| GET | `/pages` | Where an app can go: public stand-in, then every event. |
+| POST | `/submissions` | Agent body + `projectId` **or** `appSlug` (slug, `<slug>.embarko.app`, URL, or custom domain). Same 201/200 replies with `status`, `next`. |
+| GET | `/submissions?projectId=` | Every placement of the company's apps, with status. |
+| DELETE | `/submissions/:listingId` | Withdraw. `listingId` = `AppDetails` id (public) or event listing id. |
 
-This is the one path where a listing's content can be changed after it's
-made (see "Deliberately not done" below) — deliberately, since re-running
-an agent prompt is the expected way a listing gets corrected on this path,
-there being no console for it to edit in instead.
+### Admin (super admin) — `src/routes/adminShowcase.routes.ts`
 
-### Admin (proxy token + super admin) — `src/routes/adminShowcase.routes.ts`
-
-Same gate as `admin.routes.ts`: 404, never 403, for non-admins. Oversight
-only; nothing here approves anything.
+404, never 403, for non-admins.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/admin/showcase/collections?type=&q=&page=&limit=` | Every page, paginated `{items, page, limit, total, totalPages}`, each with `companyName` (via proxy, TTL-cached). |
-| GET | `/admin/showcase/projects?collectionId=&q=&page=&limit=` | Every listing, with `submitterCompany`, `ownerCompany`. |
-| PATCH | `/admin/showcase/projects/:id` `{featured}` | The admin's one lever on a listing. |
+| GET | `/admin/showcase/collections?q=&page=&limit=` | Every event, with `companyName`. |
+| GET | `/admin/showcase/projects?collectionId=&q=&page=&limit=` | Every app with details and listing `status`. `collectionId=public` or an event id narrows. |
+| PATCH | `/admin/showcase/projects/:id` `{featured}` | The only admin lever. No admin approve. |
 
-Every mutating company action writes an `AuditLog` row
-(`showcase.collection.create/delete`,
-`showcase.listing.create/withdraw/hide/show/remove`). Company-page reservation
-is not audited: it is a side effect of company creation, not a user action.
+Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
+`showcase.listing.create/update/withdraw/approve/reject/hide/show/remove`.
 
 ## Config
 
 | Env | Default | Purpose |
 | --- | --- | --- |
-| `APP_PUBLIC_DOMAIN` | `embarko.app` | Hostname deployed apps are served under as `<slug>.<domain>`; used to derive `appUrl`. Read directly in `resolveAppUrl` (`src/services/showcase.ts`) — no dedicated config file for one constant. |
+| `APP_PUBLIC_DOMAIN` | `embarko.app` | Derives `appUrl`. |
+| `FRONTEND_ORIGIN` | `http://localhost:3000` | Page link in the reply's `next`. |
 
 ## Frontend (hostnsoft)
 
-- Public pages (`app/showcase/*`) read `/public/showcase/*` server-side via
-  `app/lib/showcase.ts`. `/showcase/<slug>` is the collection page. Every
-  "list your app" CTA points at the console.
-- Console `/app/showcase`: the company's own page, "create a public board"
-  form, plus "Your listed apps" with withdraw. `/app/showcase/<collectionId>`:
-  the page's listings with hide/show. `/app/showcase/submit`: pick a page
-  from `GET .../showcase/pages` (or arrive with `?page=<slug>`) → pick one
-  of the company's deployed apps → details → live.
-- Admin `/admin/showcase`: "Pages" tab (type filter, search) and "Listed
-  apps" tab (feature).
+- Public `app/showcase/*` reads `/public/showcase/*` via `app/lib/showcase.ts`,
+  filtering out apps without a screenshot. The app page's "Contact Dev"
+  form posts to `app/api/showcase/contact`, which reads `userEmail`
+  server-side and relays to `POST /public/customer-query` with `toEmail`,
+  `name`, `appSlug`. The API mails the developer through the viasocket flow
+  (`Webhook.SHOWCASE_CONTACT_EMAIL`) only when `toEmail` equals that app's
+  `contactEmail` (404 `SHOWCASE_NO_CONTACT` otherwise), and keeps a
+  customer-query row for admins.
+- Console `/app/showcase`: public stand-in, events with a "N to review" tag,
+  create event. `/app/showcase/<id>`: submit code (copyable), "Requests"
+  with Approve / Reject (optional reason), then listed apps with
+  hide/show/remove. `/app/showcase/submit`: gallery or event (optional code
+  field) → app → details. Owner's app page shows status and reason.
+- `app/lib/showcasePrompt.ts` carries the code when the organiser shares
+  the prompt and tells the agent to report "awaiting approval".
+- Admin `/admin/showcase`: events, apps with status, feature toggle.
+- Agent docs: `content/docs/api.md` (#showcase), `content/docs/docs.md`.
 
-## Migration note (2026-09-16)
+## Migrations
 
-`20260916120000_showcase_open_pages` drops `status`, `reviewedAt`,
-`reviewedBy`, `rejectionReason` and `token`, and adds `type` defaulting to
-`public`. Every collection that existed before — pending or rejected
-included — is therefore a live public board after the migration. Company
-pages for existing companies are created lazily, on the first
-company-scoped request the dashboard makes for them.
+- `20260930090000_showcase_v3`: drops `ShowcaseCollection` / `ShowcaseProject`
+  (no data carried), creates the three tables with the approval columns and
+  `submitCode`; company pages and their auto-creation hooks removed.
 
 ## Deliberately not done
 
-- No admin edit of a listing's content, and no admin hide — the organiser
-  hides or removes, the owner withdraws.
-- No editing a listing or a page's title/intro after it's made via the
-  console — the agent path (`PUT /apps/:appName/showcase`) is the one
-  exception, since an agent has no console to withdraw-and-relist from.
-- No spam control on public boards beyond the organiser's hide switch and
-  the fact that every submitter is a logged-in company member with a real
-  deployed project.
+- No admin edit / approve / hide; no notifications; no code rotation; no
+  per-event "approval off" switch.
+- `customHtml` stored raw; the panel sanitises on render.
+- No spam control beyond approval, the hide switch, and every submitter
+  being a logged-in member or deploy token with a real project.

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { PUBLIC_ORDER, PUBLIC_WHERE, collectionSummary, toPublicCollection, toPublicProject } from "../services/showcase";
+import { GALLERY_ORDER, PUBLIC_PAGE, WITH_PROJECT, eventSummary, toPublicApp, toPublicEvent } from "../services/showcase";
 
 // Open, read-only half of Showcase — see docs/showcase.md. Every write is on
 // an authenticated router. Mounted before publicDocsRouter (which serves
@@ -10,52 +10,35 @@ export const publicShowcaseRouter = Router();
 
 const listQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(60) });
 
-// GET /public/showcase — public listings, featured first then newest.
+// GET /public/showcase — the home gallery: public apps, featured first then newest.
 publicShowcaseRouter.get("/public/showcase", async (req, res) => {
   const { limit } = listQuerySchema.parse(req.query);
-  const projects = await prisma.showcaseProject.findMany({
-    where: PUBLIC_WHERE,
-    orderBy: [...PUBLIC_ORDER],
-    take: limit,
-    include: { collection: { select: { id: true, slug: true, title: true, type: true } } },
-  });
-  res.json(projects.map((p) => toPublicProject(p, p.collection)));
+  const apps = await prisma.appDetails.findMany({ where: { isPublic: true }, orderBy: [...GALLERY_ORDER], take: limit, include: WITH_PROJECT });
+  res.json(apps.map((a) => toPublicApp(a, PUBLIC_PAGE)));
 });
 
-// GET /public/showcase/collections — collections with ≥1 public listing.
-publicShowcaseRouter.get("/public/showcase/collections", async (_req, res) => {
-  const counts = await prisma.showcaseProject.groupBy({ by: ["collectionId"], where: PUBLIC_WHERE, _count: { _all: true } });
-  if (counts.length === 0) return res.json([]);
-  const collections = await prisma.showcaseCollection.findMany({
-    where: { id: { in: counts.map((c) => c.collectionId) } },
-    orderBy: { title: "asc" },
-  });
-  const countById = new Map(counts.map((c) => [c.collectionId, c._count._all]));
-  res.json(collections.map((c) => toPublicCollection(c, countById.get(c.id) ?? 0)));
-});
-
-// GET /public/showcase/collections/:slug — an empty page still resolves.
+// GET /public/showcase/collections/:slug — an empty event page still resolves.
 publicShowcaseRouter.get("/public/showcase/collections/:slug", async (req, res) => {
-  const collection = await prisma.showcaseCollection.findUnique({ where: { slug: String(req.params.slug).toLowerCase() } });
-  if (!collection) return res.status(404).json({ error: "Collection not found" });
+  const event = await prisma.showcaseEvent.findUnique({ where: { slug: String(req.params.slug).toLowerCase() } });
+  if (!event) return res.status(404).json({ error: "Collection not found" });
 
-  const projects = await prisma.showcaseProject.findMany({
-    where: { collectionId: collection.id, isPrivate: false },
-    orderBy: [...PUBLIC_ORDER],
+  const listings = await prisma.showcaseEventListing.findMany({
+    where: { eventId: event.id, status: "approved", isHidden: false },
+    include: { app: { include: WITH_PROJECT } },
   });
-  const summary = collectionSummary(collection);
-  res.json({
-    collection: toPublicCollection(collection, projects.length),
-    projects: projects.map((p) => toPublicProject(p, summary)),
-  });
+  const apps = listings
+    .map((l) => l.app)
+    .sort((a, b) => Number(b.featured) - Number(a.featured) || b.createdAt.getTime() - a.createdAt.getTime());
+  const page = eventSummary(event);
+  res.json({ collection: toPublicEvent(event, apps.length), projects: apps.map((a) => toPublicApp(a, page)) });
 });
 
-// GET /public/showcase/apps/:slug — a hidden listing 404s like an unknown one.
+// GET /public/showcase/apps/:slug — an app shown nowhere 404s like an unknown one.
 publicShowcaseRouter.get("/public/showcase/apps/:slug", async (req, res) => {
-  const project = await prisma.showcaseProject.findFirst({
-    where: { slug: String(req.params.slug), ...PUBLIC_WHERE },
-    include: { collection: { select: { id: true, slug: true, title: true, type: true } } },
+  const app = await prisma.appDetails.findFirst({
+    where: { project: { slug: String(req.params.slug).toLowerCase() } },
+    include: { ...WITH_PROJECT, listings: { where: { status: "approved", isHidden: false }, orderBy: { createdAt: "asc" }, include: { event: true } } },
   });
-  if (!project) return res.status(404).json({ error: "Project not found" });
-  res.json(toPublicProject(project, project.collection));
+  if (!app || (!app.isPublic && app.listings.length === 0)) return res.status(404).json({ error: "Project not found" });
+  res.json(toPublicApp(app, app.isPublic ? PUBLIC_PAGE : eventSummary(app.listings[0].event)));
 });

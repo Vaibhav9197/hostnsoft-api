@@ -5,8 +5,6 @@ import { loadCompanyContext } from "../middleware/companyContext";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { getCompanyById, listMyCompanies, createCompany } from "../lib/msg91";
 import { ensureBillingForCompany } from "../services/billingCustomer";
-import { ensureCompanyCollection } from "../services/showcase";
-import { logger } from "../lib/logger";
 
 export const companiesRouter = Router();
 
@@ -63,16 +61,7 @@ companiesRouter.post("/companies", requireProxyToken, async (req, res) => {
     email: input.email ?? req.proxyIdentity?.email ?? null,
   });
 
-  // Reserve /showcase/<company-slug> right away (docs/showcase.md). Same
-  // best-effort stance as billing: the company exists, so a local DB hiccup
-  // here must not surface as a failed creation. loadCompanyContext retries
-  // it on the first scoped request.
-  const showcase = await ensureCompanyCollection(company, req.userId!).catch((err) => {
-    logger.warn(`[showcase] company page reservation failed for ${company.id}: ${String(err)}`);
-    return null;
-  });
-
-  res.status(201).json({ ...company, billing, showcaseSlug: showcase?.slug ?? null });
+  res.status(201).json({ ...company, billing });
 });
 
 companiesRouter.get("/companies/:companyId", requireProxyToken, loadCompanyContext, async (req, res) => {

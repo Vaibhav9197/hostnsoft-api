@@ -1,20 +1,20 @@
+import crypto from "node:crypto";
 import { z } from "zod";
-import type { Project, ShowcaseCollection, ShowcaseProject } from "@prisma/client";
+import type { AppDetails, Project, ShowcaseEvent, ShowcaseEventListing } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
-import { TtlCache } from "../lib/ttlCache";
-import { logger } from "../lib/logger";
 
-// Shared by the public/company/admin showcase routers — see docs/showcase.md.
+// Shared by the public/company/admin/agent showcase routers — see
+// docs/showcase.md. Two places an app can be shown: the PUBLIC home gallery
+// (AppDetails.isPublic) and EVENT pages (ShowcaseEventListing rows).
 
-// ---- type & options
+// ---- types & options
 
-// company: reserved for the company at creation, only its own apps. public:
-// a public board,
-// created from the console, open to every company's apps.
-export const SHOWCASE_TYPES = ["company", "public"] as const;
-export type ShowcaseType = (typeof SHOWCASE_TYPES)[number];
-export const showcaseTypeSchema = z.enum(SHOWCASE_TYPES);
+export type ShowcaseType = "public" | "event";
+
+// An event listing's review state. Only approved ones are public.
+export const LISTING_STATUSES = ["pending", "approved", "rejected"] as const;
+export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const SHOWCASE_CATEGORIES = [
   "AI Tool",
@@ -28,12 +28,26 @@ export const SHOWCASE_CATEGORIES = [
 ] as const;
 export const SHOWCASE_TOOLS = ["Claude", "Codex", "Cursor", "Lovable", "Replit", "Other"] as const;
 
-// ---- collection slug
+// The panel models every place an app is shown as a "page" with an id and a
+// slug. The public gallery isn't a row, so it gets this fixed stand-in:
+// id "public" in company-scoped routes, empty slug (its URL is /showcase).
+export const PUBLIC_PAGE_ID = "public";
+export const PUBLIC_PAGE = { slug: "", title: "Embarko Showcase", type: "public" } as const satisfies PageSummary;
+export type PageSummary = { slug: string; title: string; type: ShowcaseType };
+
+export function eventSummary(e: Pick<ShowcaseEvent, "slug" | "title">): PageSummary {
+  return { slug: e.slug, title: e.title, type: "event" };
+}
+
+// ---- event slug
 
 // Reserved: routes that would collide under /showcase/<slug> on the frontend.
-const RESERVED_SLUGS = new Set(["apps", "submit", "collections", "admin", "api", "new", "edit", "embarko", "hostnsoft"]);
+const RESERVED_SLUGS = new Set([
+  "app", "apps", "submit", "collections", "admin", "api", "new", "edit", "embarko", "hostnsoft",
+  "public", "event", "events", "tag", "category",
+]);
 
-export const collectionSlugSchema = z
+export const eventSlugSchema = z
   .string()
   .trim()
   .toLowerCase()
@@ -42,96 +56,30 @@ export const collectionSlugSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, digits and single dashes only")
   .refine((s) => !RESERVED_SLUGS.has(s), "That slug is reserved");
 
-// ---- company page
+// ---- submit code
 
-const SLUG_MAX = 40;
-
-function slugifyCollection(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/[\s-]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, SLUG_MAX)
-    .replace(/-$/, "");
+// 8 chars from an alphabet without 0/O/1/I, so it survives being read aloud.
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export function generateSubmitCode(): string {
+  const bytes = crypto.randomBytes(8);
+  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 }
 
-// A slug for a company page, derived from the company name, suffixed until
-// free. Falls back to the company id when the name yields nothing usable.
-export async function uniqueCompanySlug(name: string, companyId: string): Promise<string> {
-  let base = slugifyCollection(name);
-  if (!collectionSlugSchema.safeParse(base).success) base = slugifyCollection(`company-${companyId}`);
-  if (!collectionSlugSchema.safeParse(base).success) base = `company-${Date.now()}`;
+// Optional on every submit: matching the event's code approves at once. A
+// wrong code isn't an error — the listing just waits for the organiser.
+export const submitCodeSchema = z.string().trim().toUpperCase().max(32).optional();
 
-  const taken = new Set(
-    (
-      await prisma.showcaseCollection.findMany({
-        where: { OR: [{ slug: base }, { slug: { startsWith: `${base}-` } }] },
-        select: { slug: true },
-      })
-    ).map((r) => r.slug)
-  );
-  if (!taken.has(base)) return base;
-  for (let n = 2; n < 1000; n++) {
-    const candidate = `${base.slice(0, SLUG_MAX - String(n).length - 1)}-${n}`;
-    if (!taken.has(candidate)) return candidate;
-  }
-  return `${base.slice(0, SLUG_MAX - 14)}-${Date.now()}`;
-}
-
-// Every company gets its page the moment we learn of the company: from
-// POST /companies, and (for proxy-made companies that never pass there) at
-// login. Idempotent; the unique slug race is absorbed by retrying once.
-export async function ensureCompanyCollection(
-  company: { id: string; name: string },
-  createdBy: string
-): Promise<ShowcaseCollection> {
-  const existing = await prisma.showcaseCollection.findFirst({ where: { companyId: company.id, type: "company" } });
-  if (existing) return existing;
-
+// Create an event with a fresh code, retrying once if the code collides
+// (a slug collision is the caller's 409).
+export async function createEvent(data: { slug: string; title: string; intro: string | null; companyId: string; createdBy: string }): Promise<ShowcaseEvent> {
   for (let attempt = 0; ; attempt++) {
-    const slug = await uniqueCompanySlug(company.name, company.id);
     try {
-      return await prisma.showcaseCollection.create({
-        data: { slug, title: company.name, intro: null, type: "company", companyId: company.id, createdBy },
-      });
+      return await prisma.showcaseEvent.create({ data: { ...data, submitCode: generateSubmitCode() } });
     } catch (err) {
-      if (!isUniqueConstraintViolation(err) || attempt >= 2) throw err;
-      const raced = await prisma.showcaseCollection.findFirst({ where: { companyId: company.id, type: "company" } });
-      if (raced) return raced;
+      if (!isUniqueConstraintViolation(err) || attempt >= 1) throw err;
+      if (await prisma.showcaseEvent.findUnique({ where: { slug: data.slug } })) throw err;
     }
   }
-}
-
-// Cached "already has a page" answer so the middleware costs a Redis hit,
-// not a DB query, per request. Short TTL, because Redis can outlive the DB
-// row (a dev reset, a restore): a stale "ready" only ever delays the page
-// by minutes, and a miss just re-checks the DB.
-const companyPageReady = new TtlCache<boolean>("showcasePageReady", 10 * 60 * 1000);
-
-// Cheap pre-check for the middleware: true once a page is known to exist.
-export async function hasCompanyPage(companyId: string): Promise<boolean> {
-  return (await companyPageReady.get(companyId)) === true;
-}
-
-// Never-throwing form for hot paths: loadCompanyContext (every company-scoped
-// request) and POST /companies. Existing companies, which predate showcase,
-// pick up their page on the first scoped request made for them.
-export async function ensureCompanyPage(company: { id: string; name: string }, createdBy: string): Promise<void> {
-  try {
-    if (await companyPageReady.get(company.id)) return;
-    await ensureCompanyCollection(company, createdBy);
-    await companyPageReady.getOrLoad(company.id, async () => true);
-  } catch (err) {
-    logger.warn(`[showcase] company page reservation failed for ${company.id}: ${String(err)}`);
-  }
-}
-
-// Who may list an app on a collection: anyone on a public board, only the
-// owner on a company page.
-export function canListOn(collection: Pick<ShowcaseCollection, "type" | "companyId">, companyId: string): boolean {
-  return collection.type === "public" || collection.companyId === companyId;
 }
 
 // ---- app URL
@@ -139,14 +87,9 @@ export function canListOn(collection: Pick<ShowcaseCollection, "type" | "company
 // Not its own config file for one constant — see env.ts for the same pattern.
 const APP_PUBLIC_DOMAIN = (process.env.APP_PUBLIC_DOMAIN ?? "embarko.app").replace(/^https?:\/\//, "");
 
-// The hostname an app is served under when it has no custom domain.
-// Exported so services/projectSlugChange.ts can recognise (and rewrite)
-// exactly those listing snapshots that point at a slug that just changed,
-// without having to rebuild this string — and get it subtly wrong — there.
-//
-// Every app is on APP_PUBLIC_DOMAIN. The app.embarko.ai -> embarko.app
-// move is complete, so the per-project fork on createdAt that used to
-// pick between the two suffixes is gone.
+// The hostname an app is served under when it has no custom domain. Exported
+// so services/projectSlugChange.ts can recognise (and rewrite) exactly those
+// snapshots that point at a slug that just changed.
 export function platformAppUrl(slug: string): string {
   return `https://${slug}.${APP_PUBLIC_DOMAIN}`;
 }
@@ -203,28 +146,68 @@ const optionalOneOf = (allowed: readonly string[]) =>
     .nullable()
     .optional();
 
-export const showcaseSubmissionSchema = z.object({
-  collectionSlug: collectionSlugSchema,
-  projectId: z.string().trim().min(1),
-  name: z.string().trim().min(1, "App name is required").max(80),
-  tagline: z.string().trim().min(1, "Tell us what it does").max(160),
-  whatItDoes: optionalText(4000),
-  whyBuilt: optionalText(600),
-  creatorName: z.string().trim().min(1, "Creator name is required").max(80),
+// The app's details — written once per app, reused on every page. Every
+// field is optional on the wire: a later submit is a MERGE, so an agent can
+// send just a screenshotUrl. Empty string clears a field. name, tagline and
+// creatorName are required on the first submit (see upsertAppDetails).
+export const appDetailsInputSchema = z.object({
+  name: z.string().trim().min(1, "App name is required").max(80).optional(),
+  tagline: z.string().trim().min(1, "Tell us what it does").max(160).optional(),
+  description: optionalText(4000),
+  story: optionalText(600),
+  creatorName: z.string().trim().min(1, "Creator name is required").max(80).optional(),
   creatorProfile: optionalUrl,
+  // "Contact Dev" recipient. Opt-in; "" clears it.
+  contactEmail: z.string().trim().toLowerCase().max(254).transform((s) => s || null).nullable().optional()
+    .pipe(z.string().email().nullable().optional()),
   builtWith: optionalOneOf(SHOWCASE_TOOLS),
   category: optionalOneOf(SHOWCASE_CATEGORIES),
-  tags: z.array(z.string()).max(20).optional().default([]),
+  tags: z.array(z.string()).max(20).optional(),
   videoUrl: optionalUrl,
+  // Several allowed; screenshotUrl (one) still accepted as an alias.
+  screenshotUrls: z.array(httpUrl).max(10).optional(),
   screenshotUrl: optionalUrl,
+  customHtml: optionalText(50_000),
 });
+export type AppDetailsInput = z.infer<typeof appDetailsInputSchema>;
+
+// Where to show it: an event's slug, or empty for the public gallery.
+const whereSchema = z.union([z.literal(""), eventSlugSchema]).optional().default("");
+
+// Which app: its id, or — since a person usually only has the address —
+// its slug, hostname or full URL (appSlug). One of the two is required.
+export const showcaseSubmissionSchema = appDetailsInputSchema
+  .extend({
+    collectionSlug: whereSchema,
+    code: submitCodeSchema,
+    projectId: z.string().trim().min(1).optional(),
+    appSlug: z.string().trim().min(1).max(500).optional(),
+  })
+  .refine((b) => b.projectId || b.appSlug, { message: "projectId or appSlug is required", path: ["appSlug"] });
 export type ShowcaseSubmissionInput = z.infer<typeof showcaseSubmissionSchema>;
 
-// Same fields as showcaseSubmissionSchema minus projectId: the agent path
-// addresses its app via the deploy token + :appName (req.project), not an id
-// it would have to already know.
-export const agentShowcaseSubmissionSchema = showcaseSubmissionSchema.omit({ projectId: true });
-export type AgentShowcaseSubmissionInput = z.infer<typeof agentShowcaseSubmissionSchema>;
+// "my-app", "my-app.embarko.app", "https://my-app.embarko.app/x" and a
+// custom domain all resolve to the company's project, or null.
+export async function findCompanyProject(companyId: string, ref: { projectId?: string; appSlug?: string }): Promise<Project | null> {
+  if (ref.projectId) return prisma.project.findFirst({ where: { id: ref.projectId, companyId } });
+  if (!ref.appSlug) return null;
+
+  let host = ref.appSlug.toLowerCase().replace(/^https?:\/\//, "").split(/[/?#]/)[0];
+  if (host.endsWith(`.${APP_PUBLIC_DOMAIN}`)) host = host.slice(0, -(APP_PUBLIC_DOMAIN.length + 1));
+  if (!host.includes(".")) return prisma.project.findFirst({ where: { slug: host, companyId } });
+
+  const domain = await prisma.domain.findFirst({ where: { domain: host, project: { companyId } }, include: { project: true } });
+  return domain?.project ?? null;
+}
+
+// Same minus projectId: the agent path addresses its app via the deploy
+// token + :appName (req.project), not an id it would have to already know.
+// ponytail: whatItDoes/whyBuilt are the pre-v3 names the published skill
+// still sends; drop the aliases once embarko-ai/skill says description/story.
+export const agentShowcaseSubmissionSchema = appDetailsInputSchema
+  .extend({ collectionSlug: whereSchema, code: submitCodeSchema })
+  .extend({ whatItDoes: optionalText(4000), whyBuilt: optionalText(600) })
+  .transform((b) => ({ ...b, description: b.description ?? b.whatItDoes, story: b.story ?? b.whyBuilt }));
 
 export function normalizeTags(raw: string[]): string[] {
   const seen = new Set<string>();
@@ -239,41 +222,187 @@ export function normalizeTags(raw: string[]): string[] {
   return [...seen].slice(0, 8);
 }
 
-function slugifyName(text: string): string {
-  return (
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .slice(0, 60) || "app"
-  );
+// ---- writes shared by the dashboard and agent paths
+
+// Where a submission lands. null = unknown event slug.
+export type PlaceTarget = { kind: "public" } | { kind: "event"; event: ShowcaseEvent };
+
+export async function resolveTarget(collectionSlug: string): Promise<PlaceTarget | null> {
+  if (!collectionSlug) return { kind: "public" };
+  const event = await prisma.showcaseEvent.findUnique({ where: { slug: collectionSlug } });
+  return event ? { kind: "event", event } : null;
 }
 
-// Two identical names is ordinary; the second gets a suffix.
-export async function uniqueProjectSlug(name: string): Promise<string> {
-  const base = slugifyName(name);
-  const taken = new Set(
-    (
-      await prisma.showcaseProject.findMany({
-        where: { OR: [{ slug: base }, { slug: { startsWith: `${base}-` } }] },
-        select: { slug: true },
-      })
-    ).map((r) => r.slug)
-  );
-  if (!taken.has(base)) return base;
-  for (let n = 2; n < 1000; n++) {
-    const candidate = `${base}-${n}`;
-    if (!taken.has(candidate)) return candidate;
+// First submit must carry the three fields every card needs.
+const firstSubmitSchema = z.object({
+  name: z.string({ required_error: "App name is required" }),
+  tagline: z.string({ required_error: "Tell us what it does" }),
+  creatorName: z.string({ required_error: "Creator name is required" }),
+});
+
+// An app's details with the project it belongs to — the slug lives there.
+export type AppWithProject = AppDetails & { project: Pick<Project, "slug"> };
+export const WITH_PROJECT = { project: { select: { slug: true } } } as const;
+
+// screenshotUrls wins; a lone screenshotUrl means [url], "" means clear.
+function screenshotUrlsJson(input: AppDetailsInput): string | undefined {
+  if (input.screenshotUrls !== undefined) return JSON.stringify(input.screenshotUrls);
+  if (input.screenshotUrl === undefined) return undefined;
+  return JSON.stringify(input.screenshotUrl ? [input.screenshotUrl] : []);
+}
+
+// Create or merge the app's one AppDetails row from a submission. Only the
+// fields present in the body change (undefined = leave alone, "" = clear),
+// so an agent can update a single field. appUrl is re-derived every time.
+export async function upsertAppDetails(
+  project: Pick<Project, "id" | "slug">,
+  companyId: string,
+  userId: string,
+  input: AppDetailsInput
+): Promise<AppWithProject> {
+  const sent = {
+    name: input.name,
+    tagline: input.tagline,
+    description: input.description,
+    story: input.story,
+    screenshotUrls: screenshotUrlsJson(input),
+    videoUrl: input.videoUrl,
+    creatorName: input.creatorName,
+    creatorProfile: input.creatorProfile,
+    contactEmail: input.contactEmail,
+    builtWith: input.builtWith,
+    category: input.category,
+    tagsJson: input.tags === undefined ? undefined : JSON.stringify(normalizeTags(input.tags)),
+    customHtml: input.customHtml,
+  };
+  const fields = {
+    ...Object.fromEntries(Object.entries(sent).filter(([, v]) => v !== undefined)),
+    appUrl: await resolveAppUrl(project),
+  };
+
+  const existing = await prisma.appDetails.findUnique({ where: { projectId: project.id } });
+  if (existing) return prisma.appDetails.update({ where: { id: existing.id }, data: fields, include: WITH_PROJECT });
+
+  const first = firstSubmitSchema.parse(input);
+
+  // Two submits racing on the same project: whichever row won gets the merge.
+  try {
+    return await prisma.appDetails.create({
+      data: { ...fields, ...first, projectId: project.id, companyId, createdBy: userId },
+      include: WITH_PROJECT,
+    });
+  } catch (err) {
+    if (!isUniqueConstraintViolation(err)) throw err;
+    const raced = await prisma.appDetails.findUnique({ where: { projectId: project.id } });
+    if (!raced) throw err;
+    return prisma.appDetails.update({ where: { id: raced.id }, data: fields, include: WITH_PROJECT });
   }
-  return `${base}-${Date.now()}`;
 }
 
-// ---- visibility
+// One place an app is shown, in the shape the panel calls a "listing".
+export type Placement = {
+  id: string;
+  page: PageSummary;
+  collectionId: string;
+  submittedBy: string;
+  isHidden: boolean;
+  status: ListingStatus;
+  rejectionReason: string | null;
+  createdAt: Date;
+};
 
-export const PUBLIC_WHERE = { isPrivate: false } as const;
-export const PUBLIC_ORDER = [{ featured: "desc" }, { createdAt: "desc" }] as const;
+export function publicPlacement(app: AppDetails): Placement {
+  return {
+    id: app.id,
+    page: PUBLIC_PAGE,
+    collectionId: PUBLIC_PAGE_ID,
+    submittedBy: app.createdBy,
+    isHidden: false,
+    status: "approved",
+    rejectionReason: null,
+    createdAt: app.createdAt,
+  };
+}
+
+export function eventPlacement(l: ShowcaseEventListing, event: Pick<ShowcaseEvent, "id" | "slug" | "title">): Placement {
+  return {
+    id: l.id,
+    page: eventSummary(event),
+    collectionId: event.id,
+    submittedBy: l.addedBy,
+    isHidden: l.isHidden,
+    status: l.status as ListingStatus,
+    rejectionReason: l.rejectionReason,
+    createdAt: l.createdAt,
+  };
+}
+
+// Show the app on the target. `created` is false when it was already there
+// (the dashboard 409s on that; the agent path treats it as an update).
+// On an event the listing is approved at once when the code matches or the
+// app belongs to the organiser; otherwise it waits for review. A rejected
+// listing submitted again goes back into the queue (or straight in, with
+// the code), reason cleared.
+export async function placeApp(
+  app: AppWithProject,
+  target: PlaceTarget,
+  userId: string,
+  code?: string
+): Promise<{ app: AppWithProject; placement: Placement; created: boolean }> {
+  if (target.kind === "public") {
+    if (app.isPublic) return { app, placement: publicPlacement(app), created: false };
+    const updated = await prisma.appDetails.update({ where: { id: app.id }, data: { isPublic: true }, include: WITH_PROJECT });
+    return { app: updated, placement: publicPlacement(updated), created: true };
+  }
+
+  const event = target.event;
+  const autoApprove = (!!code && code === event.submitCode) || app.companyId === event.companyId;
+  const status: ListingStatus = autoApprove ? "approved" : "pending";
+
+  try {
+    const listing = await prisma.showcaseEventListing.create({
+      data: { appDetailsId: app.id, eventId: event.id, addedBy: userId, status },
+    });
+    return { app, placement: eventPlacement(listing, event), created: true };
+  } catch (err) {
+    if (!isUniqueConstraintViolation(err)) throw err;
+    let listing = await prisma.showcaseEventListing.findUniqueOrThrow({
+      where: { appDetailsId_eventId: { appDetailsId: app.id, eventId: event.id } },
+    });
+    if (listing.status === "rejected") {
+      listing = await prisma.showcaseEventListing.update({
+        where: { id: listing.id },
+        data: { status, rejectionReason: null, reviewedBy: null, reviewedAt: null, addedBy: userId },
+      });
+      return { app, placement: eventPlacement(listing, event), created: true };
+    }
+    return { app, placement: eventPlacement(listing, event), created: false };
+  }
+}
+
+// The one line a submitter (usually an agent) needs after a submit: was it
+// an update, is it live, or is it waiting. `pageUrl` is the page's full URL.
+export function submitNext(p: Pick<Placement, "status" | "rejectionReason">, pageUrl: string, created: boolean): string {
+  const updated = created ? "" : "Details updated. ";
+  if (p.status === "approved") return `${updated}Live at ${pageUrl}. Give the person that link.`;
+  if (p.status === "pending")
+    return `${updated}Awaiting the organiser's approval. It appears at ${pageUrl} once approved; resend with the event's code to skip the wait.`;
+  return `${updated}The organiser turned it down${p.rejectionReason ? `: ${p.rejectionReason}` : ""}. Fix that and send again.`;
+}
+
+// Every place one app is shown, public first then events newest first.
+export function placementsOf(app: AppDetails & { listings: (ShowcaseEventListing & { event: ShowcaseEvent })[] }): Placement[] {
+  const out: Placement[] = [];
+  if (app.isPublic) out.push(publicPlacement(app));
+  for (const l of [...app.listings].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())) {
+    out.push(eventPlacement(l, l.event));
+  }
+  return out;
+}
+
+// ---- ordering
+
+export const GALLERY_ORDER = [{ featured: "desc" }, { createdAt: "desc" }] as const;
 
 // ---- serialization
 
@@ -286,92 +415,112 @@ export function parseTags(json: string): string[] {
   }
 }
 
-export type CollectionSummary = { id: string; slug: string; title: string; type: string };
-
-export function collectionSummary(c: Pick<ShowcaseCollection, "id" | "slug" | "title" | "type">): CollectionSummary {
-  return { id: c.id, slug: c.slug, title: c.title, type: c.type };
-}
-
 // Public shape: no owner, no submitter.
-export function toPublicProject(p: ShowcaseProject, collection: CollectionSummary) {
+export function toPublicApp(app: AppWithProject, page: PageSummary) {
   return {
+    id: app.id,
+    slug: app.project.slug,
+    name: app.name,
+    tagline: app.tagline,
+    description: app.description,
+    story: app.story,
+    appUrl: app.appUrl,
+    screenshotUrls: parseTags(app.screenshotUrls),
+    // ponytail: panel renders one image; drop this once it reads screenshotUrls.
+    screenshotUrl: parseTags(app.screenshotUrls)[0] ?? null,
+    videoUrl: app.videoUrl,
+    creatorName: app.creatorName,
+    creatorProfile: app.creatorProfile,
+    userEmail: app.contactEmail,
+    builtWith: app.builtWith,
+    category: app.category,
+    tags: parseTags(app.tagsJson),
+    customHtml: app.customHtml,
+    featured: app.featured,
+    createdAt: app.createdAt.toISOString(),
+    collection: page,
+  };
+}
+
+// Owner/admin shape: one placement of the app, with provenance and visibility.
+export function toOwnerListing(app: AppWithProject, p: Placement) {
+  return {
+    ...toPublicApp(app, p.page),
     id: p.id,
-    slug: p.slug,
-    name: p.name,
-    tagline: p.tagline,
-    whatItDoes: p.whatItDoes,
-    whyBuilt: p.whyBuilt,
-    appUrl: p.appUrl,
-    screenshotUrl: p.screenshotUrl,
-    videoUrl: p.videoUrl,
-    creatorName: p.creatorName,
-    creatorProfile: p.creatorProfile,
-    builtWith: p.builtWith,
-    category: p.category,
-    tags: parseTags(p.tagsJson),
-    featured: p.featured,
     createdAt: p.createdAt.toISOString(),
-    collection: { slug: collection.slug, title: collection.title, type: collection.type as ShowcaseType },
-  };
-}
-
-// Owner/admin shape: public shape plus provenance and visibility.
-export function toOwnerProject(p: ShowcaseProject, collection: CollectionSummary) {
-  return {
-    ...toPublicProject(p, collection),
     collectionId: p.collectionId,
-    projectId: p.projectId,
-    companyId: p.companyId,
+    projectId: app.projectId,
+    companyId: app.companyId,
     submittedBy: p.submittedBy,
-    isPrivate: p.isPrivate,
-    updatedAt: p.updatedAt.toISOString(),
+    isPrivate: p.isHidden,
+    status: p.status,
+    rejectionReason: p.rejectionReason,
+    updatedAt: app.updatedAt.toISOString(),
   };
 }
 
-export function toPublicCollection(c: ShowcaseCollection, projectCount: number) {
+export function toPublicEvent(e: ShowcaseEvent, projectCount: number) {
   return {
-    slug: c.slug,
-    title: c.title,
-    intro: c.intro,
-    type: c.type as ShowcaseType,
+    slug: e.slug,
+    title: e.title,
+    intro: e.intro,
+    type: "event" as const,
     projectCount,
-    createdAt: c.createdAt.toISOString(),
+    createdAt: e.createdAt.toISOString(),
   };
 }
 
-export type CollectionCounts = { total: number; publicCount: number };
+// total = every listing; publicCount = approved and not hidden; pending = awaiting review.
+export type EventCounts = { total: number; publicCount: number; pending: number };
 
 // Owner/admin shape — adds ownership. Never public.
-export function toOwnerCollection(c: ShowcaseCollection, counts: CollectionCounts) {
+export function toOwnerEvent(e: ShowcaseEvent, counts: EventCounts) {
   return {
-    id: c.id,
-    slug: c.slug,
-    title: c.title,
-    intro: c.intro,
-    type: c.type as ShowcaseType,
-    companyId: c.companyId,
-    createdBy: c.createdBy,
-    createdAt: c.createdAt.toISOString(),
-    updatedAt: c.updatedAt.toISOString(),
+    id: e.id,
+    slug: e.slug,
+    title: e.title,
+    intro: e.intro,
+    type: "event" as const,
+    companyId: e.companyId,
+    createdBy: e.createdBy,
+    submitCode: e.submitCode,
+    createdAt: e.createdAt.toISOString(),
+    updatedAt: e.updatedAt.toISOString(),
     counts,
   };
 }
 
-// One grouped query for a batch of collections, for list and detail views.
-export async function collectionCounts(collectionIds: string[]): Promise<Map<string, CollectionCounts>> {
-  const map = new Map<string, CollectionCounts>();
-  for (const id of collectionIds) map.set(id, { total: 0, publicCount: 0 });
-  if (collectionIds.length === 0) return map;
+// The public gallery in the owner "page" shape, for a company: how many of
+// its apps are public. Lets the panel keep one code path for every page.
+export function toOwnerPublicPage(companyId: string, publicApps: number, since: Date) {
+  return {
+    id: PUBLIC_PAGE_ID,
+    ...PUBLIC_PAGE,
+    intro: null,
+    companyId,
+    createdBy: "",
+    createdAt: since.toISOString(),
+    updatedAt: since.toISOString(),
+    counts: { total: publicApps, publicCount: publicApps, pending: 0 },
+  };
+}
 
-  const rows = await prisma.showcaseProject.groupBy({
-    by: ["collectionId", "isPrivate"],
-    where: { collectionId: { in: collectionIds } },
+// One grouped query for a batch of events, for list and detail views.
+export async function eventCounts(eventIds: string[]): Promise<Map<string, EventCounts>> {
+  const map = new Map<string, EventCounts>();
+  for (const id of eventIds) map.set(id, { total: 0, publicCount: 0, pending: 0 });
+  if (eventIds.length === 0) return map;
+
+  const rows = await prisma.showcaseEventListing.groupBy({
+    by: ["eventId", "isHidden", "status"],
+    where: { eventId: { in: eventIds } },
     _count: { _all: true },
   });
   for (const r of rows) {
-    const c = map.get(r.collectionId)!;
+    const c = map.get(r.eventId)!;
     c.total += r._count._all;
-    if (!r.isPrivate) c.publicCount += r._count._all;
+    if (r.status === "approved" && !r.isHidden) c.publicCount += r._count._all;
+    if (r.status === "pending") c.pending += r._count._all;
   }
   return map;
 }

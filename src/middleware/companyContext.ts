@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
 import { getCompanyById, isCompanyMember } from "../lib/msg91";
-import { ensureCompanyPage, hasCompanyPage } from "../services/showcase";
 
 // Authorizes the caller for :companyId (a proxy company id) by asking proxy
 // for membership. Must run after requireProxyToken, which sets req.userId.
@@ -28,15 +27,5 @@ export async function loadCompanyContext(
   }
 
   req.company = { id: companyId };
-
-  // Every company the dashboard touches passes through here, whichever way
-  // it became active (login default, stored choice, or a switch), so this
-  // is where a company that predates Showcase gets its reserved page. One
-  // Redis read once the page exists; never throws (docs/showcase.md).
-  if (!(await hasCompanyPage(companyId))) {
-    const company = await getCompanyById(companyId).catch(() => null);
-    if (company) await ensureCompanyPage(company, req.userId!);
-  }
-
   next();
 }

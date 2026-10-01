@@ -28,18 +28,11 @@ import { requireDeployToken, loadAppBySlug, loadAppById } from "../middleware/de
 import { startSlugChange, resolveSlugChangeStatus, SLUG_CHANGE_STATUS } from "../services/slugChangeFlow";
 import { cooldownRemainingMs as slugChangeCooldownRemainingMs } from "../services/projectSlugChange";
 import { platformAppUrl } from "../services/showcase";
+import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { logAudit } from "../services/audit";
 import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { applyCurrentConfig, rollbackToDeployment, type RedeployOutcome } from "../services/redeploy";
-import {
-  agentShowcaseSubmissionSchema,
-  canListOn,
-  collectionSummary,
-  normalizeTags,
-  resolveAppUrl,
-  toOwnerProject,
-  uniqueProjectSlug,
-} from "../services/showcase";
+import { agentShowcaseSubmissionSchema, placeApp, resolveTarget, submitNext, toOwnerListing, upsertAppDetails } from "../services/showcase";
 import { classifyDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
 import { verifyDomainDns } from "../lib/dnsVerify";
 import { activateDomain, pushCustomDomainConfig } from "../services/customDomainActivation";
@@ -767,80 +760,35 @@ const SHOWCASE_COLLECTION_UNKNOWN = {
   code: "SHOWCASE_COLLECTION_UNKNOWN",
 } as const;
 
-// List (or update) this app on a showcase page — the agent-facing half of
-// what the dashboard's POST /companies/:companyId/showcase/submissions
-// does, addressed by app name instead of a projectId the agent doesn't
-// have. PUT rather than POST: calling it again with new details updates the
-// existing listing instead of erroring, since an agent iterating on
+// Show (or update) this app on Showcase — the agent-facing half of what the
+// dashboard's POST /companies/:companyId/showcase/submissions does,
+// addressed by app name instead of a projectId the agent doesn't have. No
+// collectionSlug means the public gallery; an event's slug means that event.
+// PUT rather than POST: calling it again with new details refreshes the
+// app's details instead of erroring, since an agent iterating on
 // tagline/screenshot shouldn't have to look up and delete first.
 appScoped.put("/showcase", async (req, res) => {
   const body = agentShowcaseSubmissionSchema.parse(req.body);
   const project = req.project!;
 
-  const collection = await prisma.showcaseCollection.findUnique({ where: { slug: body.collectionSlug } });
-  if (!collection) return res.status(404).json(SHOWCASE_COLLECTION_UNKNOWN);
-  if (!canListOn(collection, req.company!.id)) {
-    return res.status(403).json({
-      error: `/showcase/${collection.slug} is a company's own page; only its apps can be listed there`,
-      code: "SHOWCASE_COLLECTION_PRIVATE",
-    });
-  }
+  const target = await resolveTarget(body.collectionSlug);
+  if (!target) return res.status(404).json(SHOWCASE_COLLECTION_UNKNOWN);
 
-  const data = {
-    collectionId: collection.id,
-    projectId: project.id,
-    companyId: req.company!.id,
-    submittedBy: req.userId!,
-    name: body.name,
-    tagline: body.tagline,
-    appUrl: await resolveAppUrl(project),
-    whatItDoes: body.whatItDoes ?? null,
-    whyBuilt: body.whyBuilt ?? null,
-    creatorName: body.creatorName,
-    creatorProfile: body.creatorProfile ?? null,
-    builtWith: body.builtWith ?? null,
-    category: body.category ?? null,
-    tagsJson: JSON.stringify(normalizeTags(body.tags)),
-    videoUrl: body.videoUrl ?? null,
-    screenshotUrl: body.screenshotUrl ?? null,
-  };
-
-  const existing = await prisma.showcaseProject.findUnique({
-    where: { collectionId_projectId: { collectionId: collection.id, projectId: project.id } },
-  });
-
-  if (existing) {
-    const listing = await prisma.showcaseProject.update({ where: { id: existing.id }, data });
-    await logAudit({
-      actorUserId: req.userId,
-      companyId: req.company!.id,
-      projectId: project.id,
-      action: "showcase.listing.update",
-      details: `${listing.slug} -> /showcase/${collection.slug} (${agentActor(req)})`,
-    });
-    return res.json(toOwnerProject(listing, collectionSummary(collection)));
-  }
-
-  // A name collision retries once with a fresh slug; a (collectionId, projectId) collision doesn't.
-  let listing = null;
-  for (let attempt = 0; attempt < 2 && !listing; attempt++) {
-    const slug = await uniqueProjectSlug(body.name);
-    try {
-      listing = await prisma.showcaseProject.create({ data: { ...data, slug } });
-    } catch (err) {
-      if (!isUniqueConstraintViolation(err)) throw err;
-      if (attempt === 1) {
-        return res.status(409).json({ error: "That app is already listed there", code: "SHOWCASE_ALREADY_LISTED" });
-      }
-    }
-  }
+  const app = await upsertAppDetails(project, req.company!.id, req.userId!, body);
+  const placed = await placeApp(app, target, req.userId!, body.code);
+  const where = target.kind === "public" ? "/showcase" : `/showcase/${target.event.slug}`;
+  const { status } = placed.placement;
 
   await logAudit({
     actorUserId: req.userId,
     companyId: req.company!.id,
     projectId: project.id,
-    action: "showcase.listing.create",
-    details: `${listing!.slug} -> /showcase/${collection.slug} (${agentActor(req)})`,
+    action: placed.created ? (target.kind === "public" ? "showcase.public.add" : "showcase.listing.create") : "showcase.listing.update",
+    details: `${app.project.slug} -> ${where} [${status}] (${agentActor(req)})`,
   });
-  res.status(201).json(toOwnerProject(listing!, collectionSummary(collection)));
+
+  // Event listings wait for the organiser unless the code was given, so the
+  // agent needs to know whether "listed" means live yet.
+  const next = submitNext(placed.placement, `${FRONTEND_ORIGIN}${where}`, placed.created);
+  res.status(placed.created ? 201 : 200).json({ ...toOwnerListing(placed.app, placed.placement), next });
 });

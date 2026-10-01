@@ -117,22 +117,21 @@ async function isLive(project: Project): Promise<boolean | "unknown"> {
 }
 
 /**
- * Showcase listings snapshot the app's URL at submit time (see
+ * AppDetails snapshots the app's URL at submit time (see
  * services/showcase.ts — deliberately a snapshot, not a live join). Only
- * rewrite the ones that were pointing at the OLD platform hostname: a
- * listing snapshotted against a custom domain is still accurate, and
- * "fixing" it would silently swap a listing's address for a different
- * one the submitter never chose.
+ * rewrite it when it was pointing at the OLD platform hostname: a snapshot
+ * taken against a custom domain is still accurate, and "fixing" it would
+ * silently swap the app's address for one the submitter never chose.
  */
 async function repointShowcaseListings(projectId: string, previousSlug: string, nextSlug: string): Promise<void> {
   const stale = platformAppUrl(previousSlug);
   const fresh = platformAppUrl(nextSlug);
-  const { count } = await prisma.showcaseProject.updateMany({
+  const { count } = await prisma.appDetails.updateMany({
     where: { projectId, appUrl: stale },
     data: { appUrl: fresh },
   });
   if (count > 0) {
-    logger.info(`[projectSlugChange] repointed ${count} showcase listing(s) from ${stale} to ${fresh}`);
+    logger.info(`[projectSlugChange] repointed app details from ${stale} to ${fresh}`);
   }
 }
 

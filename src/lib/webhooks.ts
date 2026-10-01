@@ -12,6 +12,11 @@ export enum Webhook {
   // Mails default deploy tokens to a person — see src/services/publicTokenRequest.ts.
   // Payload documented in docs/email-templates/deploy-token.md.
   DEPLOY_TOKEN_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
+  // "Contact Dev" on a Showcase app page, relayed by POST /public/customer-query
+  // with `toEmail` — see src/routes/publicCustomerQuery.routes.ts. Same
+  // payload shape as the token mail (`to`, `subject`, `variables.content`).
+  // ponytail: same flow URL; give it its own flow when the mail needs its own look.
+  SHOWCASE_CONTACT_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
 }
 
 export class WebhookError extends Error { }
