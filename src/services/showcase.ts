@@ -158,7 +158,9 @@ export const appDetailsInputSchema = z.object({
   story: optionalText(600),
   creatorName: z.string().trim().min(1, "Creator name is required").max(80).optional(),
   creatorProfile: optionalUrl,
-  // "Contact Dev" recipient. Opt-in; "" clears it.
+  // "Contact Dev" recipients — one per contributor. Opt-in; [] clears them.
+  // contactEmail (one) still accepted as an alias; "" clears.
+  contributorEmails: z.array(z.string().trim().toLowerCase().email().max(254)).max(10).optional(),
   contactEmail: z.string().trim().toLowerCase().max(254).transform((s) => s || null).nullable().optional()
     .pipe(z.string().email().nullable().optional()),
   builtWith: optionalOneOf(SHOWCASE_TOOLS),
@@ -252,6 +254,12 @@ function screenshotUrlsJson(input: AppDetailsInput): string | undefined {
   return JSON.stringify(input.screenshotUrl ? [input.screenshotUrl] : []);
 }
 
+function contributorEmailsJson(input: AppDetailsInput): string | undefined {
+  if (input.contributorEmails !== undefined) return JSON.stringify([...new Set(input.contributorEmails)]);
+  if (input.contactEmail === undefined) return undefined;
+  return JSON.stringify(input.contactEmail ? [input.contactEmail] : []);
+}
+
 // Create or merge the app's one AppDetails row from a submission. Only the
 // fields present in the body change (undefined = leave alone, "" = clear),
 // so an agent can update a single field. appUrl is re-derived every time.
@@ -271,7 +279,7 @@ export async function upsertAppDetails(
     videoUrl: input.videoUrl,
     creatorName: input.creatorName,
     creatorProfile: input.creatorProfile,
-    contactEmail: input.contactEmail,
+    contributorEmails: contributorEmailsJson(input),
     builtWith: input.builtWith,
     category: input.category,
     tagsJson: input.tags === undefined ? undefined : JSON.stringify(normalizeTags(input.tags)),
@@ -440,7 +448,9 @@ export function toPublicApp(app: AppWithProject, page: PageSummary) {
     videoUrl: app.videoUrl,
     creatorName: app.creatorName,
     creatorProfile: app.creatorProfile,
-    userEmail: app.contactEmail,
+    contributorEmails: parseTags(app.contributorEmails),
+    // ponytail: panel reads one address; drop once it reads contributorEmails.
+    userEmail: parseTags(app.contributorEmails)[0] ?? null,
     builtWith: app.builtWith,
     category: app.category,
     tags: parseTags(app.tagsJson),

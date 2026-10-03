@@ -36,7 +36,7 @@ token); the console form does the same.
 | companyId, createdBy | Owner company and first writer. |
 | tagline, creatorName | Required on the first submit only. `name` in the body writes `Project.name`; replies read it from there. |
 | description, story, creatorProfile | Optional. |
-| contactEmail | Optional, opt-in. Returned as `userEmail`; the panel's server-side contact route reads it for "Contact Dev" and strips it before render. |
+| contributorEmails | JSON `string[]`, max 10, opt-in — everyone who built the app, the person showcasing it first (the main contact). Input `contributorEmails[]`, or `contactEmail` as a one-item alias. Returned as `contributorEmails` plus `userEmail` (the first); the panel's server-side contact route reads it for "Contact Dev" and strips it before render. |
 | appUrl | Active custom domain, else `https://<slug>.<APP_PUBLIC_DOMAIN>`. Never typed; re-derived each submit, repointed by `services/projectSlugChange.ts` on rename. |
 | screenshotUrls, videoUrl | Optional. JSON-encoded `string[]`, max 10; returned as `screenshotUrls` plus `screenshotUrl` (the first) for the panel, which shows one and only apps that have it. Input `screenshotUrls[]`, or `screenshotUrl` as a one-item alias. |
 | builtWith | `SHOWCASE_TOOLS`: Claude, Codex, Cursor, Lovable, Replit, Other. |
@@ -118,7 +118,7 @@ Mounted before the docs router and every `requireProxyToken` router.
 
 **Body** (agent and console): `collectionSlug` (absent/`""` = gallery),
 `code`, `name`, `tagline`, `creatorName`, `description`, `story`,
-`creatorProfile`, `contactEmail`, `builtWith`, `category`, `tags[]`, `screenshotUrls[]` (or `screenshotUrl`),
+`creatorProfile`, `contributorEmails[]` (or `contactEmail`), `builtWith`, `category`, `tags[]`, `screenshotUrls[]` (or `screenshotUrl`),
 `videoUrl`, `customHtml`. **Merge semantics:** absent = untouched,
 `""` = cleared; `tagline`/`creatorName` required on first submit only; `name` updates `Project.name`.
 `whatItDoes`/`whyBuilt` still accepted as aliases for the older skill.
@@ -174,8 +174,8 @@ Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
   form posts to `app/api/showcase/contact`, which reads `userEmail`
   server-side and relays to `POST /public/customer-query` with `toEmail`,
   `name`, `appSlug`. The API mails the developer through the viasocket flow
-  (`Webhook.SHOWCASE_CONTACT_EMAIL`) only when `toEmail` equals that app's
-  `contactEmail` (404 `SHOWCASE_NO_CONTACT` otherwise), and keeps a
+  (`Webhook.SHOWCASE_CONTACT_EMAIL`) to every address in that app's
+  `contributorEmails` only when `toEmail` is one of them (404 `SHOWCASE_NO_CONTACT` otherwise), and keeps a
   customer-query row for admins.
 - Console `/app/showcase`: public stand-in, events with a "N to review" tag,
   create event. `/app/showcase/<id>`: submit code (copyable), "Requests"

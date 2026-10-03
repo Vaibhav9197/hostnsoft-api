@@ -10,6 +10,7 @@ import { createLimiter, type LimitScope } from "../lib/rateLimit";
 import { logger } from "../lib/logger";
 import { Webhook, callWebhook } from "../lib/webhooks";
 import { prisma } from "../lib/prisma";
+import { parseTags } from "../services/showcase";
 import {
   createFeatureRequest,
   featureRequestMessageSchema,
@@ -32,8 +33,9 @@ const publicSchema = z.object({
   message: featureRequestMessageSchema,
   email: z.string().trim().email().max(254),
   // "Contact Dev" (panel: app/api/showcase/contact): the visitor's name, the
-  // app, and the developer to mail. toEmail must be that app's contactEmail —
-  // the API never mails an arbitrary address.
+  // app, and the developer to mail. toEmail must be one of that app's
+  // contributorEmails — the API never mails an arbitrary address. Every listed
+  // contributor gets the mail.
   name: z.string().trim().max(120).optional(),
   appSlug: z.string().trim().max(63).optional(),
   toEmail: z.string().trim().toLowerCase().email().max(254).optional(),
@@ -42,21 +44,22 @@ const publicSchema = z.object({
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-// Mails the developer. Returns false when toEmail isn't the app's own
-// contactEmail (nothing is sent) — the caller answers 404 like a missing app.
+// Mails the developers. Returns false when toEmail isn't one of the app's
+// contributorEmails (nothing is sent) — the caller answers 404 like a missing app.
 async function mailDeveloper(body: z.infer<typeof publicSchema>): Promise<boolean> {
   const app = body.appSlug
-    ? await prisma.appDetails.findFirst({ where: { project: { slug: body.appSlug } }, select: { contactEmail: true, project: { select: { name: true } } } })
+    ? await prisma.appDetails.findFirst({ where: { project: { slug: body.appSlug } }, select: { contributorEmails: true, project: { select: { name: true } } } })
     : null;
-  if (!app?.contactEmail || app.contactEmail !== body.toEmail) return false;
+  const emails = app ? parseTags(app.contributorEmails) : [];
+  if (!body.toEmail || !emails.includes(body.toEmail)) return false;
 
   const from = body.name ? `${escapeHtml(body.name)} (${escapeHtml(body.email)})` : escapeHtml(body.email);
   await callWebhook(Webhook.SHOWCASE_CONTACT_EMAIL, {
-    to: [{ email: app.contactEmail }],
-    subject: `${body.name || body.email} wants to contact you about ${app.project.name}`,
+    to: emails.map((email) => ({ email })),
+    subject: `${body.name || body.email} wants to contact you about ${app!.project.name}`,
     variables: {
       content:
-        `<p><b>${from}</b> sent you a message about <b>${escapeHtml(app.project.name)}</b> on Embarko Showcase:</p>` +
+        `<p><b>${from}</b> sent you a message about <b>${escapeHtml(app!.project.name)}</b> on Embarko Showcase:</p>` +
         `<p style="white-space:pre-wrap">${escapeHtml(body.message)}</p>` +
         `<p style="color:#888;font-size:12px">Reply to <a href="mailto:${escapeHtml(body.email)}">${escapeHtml(body.email)}</a> to answer. ` +
         `You get these because your app lists a contact email on Embarko Showcase.</p>`,

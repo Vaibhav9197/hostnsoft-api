@@ -264,7 +264,8 @@ model AppDetails {
   videoUrl       String?
   creatorName    String
   creatorProfile String?
-  contactEmail   String?
+  // JSON-encoded string[] — several people can contribute to one app.
+  contributorEmails  String @default("[]")
   // Offered options only; enforced in services/showcase.ts (SQLite has no
   // enums under Prisma 5).
   builtWith String?
