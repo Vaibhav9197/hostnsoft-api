@@ -14,6 +14,8 @@ import {
 } from "../lib/lago";
 import { listStripePaymentMethods, detachStripePaymentMethod } from "../lib/stripe";
 import { setUpBillingForCompany } from "../services/billingCustomer";
+import { syncFooterForCompany } from "../services/footerSync";
+import { logger } from "../lib/logger";
 import { createCustomerSchema, changePlanSchema } from "../validation/billing.validation";
 
 // Billing is per company (docs/billing.md). Lago holds one customer per
@@ -191,6 +193,15 @@ billingRouter.put(
       action: "billing.plan.change",
       details: `${current.plan_code} -> ${plan_code}`,
     });
+
+    // An upgrade is live now, so its apps lose the footer now — in the
+    // background, never holding up this response. A downgrade is still
+    // pending here; the sync then finds the old plan and changes nothing,
+    // and the timer applies it when Lago switches (services/footerSync.ts).
+    const liveNow = subscription.status === "active" && subscription.plan_code === plan_code;
+    syncFooterForCompany(companyId, liveNow ? plan_code === FREE_PLAN_CODE : undefined).catch((e) =>
+      logger.error(`[billing] footer sync after plan change failed for ${companyId}: ${(e as Error).message}`)
+    );
 
     res.json(subscription);
   }

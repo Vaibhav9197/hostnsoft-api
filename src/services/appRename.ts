@@ -18,6 +18,7 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
+import { isFreePlanForDeploy } from "./companyPlan";
 
 export type RenameAppResult =
   | { renamed: true; imageTag: string; domain: string }
@@ -59,6 +60,9 @@ export async function renameApp(project: Project, newSlug: string): Promise<Rena
   // the running task was actually given (see customDomainActivation.ts),
   // and a rename must never quietly shrink an app.
   const memoryMb = Math.max(project.memoryMb, current.memoryMb ?? 0);
+  // The new job is built from scratch: without this a free app comes back
+  // under its new name without its footer.
+  const isFreePlan = await isFreePlanForDeploy(project.companyId);
 
   let response: Response;
   try {
@@ -71,6 +75,7 @@ export async function renameApp(project: Project, newSlug: string): Promise<Rena
         memoryMb,
         customDomains: activeDomains.map((d) => d.domain),
         envVars,
+        isFreePlan,
       }),
     });
   } catch (e) {

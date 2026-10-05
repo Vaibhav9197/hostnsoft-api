@@ -17,6 +17,7 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
+import { isFreePlanForDeploy } from "./companyPlan";
 
 interface PushResult {
   pushed: boolean;
@@ -45,6 +46,11 @@ interface AppConfig {
   // (active before the config is actually live) if that call ever
   // stopped meaning "fully applied."
   deploymentId?: string;
+  // Whether the app keeps its "hosted on Embarko" footer. hostnsoft-deploy
+  // rebuilds the whole job from this push, so leaving it out strips the
+  // footer from a free app. pushAppConfig fills it in from the company's
+  // plan when a caller doesn't pass it.
+  isFreePlan?: boolean;
 }
 
 // Low-level call into hostnsoft-deploy's config-push endpoint — pushes a
@@ -60,6 +66,7 @@ interface AppConfig {
 // vs. "accepted, applying asynchronously" (deploymentId set — rollback).
 // This is a real asymmetry, not an oversight — see AppConfig's comment.
 export async function pushAppConfig(project: Project, config: AppConfig): Promise<PushResult> {
+  const isFreePlan = config.isFreePlan ?? (await isFreePlanForDeploy(project.companyId));
   let response: Response;
   try {
     response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
@@ -68,7 +75,7 @@ export async function pushAppConfig(project: Project, config: AppConfig): Promis
         "Content-Type": "application/json",
         "X-Internal-Secret": INTERNAL_API_SECRET,
       },
-      body: JSON.stringify(config),
+      body: JSON.stringify({ ...config, isFreePlan }),
     });
   } catch (e) {
     const message = (e as Error).message;
@@ -105,7 +112,10 @@ export async function pushAppConfig(project: Project, config: AppConfig): Promis
   return { pushed: true };
 }
 
-export async function pushCustomDomainConfig(projectId: string): Promise<PushResult> {
+// Also the "re-apply the current config as-is" push for anything else that
+// needs one without a new deployment row — the footer sync passes the
+// plan it already looked up as isFreePlan.
+export async function pushCustomDomainConfig(projectId: string, isFreePlan?: boolean): Promise<PushResult> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
 
   // currentDeploymentId is kept up to date on every successful deploy AND
@@ -160,6 +170,7 @@ export async function pushCustomDomainConfig(projectId: string): Promise<PushRes
     memoryMb: effectiveMemoryMb,
     customDomains: activeDomains.map((d) => d.domain),
     envVars,
+    isFreePlan,
   });
 }
 

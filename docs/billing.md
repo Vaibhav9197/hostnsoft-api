@@ -146,10 +146,50 @@ then). `billing_time` is `anniversary`.
 - 409 `BILLING_ALREADY_ON_PLAN`.
 - 404 `BILLING_CUSTOMER_NOT_FOUND` — no active subscription.
 
+On success it also starts the footer sync for the company in the
+background (see below), so an upgrade removes the footer from its apps
+straight away. The response doesn't wait for it.
+
 ### DELETE /companies/:companyId/billing/subscription
 Cancel. Assigns `FREE_PLAN_CODE`; never terminates the subscription, so a
 company always has an active plan. 409 `BILLING_ALREADY_ON_PLAN` if already
 on free.
+
+## Plan and the app footer
+
+Free-plan apps show a "hosted on Embarko" footer (with the Embarko logo);
+any paid plan removes it. hostnsoft-deploy injects it — see its
+`docs/Footer-flag-req.md`. This service decides who gets it:
+
+- **Free** = `isCompanyOnFreePlan` (`src/services/companyPlan.ts`): no
+  active subscription, no Lago customer at all, or `FREE_PLAN_CODE`.
+  `null` when Lago can't be asked.
+- **Every deploy and push carries it.** The deploy claim, every config push
+  (`pushAppConfig` — custom domains, env vars, rollback) and every rename
+  send `isFreePlan`. Before this, pushes and renames left it out and
+  hostnsoft-deploy rebuilt free apps without their footer. When Lago is
+  unreachable they send `false` (never block or change a deploy for a
+  paying customer); the sync below corrects it once Lago answers.
+- **Footer sync** (`src/services/footerSync.ts`). For each of a company's
+  deployed, claimed apps it calls hostnsoft-deploy's
+  `POST /internal/apps/:slug/footer { show }`, which flips the footer in
+  seconds with no restart. On `409 config_push_required` (static app, app
+  with no footer sidecar to switch on, or one deployed before the flag
+  existed) it re-pushes the app's current config with the plan instead —
+  no new deployment row, but a container app restarts once — and writes a
+  `project.footer.push` audit row. Runs:
+  - after a successful `PUT .../billing/subscription` (upgrades are live
+    at once; a pending downgrade finds the old plan and changes nothing);
+  - every `FOOTER_SYNC_INTERVAL_MS` (6h) for every company with deployed
+    apps, which is what applies a downgrade or cancel at period end, a
+    failed payment, or a plan changed in the Lago console. A company is
+    skipped while its plan matches the last one fully applied, for up to
+    `FOOTER_SYNC_REFRESH_MS` (24h). That record is in memory, so the first
+    run after a restart re-applies everyone.
+  - Lago unreachable → that company is skipped, nothing changes.
+  - Config pushes are spaced by `FOOTER_SYNC_PUSH_GAP_MS` (5s), so the
+    first run after release — every free app needs one push to get the
+    flag mount — doesn't restart everything at once.
 
 ## Errors
 `BillingError` (`billingUtility.ts`) mirrors `ProxyError`: `errorHandler`

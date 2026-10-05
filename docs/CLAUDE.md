@@ -32,6 +32,11 @@ Lago owns plans/customers/subscriptions (customer `external_id` = proxy
 company id); Stripe is called directly only to list payment methods. Nothing
 billing-related is stored locally. See `docs/billing.md`.
 
+The plan also decides the "hosted on Embarko" footer on a company's apps
+(free shows it, paid doesn't): every deploy, config push and rename sends
+`isFreePlan`, and `services/footerSync.ts` flips existing apps on upgrade
+and on a timer. See "Plan and the app footer" in `docs/billing.md`.
+
 ## Data model / hierarchy
 
 **Resolved 2026-09-04: users, companies and membership live on MSG91 proxy,

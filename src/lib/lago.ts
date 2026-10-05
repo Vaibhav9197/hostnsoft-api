@@ -75,7 +75,7 @@ async function lagoRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
 // Internal signals so callers can branch on "not found" / "validation
 // failed" without inspecting messages; anything that escapes a route is
 // translated by the caller into a BillingError.
-class LagoNotFound extends Error { }
+export class LagoNotFound extends Error { }
 class LagoUnprocessable extends Error {
   constructor(message: string, public readonly details: unknown) {
     super(message);
