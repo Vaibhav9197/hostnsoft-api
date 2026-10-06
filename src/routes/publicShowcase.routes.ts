@@ -17,6 +17,17 @@ publicShowcaseRouter.get("/public/showcase", async (req, res) => {
   res.json(apps.map((a) => toPublicApp(a, PUBLIC_PAGE)));
 });
 
+// GET /public/showcase/collections — every event page with its public app
+// count, fullest first. Feeds the "more showcase pages" row on the frontend.
+publicShowcaseRouter.get("/public/showcase/collections", async (_req, res) => {
+  const events = await prisma.showcaseEvent.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: { _count: { select: { listings: { where: { status: "approved", isHidden: false } } } } },
+  });
+  res.json(events.map((e) => toPublicEvent(e, e._count.listings)).sort((a, b) => b.projectCount - a.projectCount));
+});
+
 // GET /public/showcase/collections/:slug — an empty event page still resolves.
 publicShowcaseRouter.get("/public/showcase/collections/:slug", async (req, res) => {
   const event = await prisma.showcaseEvent.findUnique({ where: { slug: String(req.params.slug).toLowerCase() } });

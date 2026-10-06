@@ -112,6 +112,7 @@ Mounted before the docs router and every `requireProxyToken` router.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/public/showcase?limit=60` | Public apps, featured first then newest. |
+| GET | `/public/showcase/collections` | Every event page, most apps first, with `projectCount` (approved and not hidden). |
 | GET | `/public/showcase/collections/:slug` | `{collection, projects}`, approved and not hidden. 404 unknown slug; an empty event resolves. |
 | GET | `/public/showcase/apps/:slug` | One app with `customHtml`, `userEmail`. `collection` is the public stand-in when public, else its first visible event. |
 
