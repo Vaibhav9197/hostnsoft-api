@@ -306,6 +306,11 @@ model ShowcaseEvent {
   // Handed out by the organiser. A submission carrying it is approved at
   // once; without it the organiser reviews. Generated in services/showcase.ts.
   submitCode String @unique
+  // Organiser-supplied HTML shown on the event page, above the apps: rules,
+  // schedule, sponsors. Stored raw, capped at 50k by the API; the panel
+  // renders it in a sandboxed frame with scripts off. The one field an
+  // organiser can change after creating the page.
+  customHtml String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

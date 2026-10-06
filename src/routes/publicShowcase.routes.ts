@@ -29,6 +29,7 @@ publicShowcaseRouter.get("/public/showcase/collections", async (_req, res) => {
 });
 
 // GET /public/showcase/collections/:slug — an empty event page still resolves.
+// The one public read that carries the event's customHtml.
 publicShowcaseRouter.get("/public/showcase/collections/:slug", async (req, res) => {
   const event = await prisma.showcaseEvent.findUnique({ where: { slug: String(req.params.slug).toLowerCase() } });
   if (!event) return res.status(404).json({ error: "Collection not found" });
@@ -41,7 +42,7 @@ publicShowcaseRouter.get("/public/showcase/collections/:slug", async (req, res) 
     .map((l) => l.app)
     .sort((a, b) => Number(b.featured) - Number(a.featured) || b.createdAt.getTime() - a.createdAt.getTime());
   const page = eventSummary(event);
-  res.json({ collection: toPublicEvent(event, apps.length), projects: apps.map((a) => toPublicApp(a, page)) });
+  res.json({ collection: toPublicEvent(event, apps.length, { html: true }), projects: apps.map((a) => toPublicApp(a, page)) });
 });
 
 // GET /public/showcase/apps/:slug — an app shown nowhere 404s like an unknown one.

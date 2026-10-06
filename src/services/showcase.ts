@@ -72,7 +72,14 @@ export const submitCodeSchema = z.string().trim().toUpperCase().max(32).optional
 
 // Create an event with a fresh code, retrying once if the code collides
 // (a slug collision is the caller's 409).
-export async function createEvent(data: { slug: string; title: string; intro: string | null; companyId: string; createdBy: string }): Promise<ShowcaseEvent> {
+export async function createEvent(data: {
+  slug: string;
+  title: string;
+  intro: string | null;
+  customHtml: string | null;
+  companyId: string;
+  createdBy: string;
+}): Promise<ShowcaseEvent> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.showcaseEvent.create({ data: { ...data, submitCode: generateSubmitCode() } });
@@ -131,6 +138,14 @@ const optionalText = (max: number) =>
     .nullable()
     .optional();
 
+// Creator- or organiser-supplied HTML, on an app page (AppDetails) or an
+// event page (ShowcaseEvent). Stored raw: the panel renders it in a
+// sandboxed frame with scripts off, so there is nothing to sanitise here.
+export const CUSTOM_HTML_MAX = 50_000;
+
+// An event's HTML, as the edit route takes it: required, "" or null clears.
+export const eventCustomHtmlSchema = z.string().trim().max(CUSTOM_HTML_MAX).transform((s) => s || null).nullable();
+
 const optionalUrl = z
   .string()
   .trim()
@@ -171,7 +186,7 @@ export const appDetailsInputSchema = z.object({
   // Several allowed; screenshotUrl (one) still accepted as an alias.
   screenshotUrls: z.array(httpUrl).max(10).optional(),
   screenshotUrl: optionalUrl,
-  customHtml: optionalText(50_000),
+  customHtml: optionalText(CUSTOM_HTML_MAX),
 });
 export type AppDetailsInput = z.infer<typeof appDetailsInputSchema>;
 
@@ -488,11 +503,18 @@ export function toOwnerListing(app: AppWithProject, p: Placement) {
   };
 }
 
-export function toPublicEvent(e: ShowcaseEvent, projectCount: number) {
+// `html` adds the event's customHtml. Only the single-event reads ask for
+// it: lists (the submit form's page picker, the console and admin lists)
+// would otherwise carry up to 50k per event that nothing on them shows.
+type EventShapeOptions = { html?: boolean };
+const eventHtml = (e: ShowcaseEvent, opts: EventShapeOptions) => (opts.html ? { customHtml: e.customHtml } : {});
+
+export function toPublicEvent(e: ShowcaseEvent, projectCount: number, opts: EventShapeOptions = {}) {
   return {
     slug: e.slug,
     title: e.title,
     intro: e.intro,
+    ...eventHtml(e, opts),
     type: "event" as const,
     projectCount,
     createdAt: e.createdAt.toISOString(),
@@ -503,12 +525,13 @@ export function toPublicEvent(e: ShowcaseEvent, projectCount: number) {
 export type EventCounts = { total: number; publicCount: number; pending: number };
 
 // Owner/admin shape — adds ownership. Never public.
-export function toOwnerEvent(e: ShowcaseEvent, counts: EventCounts) {
+export function toOwnerEvent(e: ShowcaseEvent, counts: EventCounts, opts: EventShapeOptions = {}) {
   return {
     id: e.id,
     slug: e.slug,
     title: e.title,
     intro: e.intro,
+    ...eventHtml(e, opts),
     type: "event" as const,
     companyId: e.companyId,
     createdBy: e.createdBy,

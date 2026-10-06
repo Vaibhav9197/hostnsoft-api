@@ -12,6 +12,7 @@ import {
   WITH_PROJECT,
   createEvent,
   eventCounts,
+  eventCustomHtmlSchema,
   eventPlacement,
   eventSlugSchema,
   findCompanyProject,
@@ -62,15 +63,22 @@ const createEventSchema = z.object({
   slug: eventSlugSchema,
   title: z.string().trim().min(1).max(80),
   intro: z.string().trim().max(600).optional().nullable(),
+  customHtml: eventCustomHtmlSchema.optional(),
 });
 
 // POST .../collections — create an event page. Live at once, open to every company's apps.
 showcaseRouter.post("/companies/:companyId/showcase/collections", loadCompanyContext, async (req, res) => {
   const body = createEventSchema.parse(req.body);
   try {
-    const event = await createEvent({ ...body, intro: body.intro ?? null, companyId: req.company!.id, createdBy: req.userId! });
+    const event = await createEvent({
+      ...body,
+      intro: body.intro ?? null,
+      customHtml: body.customHtml ?? null,
+      companyId: req.company!.id,
+      createdBy: req.userId!,
+    });
     await audit(req, "showcase.event.create", event.slug);
-    res.status(201).json(toOwnerEvent(event, { total: 0, publicCount: 0, pending: 0 }));
+    res.status(201).json(toOwnerEvent(event, { total: 0, publicCount: 0, pending: 0 }, { html: true }));
   } catch (err) {
     if (isUniqueConstraintViolation(err)) {
       return res.status(409).json({ error: "That slug is already taken", code: "SHOWCASE_SLUG_TAKEN" });
@@ -103,9 +111,30 @@ showcaseRouter.get("/companies/:companyId/showcase/collections/:collectionId", l
     eventCounts([event.id]),
   ]);
   res.json({
-    ...toOwnerEvent(event, counts.get(event.id)!),
+    ...toOwnerEvent(event, counts.get(event.id)!, { html: true }),
     projects: listings.map((l) => toOwnerListing(l.app, eventPlacement(l, event))),
   });
+});
+
+const updateEventSchema = z.object({ customHtml: eventCustomHtmlSchema });
+
+// PATCH .../collections/:collectionId {customHtml} — the one thing an
+// organiser can change after creating an event: the HTML block on its page.
+// Name, address and intro stay fixed. "" or null clears it.
+showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, async (req, res) => {
+  if (req.params.collectionId === PUBLIC_PAGE_ID) {
+    return res.status(409).json({ error: "The public gallery has no page content to edit", code: "SHOWCASE_PUBLIC_PAGE" });
+  }
+  const body = updateEventSchema.parse(req.body);
+  const event = await ownedEventOr404(req, res);
+  if (!event) return;
+
+  const [updated, counts] = await Promise.all([
+    prisma.showcaseEvent.update({ where: { id: event.id }, data: { customHtml: body.customHtml } }),
+    eventCounts([event.id]),
+  ]);
+  await audit(req, "showcase.event.update", `${event.slug}: customHtml ${body.customHtml ? `set (${body.customHtml.length} chars)` : "cleared"}`);
+  res.json(toOwnerEvent(updated, counts.get(event.id)!, { html: true }));
 });
 
 // DELETE .../collections/:collectionId — events only, and only while empty.
