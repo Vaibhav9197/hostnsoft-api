@@ -17,6 +17,9 @@ export enum Webhook {
   // payload shape as the token mail (`to`, `subject`, `variables.content`).
   // ponytail: same flow URL; give it its own flow when the mail needs its own look.
   SHOWCASE_CONTACT_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
+  // Showcase listing pending / approved / rejected — see src/services/showcaseMail.ts.
+  // ponytail: same flow URL as above.
+  SHOWCASE_NOTIFY_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
 }
 
 export class WebhookError extends Error { }

@@ -95,6 +95,11 @@ organiser: PATCH .../projects/:listingId {approve} | {reject, reason?}
 - Public: `/showcase` = `isPublic`, featured first then newest;
   `/showcase/<event>` = approved and not hidden; `/showcase/app/<slug>` = the
   app if public or on any event with an approved visible listing, else 404.
+- Mails (`services/showcaseMail.ts`, viasocket flow, failures only logged):
+  listing enters `pending` → event creator; listing becomes `approved` /
+  `rejected` (reviewed or auto), or app first goes on the public gallery →
+  `contributorEmails`, else the submitter.
+  Re-submitting a still-pending listing without the code mails nobody.
 - Owner: every placement with `status` / `rejectionReason`. **Withdraw**
   flips `isPublic` off or deletes the event listing; `AppDetails` stays.
 

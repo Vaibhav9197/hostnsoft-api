@@ -27,6 +27,7 @@ import {
   toPublicEvent,
   upsertAppDetails,
 } from "../services/showcase";
+import { mailListingDecision } from "../services/showcaseMail";
 
 // Company half of Showcase — see docs/showcase.md. A logged-in member of
 // :companyId acts as ORGANISER of the event pages it created and as
@@ -182,6 +183,7 @@ showcaseRouter.patch(
         },
       });
       await audit(req, approve ? "showcase.listing.approve" : "showcase.listing.reject", `${existing.app.project.slug} @ /showcase/${event.slug}`, existing.app.projectId);
+      void mailListingDecision(event, existing.app, updated);
       return res.json(toOwnerListing(existing.app, eventPlacement(updated, event)));
     }
 

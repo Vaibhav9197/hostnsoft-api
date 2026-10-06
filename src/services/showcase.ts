@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppDetails, Project, ShowcaseEvent, ShowcaseEventListing } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
+import { mailListingDecision, mailPendingListing, mailPublicListed } from "./showcaseMail";
 
 // Shared by the public/company/admin/agent showcase routers — see
 // docs/showcase.md. Two places an app can be shown: the PUBLIC home gallery
@@ -349,6 +350,11 @@ export function eventPlacement(l: ShowcaseEventListing, event: Pick<ShowcaseEven
 
 // Show the app on the target. `created` is false when it was already there
 // (the dashboard 409s on that; the agent path treats it as an update).
+// Fire-and-forget mail for a listing whose status this request just set.
+function notify(event: ShowcaseEvent, app: AppWithProject, listing: ShowcaseEventListing): void {
+  void (listing.status === "pending" ? mailPendingListing(event, app) : mailListingDecision(event, app, listing));
+}
+
 // On an event the listing is approved at once when the code matches or the
 // app belongs to the organiser; otherwise it waits for review. A rejected
 // listing submitted again goes back into the queue (or straight in, with
@@ -362,6 +368,7 @@ export async function placeApp(
   if (target.kind === "public") {
     if (app.isPublic) return { app, placement: publicPlacement(app), created: false };
     const updated = await prisma.appDetails.update({ where: { id: app.id }, data: { isPublic: true }, include: WITH_PROJECT });
+    void mailPublicListed(updated, userId);
     return { app: updated, placement: publicPlacement(updated), created: true };
   }
 
@@ -373,6 +380,7 @@ export async function placeApp(
     const listing = await prisma.showcaseEventListing.create({
       data: { appDetailsId: app.id, eventId: event.id, addedBy: userId, status },
     });
+    notify(event, app, listing);
     return { app, placement: eventPlacement(listing, event), created: true };
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
@@ -384,6 +392,7 @@ export async function placeApp(
         where: { id: listing.id },
         data: { status, rejectionReason: null, reviewedBy: null, reviewedAt: null, addedBy: userId },
       });
+      notify(event, app, listing);
       return { app, placement: eventPlacement(listing, event), created: true };
     }
     // Pending, and this time the code (or ownership) clears it.
@@ -392,6 +401,7 @@ export async function placeApp(
         where: { id: listing.id },
         data: { status: "approved", reviewedAt: new Date() },
       });
+      notify(event, app, listing);
     }
     return { app, placement: eventPlacement(listing, event), created: false };
   }
