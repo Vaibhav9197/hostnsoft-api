@@ -259,7 +259,7 @@ showcaseRouter.post("/companies/:companyId/showcase/submissions", loadCompanyCon
   const project = await findCompanyProject(req.company!.id, body);
   if (!project) return res.status(404).json({ error: "Project not found" });
 
-  const app = await upsertAppDetails(project, req.company!.id, req.userId!, body);
+  const app = await upsertAppDetails(project, req.company!.id, req.userId!, body, target);
   const placed = await placeApp(app, target, req.userId!, body.code);
   const where = target.kind === "public" ? "/showcase" : `/showcase/${target.event.slug}`;
 

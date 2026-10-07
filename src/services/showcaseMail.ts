@@ -6,11 +6,11 @@
  */
 import type { AppDetails, Project, ShowcaseEvent, ShowcaseEventListing } from "@prisma/client";
 import { Webhook, callWebhook } from "../lib/webhooks";
-import { getUserById } from "../lib/msg91";
+import { getUserByEmail, getUserById } from "../lib/msg91";
 import { logger } from "../lib/logger";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 
-type App = Pick<AppDetails, "contributorEmails"> & { project: Pick<Project, "name" | "slug"> };
+type App = Pick<AppDetails, "contributorEmails" | "creatorName"> & { project: Pick<Project, "name" | "slug"> };
 
 // Same as showcase.ts parseTags; duplicated to avoid a circular import.
 function parseTags(json: string): string[] {
@@ -157,4 +157,49 @@ export async function mailListingDecision(event: ShowcaseEvent, app: App, listin
     }),
     `rejected mail for ${app.project.slug} @ ${event.slug}`
   );
+}
+
+// A contributor who has no Embarko account yet: invite them to sign up. Once
+// they do, the public app page credits them by name (services/showcase.ts
+// resolveContributors looks the address up in proxy on every read — nothing
+// about the invite is stored). Mailed only for addresses NEW on this submit
+// (the caller diffs), so re-submitting the same list mails nobody.
+async function mailContributorInvite(email: string, app: App, pageTitle: string): Promise<void> {
+  const name = esc(app.project.name);
+  const url = `${FRONTEND_ORIGIN}/showcase/app/${app.project.slug}`;
+  await send(
+    [email],
+    `You've been added to ${app.project.name} on ${pageTitle}`,
+    layout({
+      title: "You've been added to a project",
+      body:
+        `Hey there,<br><br>` +
+        `<b>${esc(app.creatorName)}</b> added you to the team behind <b>${name}</b> on <b>${esc(pageTitle)}</b>.<br><br>` +
+        `Join the project to get credited by name on the public showcase and own your contribution with the rest of your team. ` +
+        `Sign up with <b>${esc(email)}</b> — that address is how we match you to the project.`,
+      cta: { url: `${FRONTEND_ORIGIN}/login?next=${encodeURIComponent(`/showcase/app/${app.project.slug}`)}`, label: "Join the project" },
+      footer:
+        `You get this because ${esc(app.creatorName)} listed you as a contributor of <b>${name}</b> on Embarko Showcase. ` +
+        `If that's not you, ignore this mail — nothing is created until you sign up. See the project at <a href="${esc(url)}" style="color:#8c959f;">${esc(url)}</a>.`,
+    }),
+    `invite mail for ${email} @ ${app.project.slug}`
+  );
+}
+
+// Looks each newly listed address up in proxy, in parallel, and invites the
+// ones with no account. A lookup that fails is skipped (logged), never
+// mailed: an existing user must not get a "sign up" mail because proxy
+// hiccuped. Fire-and-forget like everything else here.
+export async function inviteNewContributors(emails: string[], app: App, pageTitle: string): Promise<void> {
+  if (emails.length === 0) return;
+  const users = await Promise.all(
+    emails.map((email) =>
+      getUserByEmail(email).catch((err) => {
+        logger.error(`[showcaseMail] contributor lookup failed for ${email}:`, err);
+        return "unknown" as const;
+      })
+    )
+  );
+  const missing = emails.filter((_, i) => users[i] === null);
+  await Promise.all(missing.map((email) => mailContributorInvite(email, app, pageTitle)));
 }

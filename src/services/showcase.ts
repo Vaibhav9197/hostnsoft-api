@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { AppDetails, Project, ShowcaseEvent, ShowcaseEventListing } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
-import { mailListingDecision, mailPendingListing, mailPublicListed } from "./showcaseMail";
+import { getUserByEmail, type ProxyUser } from "../lib/msg91";
+import { logger } from "../lib/logger";
+import { inviteNewContributors, mailListingDecision, mailPendingListing, mailPublicListed } from "./showcaseMail";
 
 // Shared by the public/company/admin/agent showcase routers — see
 // docs/showcase.md. Two places an app can be shown: the PUBLIC home gallery
@@ -252,6 +254,10 @@ export async function resolveTarget(collectionSlug: string): Promise<PlaceTarget
   return event ? { kind: "event", event } : null;
 }
 
+export function pageOf(target: PlaceTarget): PageSummary {
+  return target.kind === "public" ? PUBLIC_PAGE : eventSummary(target.event);
+}
+
 // First submit must carry the fields every card needs (name comes from
 // the project).
 const firstSubmitSchema = z.object({
@@ -279,11 +285,31 @@ function contributorEmailsJson(input: AppDetailsInput): string | undefined {
 // Create or merge the app's one AppDetails row from a submission. Only the
 // fields present in the body change (undefined = leave alone, "" = clear),
 // so an agent can update a single field. appUrl is re-derived every time.
+// Saves the details, then invites contributors listed for the first time on
+// this submit who have no Embarko account (showcaseMail.inviteNewContributors).
+// `target` only names the page in that mail; placing the app is placeApp's job.
 export async function upsertAppDetails(
   project: Pick<Project, "id" | "slug">,
   companyId: string,
   userId: string,
-  input: AppDetailsInput
+  input: AppDetailsInput,
+  target: PlaceTarget
+): Promise<AppWithProject> {
+  const existing = await prisma.appDetails.findUnique({ where: { projectId: project.id } });
+  const saved = await saveAppDetails(project, companyId, userId, input, existing);
+
+  const before = new Set(existing ? parseTags(existing.contributorEmails) : []);
+  const added = parseTags(saved.contributorEmails).filter((e) => !before.has(e));
+  void inviteNewContributors(added, saved, pageOf(target).title);
+  return saved;
+}
+
+async function saveAppDetails(
+  project: Pick<Project, "id" | "slug">,
+  companyId: string,
+  userId: string,
+  input: AppDetailsInput,
+  existing: AppDetails | null
 ): Promise<AppWithProject> {
   if (input.name) await prisma.project.update({ where: { id: project.id }, data: { name: input.name } });
 
@@ -306,7 +332,6 @@ export async function upsertAppDetails(
     appUrl: await resolveAppUrl(project),
   };
 
-  const existing = await prisma.appDetails.findUnique({ where: { projectId: project.id } });
   if (existing) return prisma.appDetails.update({ where: { id: existing.id }, data: fields, include: WITH_PROJECT });
 
   const first = firstSubmitSchema.parse(input);
@@ -484,6 +509,32 @@ export function toPublicApp(app: AppWithProject, page: PageSummary) {
     createdAt: app.createdAt.toISOString(),
     collection: page,
   };
+}
+
+// Contributors who have an Embarko account, by name, for the single-app
+// page. Nothing is stored: every read asks proxy for each listed address
+// in parallel (at most 10 — contributorEmails caps there). An address with
+// no account yet is left out and appears the moment its owner signs up; a
+// failed lookup drops that one person for this read rather than the page.
+// Deliberately not called from list endpoints, which would fan out per app.
+export async function resolveContributors(app: Pick<AppDetails, "contributorEmails">): Promise<{ name: string; email: string }[]> {
+  const emails = parseTags(app.contributorEmails);
+  const users = await Promise.all(
+    emails.map((email) =>
+      getUserByEmail(email).catch((err) => {
+        logger.error(`[showcase] contributor lookup failed for ${email}:`, err);
+        return null;
+      })
+    )
+  );
+  return users.flatMap((u, i) => (u ? [{ name: displayName(u, emails[i]), email: emails[i] }] : []));
+}
+
+// Proxy's name, unless it is blank or is itself an address (accounts made by
+// publicTokenRequest were saved that way) — then the part before the @.
+function displayName(user: ProxyUser, email: string): string {
+  const name = user.name.trim();
+  return name && !name.includes("@") ? name : email.split("@")[0];
 }
 
 // Owner/admin shape: one placement of the app, with provenance and visibility.

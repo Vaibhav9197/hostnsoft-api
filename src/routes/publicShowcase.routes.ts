@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { GALLERY_ORDER, PUBLIC_PAGE, WITH_PROJECT, eventSummary, toPublicApp, toPublicEvent } from "../services/showcase";
+import { GALLERY_ORDER, PUBLIC_PAGE, WITH_PROJECT, eventSummary, resolveContributors, toPublicApp, toPublicEvent } from "../services/showcase";
 
 // Open, read-only half of Showcase — see docs/showcase.md. Every write is on
 // an authenticated router. Mounted before publicDocsRouter (which serves
@@ -46,11 +46,13 @@ publicShowcaseRouter.get("/public/showcase/collections/:slug", async (req, res) 
 });
 
 // GET /public/showcase/apps/:slug — an app shown nowhere 404s like an unknown one.
+// The only read that adds `contributors` (resolved against proxy per request).
 publicShowcaseRouter.get("/public/showcase/apps/:slug", async (req, res) => {
   const app = await prisma.appDetails.findFirst({
     where: { project: { slug: String(req.params.slug).toLowerCase() } },
     include: { ...WITH_PROJECT, listings: { where: { status: "approved", isHidden: false }, orderBy: { createdAt: "asc" }, include: { event: true } } },
   });
   if (!app || (!app.isPublic && app.listings.length === 0)) return res.status(404).json({ error: "Project not found" });
-  res.json(toPublicApp(app, app.isPublic ? PUBLIC_PAGE : eventSummary(app.listings[0].event)));
+  const page = app.isPublic ? PUBLIC_PAGE : eventSummary(app.listings[0].event);
+  res.json({ ...toPublicApp(app, page), contributors: await resolveContributors(app) });
 });

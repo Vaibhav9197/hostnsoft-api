@@ -37,7 +37,7 @@ token); the console form does the same.
 | companyId, createdBy | Owner company and first writer. |
 | tagline, creatorName | Required on the first submit only. `name` in the body writes `Project.name`; replies read it from there. |
 | description, story, creatorProfile | Optional. |
-| contributorEmails | JSON `string[]`, max 10, opt-in — everyone who built the app, the person showcasing it first (the main contact). Input `contributorEmails[]`, or `contactEmail` as a one-item alias. Returned as `contributorEmails` plus `userEmail` (the first); the panel's server-side contact route reads it for "Contact Dev" and strips it before render. |
+| contributorEmails | JSON `string[]`, max 10, opt-in — everyone who built the app, the person showcasing it first (the main contact). Input `contributorEmails[]`, or `contactEmail` as a one-item alias. Returned as `contributorEmails` plus `userEmail` (the first); the panel's server-side contact route reads it for "Contact Dev" and strips it before render. The single-app read also returns `contributors` — see **Contributors** under Flow. |
 | appUrl | Active custom domain, else `https://<slug>.<APP_PUBLIC_DOMAIN>`. Never typed; re-derived each submit, repointed by `services/projectSlugChange.ts` on rename. |
 | screenshotUrls, videoUrl | Optional. JSON-encoded `string[]`, max 10; returned as `screenshotUrls` plus `screenshotUrl` (the first) for the panel, which shows one and only apps that have it. Input `screenshotUrls[]`, or `screenshotUrl` as a one-item alias. |
 | builtWith | `SHOWCASE_TOOLS`: Claude, Codex, Cursor, Lovable, Replit, Other. |
@@ -103,6 +103,19 @@ organiser: PATCH .../projects/:listingId {approve} | {reject, reason?}
   `rejected` (reviewed or auto), or app first goes on the public gallery →
   `contributorEmails`, else the submitter.
   Re-submitting a still-pending listing without the code mails nobody.
+- **Contributors** (`contributorEmails`, nothing else stored): on every
+  submit, addresses that were not in the previous save are looked up in
+  proxy (`getUserByEmail`, in parallel); those with no account get an invite
+  mail ("You've been added to <app> on <page>", CTA → `/login?next=/showcase/app/<slug>`,
+  told to sign up with that same address). A failed lookup is skipped, never
+  mailed. `GET /public/showcase/apps/:slug` resolves the same addresses
+  against proxy on each read and returns `contributors: [{ name, email }]`
+  for the ones that have an account — so a contributor shows up by name as
+  soon as they sign up with the listed address, and a listed address nobody
+  owns is simply absent. A blank proxy name, or one that is itself an
+  address, falls back to the part before the `@`. List endpoints never
+  resolve (that would fan out per app); there is no cache — at most 10
+  proxy calls per app read.
 - Owner: every placement with `status` / `rejectionReason`. **Withdraw**
   flips `isPublic` off or deletes the event listing; `AppDetails` stays.
 
@@ -150,7 +163,7 @@ Mounted before the docs router and every `requireProxyToken` router.
 | GET | `/public/showcase?limit=60` | Public apps, featured first then newest. |
 | GET | `/public/showcase/collections` | Every event page, most apps first, with `projectCount` (approved and not hidden). No `customHtml`. |
 | GET | `/public/showcase/collections/:slug` | `{collection, projects}`, approved and not hidden. `collection.customHtml` is the organiser's block or null. 404 unknown slug; an empty event resolves. |
-| GET | `/public/showcase/apps/:slug` | One app with `customHtml`, `userEmail`. `collection` is the public stand-in when public, else its first visible event. |
+| GET | `/public/showcase/apps/:slug` | One app with `customHtml`, `userEmail`, and `contributors[]` (`{ name, email }`, only those with an Embarko account — resolved against proxy per read). `collection` is the public stand-in when public, else its first visible event. |
 
 ### Agent (deploy token) — `src/routes/agentApps.routes.ts`
 
@@ -220,7 +233,8 @@ with its length, or cleared), `showcase.public.add/remove`,
   `name`, `appSlug`. The API mails the developer through the viasocket flow
   (`Webhook.SHOWCASE_CONTACT_EMAIL`) to every address in that app's
   `contributorEmails` only when `toEmail` is one of them (404 `SHOWCASE_NO_CONTACT` otherwise), and keeps a
-  customer-query row for admins.
+  customer-query row for admins. The page's Details show `contributors` by
+  name, the address on hover; the row is absent until someone has signed up.
 - Console `/app/showcase`: public stand-in, events with a "N to review" tag,
   create event. `/app/showcase/new`: name, address, description, and a
   folded "Custom HTML" section with a live preview
