@@ -1,7 +1,8 @@
 # Showcase — public gallery, event pages, approvals
 
 **Added 2026-09-15; reworked 2026-09-30 (v3: `AppDetails`, public flag,
-events; company pages removed) plus event approvals and a submit code.**
+events; company pages removed) plus event approvals and a submit code.
+Event pages got organiser custom HTML on 2026-10-06.**
 Single reference for the feature.
 
 Embarko Showcase (`embarko.ai/showcase`) is a public gallery of apps built
@@ -42,7 +43,7 @@ token); the console form does the same.
 | builtWith | `SHOWCASE_TOOLS`: Claude, Codex, Cursor, Lovable, Replit, Other. |
 | category | `SHOWCASE_CATEGORIES`: AI Tool, Personal, Business, Productivity, Education, Game, Developer Tool, Other. |
 | tagsJson | JSON `string[]`, normalised, max 8. |
-| customHtml | Raw HTML for the app page (panel sanitises). |
+| customHtml | Raw HTML for the app page, at most `CUSTOM_HTML_MAX` (50,000) characters. Not sanitised: see [Custom HTML](#custom-html). |
 | isPublic, featured | On the gallery; admin's "first in gallery" flag. |
 
 ### `ShowcaseEvent` — one event page
@@ -50,8 +51,9 @@ token); the console form does the same.
 | Column | Notes |
 | --- | --- |
 | slug | Unique, immutable, `^[a-z0-9]+(-[a-z0-9]+)*$`, 3–40 chars, not reserved (`app`, `apps`, `public`, `event`, …). |
-| title, intro, companyId, createdBy | |
+| title, intro, companyId, createdBy | Fixed after create. |
 | submitCode | 8 chars, no 0/O/1/I, unique, generated on create. Given on submit, skips approval. |
+| customHtml | Optional organiser HTML shown on the event page above its apps (rules, schedule, sponsors). At most 50,000 characters. Set on create. The API can also change it afterwards (`PATCH .../collections/:id`), but the console offers no edit, so in practice it is fixed like the rest. Not sanitised: see [Custom HTML](#custom-html). |
 
 ### `ShowcaseEventListing` — one app on one event
 
@@ -73,9 +75,10 @@ Events have `type: "event"`.
 ## Flow
 
 ```
-organiser: POST .../collections {slug, title, intro}
+organiser: POST .../collections {slug, title, intro, customHtml?}
            → live, empty; submitCode in the reply and on the console page
            → shares the code (or the "add your app" prompt, which carries it)
+           → (API only, no console UI) PATCH .../collections/:id {customHtml}
 
 agent:     PUT /apps/<name>/showcase {details, collectionSlug?, code?}
            → AppDetails created, or MERGED (only sent fields change)
@@ -103,6 +106,39 @@ organiser: PATCH .../projects/:listingId {approve} | {reject, reason?}
 - Owner: every placement with `status` / `rejectionReason`. **Withdraw**
   flips `isPublic` off or deletes the event listing; `AppDetails` stays.
 
+## Custom HTML
+
+Both an app (`AppDetails.customHtml`) and an event (`ShowcaseEvent.customHtml`)
+can carry a block of HTML for its public page. Same rules for both:
+
+- **Stored raw.** The API only trims it, turns `""` into null and caps it
+  at `CUSTOM_HTML_MAX` (50,000, `services/showcase.ts`). Over the cap is a
+  400 `validation_failed`.
+- **Safe by rendering, not by sanitising.** The panel never puts it in the
+  page. `app/components/CustomHtml.tsx` draws it in an `<iframe srcdoc>`
+  with `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"`:
+  no `allow-scripts`, so scripts, event handlers, form submission and
+  top-level navigation are all off. Links open in a new tab. Never add
+  `allow-scripts` to that list: with `allow-same-origin` it would let the
+  HTML act as embarko.ai.
+- **What works:** markup, inline and `<style>` CSS, https images, links.
+  The frame sizes itself to its content, takes the page's text colour and
+  font as defaults, and shrinks images and video to its width. The HTML's
+  own styles override all three.
+- **Where it shows:** an app's block below its details on
+  `/showcase/app/<slug>`. An event's block between its header and the app
+  grid on `/showcase/<slug>`.
+- **Who can set it:** an app's block, whoever can submit the app (deploy
+  token or company member). An event's block, members of the organiser
+  company only, on the console's create form. The console has no way to
+  edit or remove it afterwards; the PATCH route exists but nothing in the
+  panel calls it. Agents have no event endpoint.
+- **Which reads carry it:** an app's on every app shape. An event's only on
+  single-event reads (create, detail, edit, and the public
+  `collections/:slug`); the console list, the submit form's `/pages` picker,
+  the public `/public/showcase/collections` list and the admin list leave
+  it out, since none of them show it.
+
 ## Endpoints
 
 ### Public (no auth) — `src/routes/publicShowcase.routes.ts`
@@ -112,8 +148,8 @@ Mounted before the docs router and every `requireProxyToken` router.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/public/showcase?limit=60` | Public apps, featured first then newest. |
-| GET | `/public/showcase/collections` | Every event page, most apps first, with `projectCount` (approved and not hidden). |
-| GET | `/public/showcase/collections/:slug` | `{collection, projects}`, approved and not hidden. 404 unknown slug; an empty event resolves. |
+| GET | `/public/showcase/collections` | Every event page, most apps first, with `projectCount` (approved and not hidden). No `customHtml`. |
+| GET | `/public/showcase/collections/:slug` | `{collection, projects}`, approved and not hidden. `collection.customHtml` is the organiser's block or null. 404 unknown slug; an empty event resolves. |
 | GET | `/public/showcase/apps/:slug` | One app with `customHtml`, `userEmail`. `collection` is the public stand-in when public, else its first visible event. |
 
 ### Agent (deploy token) — `src/routes/agentApps.routes.ts`
@@ -143,9 +179,10 @@ All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 other
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/collections` `{slug, title, intro?}` | Create event; reply has `submitCode`. 409 `SHOWCASE_SLUG_TAKEN`. |
-| GET | `/collections` | Public stand-in first, then own events with `submitCode`, `counts: {total, publicCount, pending}`. |
-| GET | `/collections/:id` | Plus `projects[]` with `status`, `rejectionReason` (every status for an event). |
+| POST | `/collections` `{slug, title, intro?, customHtml?}` | Create event; reply has `submitCode` and `customHtml`. 409 `SHOWCASE_SLUG_TAKEN`. |
+| GET | `/collections` | Public stand-in first, then own events with `submitCode`, `counts: {total, publicCount, pending}`. No `customHtml`. |
+| GET | `/collections/:id` | Plus `customHtml` and `projects[]` with `status`, `rejectionReason` (every status for an event). |
+| PATCH | `/collections/:id` `{customHtml}` | No console UI calls this. Set or clear (`""` / null) an event's HTML; field required. Title, slug and intro are ignored: they stay fixed. 200 with the event. 409 `SHOWCASE_PUBLIC_PAGE` for the public stand-in, 404 for another company's event. |
 | DELETE | `/collections/:id` | Events only (409 `SHOWCASE_PUBLIC_PAGE`), while empty (409 `SHOWCASE_COLLECTION_NOT_EMPTY`). |
 | PATCH | `/collections/:id/projects/:listingId` `{approve}` / `{reject, reason?}` / `{isPrivate}` / `{remove}` | Event: review a pending listing (409 `SHOWCASE_LISTING_NOT_PENDING` otherwise), hide/unhide (200), remove (204). Public page: hide/remove unpublishes own app, unhide republishes; review 409 `SHOWCASE_PUBLIC_PAGE`. |
 | GET | `/pages` | Where an app can go: public stand-in, then every event. |
@@ -163,7 +200,8 @@ All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 other
 | GET | `/admin/showcase/projects?collectionId=&q=&page=&limit=` | Every app with details and listing `status`. `collectionId=public` or an event id narrows. |
 | PATCH | `/admin/showcase/projects/:id` `{featured}` | The only admin lever. No admin approve. |
 
-Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
+Audit: `showcase.event.create/update/delete` (update = custom HTML set
+with its length, or cleared), `showcase.public.add/remove`,
 `showcase.listing.create/update/withdraw/approve/reject/hide/show/remove`.
 
 ## Config
@@ -184,9 +222,17 @@ Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
   `contributorEmails` only when `toEmail` is one of them (404 `SHOWCASE_NO_CONTACT` otherwise), and keeps a
   customer-query row for admins.
 - Console `/app/showcase`: public stand-in, events with a "N to review" tag,
-  create event. `/app/showcase/<id>`: submit code (copyable), "Requests"
-  with Approve / Reject (optional reason), then listed apps with
-  hide/show/remove. `/app/showcase/submit`: gallery or event (optional code
+  create event. `/app/showcase/new`: name, address, description, and a
+  folded "Custom HTML" section with a live preview
+  (`components/console/showcase/CustomHtmlField.tsx`). `/app/showcase/<id>`:
+  submit code (copyable), "Requests" with Approve / Reject (optional
+  reason), then listed apps with hide/show/remove. The manage page neither
+  shows nor edits the event's HTML: it appears only on the public page.
+  The create form's preview sits on the public page's light surface, since
+  Showcase pages have no dark theme.
+- Public `/showcase/<event>` passes `collection.customHtml` to `ListPage`,
+  which renders it with the shared `components/CustomHtml.tsx`; the app
+  page uses the same component. `/app/showcase/submit`: gallery or event (optional code
   field) → app → details. Owner's app page shows status and reason.
 - `app/lib/showcasePrompt.ts` carries the code when the organiser shares
   the prompt and tells the agent to report "awaiting approval".
@@ -195,6 +241,8 @@ Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
 
 ## Migrations
 
+- `20261006090000_showcase_event_custom_html`: adds nullable
+  `ShowcaseEvent.customHtml`. Additive, no backfill.
 - `20261001090000_drop_app_details_name`: drops `AppDetails.name`; the name is `Project.name`.
 - `20260930090000_showcase_v3`: drops `ShowcaseCollection` / `ShowcaseProject`
   (no data carried), creates the three tables with the approval columns and
@@ -204,6 +252,8 @@ Audit: `showcase.event.create/delete`, `showcase.public.add/remove`,
 
 - No admin edit / approve / hide; no notifications; no code rotation; no
   per-event "approval off" switch.
-- `customHtml` stored raw; the panel sanitises on render.
+- No server-side HTML sanitising: the sandboxed frame is the safety
+  boundary (see [Custom HTML](#custom-html)). Event HTML has no agent
+  endpoint and no admin edit.
 - No spam control beyond approval, the hide switch, and every submitter
   being a logged-in member or deploy token with a real project.
