@@ -32,7 +32,7 @@ function parseAllowedEntry(entry: string): AllowedTarget | null {
 }
 
 const ALLOWED_TARGETS: AllowedTarget[] = (
-    process.env.CONNECTOR_ALLOWED_REDIRECT_PREFIXES ?? "https://mcp.viasocket.com/oauth/"
+    process.env.CONNECTOR_ALLOWED_REDIRECT_PREFIXES ?? "https://mcp.viasocket.com/oauth/,https://mcp.embarko.ai/oauth/"
 )
     .split(",")
     .map((s) => s.trim())
