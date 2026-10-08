@@ -444,6 +444,30 @@ ever had). The orphan banner needed nothing: it's a sidecar keyed off
 `claim.isOrphan`, not a build-time injection keyed off "has a token".
 Full contract in `docs/Ui-upload-deploy-req.md`.
 
+**Resolved 2026-10-08 — an orphan can be kept by a claim link, not only
+by redeploying with a token.** The deploy that creates an orphan mints a
+one-time claim code (`src/lib/orphanClaim.ts`; 32 random bytes, only its
+SHA-256 kept in `Project.claimCodeHash`) and `POST /internal/projects/claim`
+returns it once, inside `claimUrl` (`<FRONTEND_ORIGIN>/claim?app=…&code=…`),
+which hostnsoft-deploy relays as the deploy reply's `links.claim`. The
+dashboard's `/claim` page signs the person in (the MSG91 widget does
+sign-up too), has them pick or create a company, and calls
+`POST /companies/:companyId/orphans/claim {appName, code}`
+(`src/routes/projects.routes.ts`): verify the hash in constant time, move
+the project into the company with `updateMany({isOrphan: true})` so two
+claimants can't both win, clear every orphan field, then `applyCurrentConfig`
+re-pushes the running image without the banner — no rebuild. Wrong code,
+unknown name, expired and already-claimed are all the same 404, so a name
+alone reveals nothing. The token-redeploy adopt path still works and also
+clears `claimCodeHash`. Two consequences worth knowing: (1) **anonymous
+deploys are now recorded** in `/internal/deployments/record` (`triggeredBy:
+"anonymous"`), accepted only while the project is still an orphan, because
+the re-push needs the recorded image tag — an orphan without a usable row
+(pre-dating this, or whose record call failed) is still claimed, and the
+reply says `bannerClearsOn: "next_deploy"`; (2) the code is never minted on
+an anonymous *re*deploy of an existing orphan, or anyone who guessed the
+name could obtain one. Spec: `docs/Anonymous-deploy-req.md` ("Claim link").
+
 **Routing gotcha hit while wiring this up, worth remembering**: every
 resource router here (`companiesRouter`, `tokensRouter`, etc.) calls
 `.use(requireAuth)` on itself with no path filter. Since all these

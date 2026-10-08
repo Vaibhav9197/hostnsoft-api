@@ -69,10 +69,26 @@ export function buildInvalidTokenGuidance(): string {
 }
 
 // For an anonymous ("orphan") deploy — see docs/Anonymous-deploy-req.md #4.
-export function buildOrphanMessage(expiresAt: Date): string {
+// `claimUrl` is the one-time claim link minted on the deploy that created
+// the orphan (lib/orphanClaim.ts): when it's known, keeping the app is
+// "open this link and sign in", and the token path is the fallback. An
+// anonymous redeploy of an existing orphan has no link to give (the code
+// was shown once), so it gets the token-only wording as before.
+export function buildOrphanMessage(expiresAt: Date, claimUrl?: string | null): string {
   const iso = expiresAt.toISOString();
+  const intro =
+    `This app was deployed without a deploy token, so it is temporary and will be deleted at ${iso} unless claimed. `;
+  if (claimUrl) {
+    return (
+      intro +
+      `To keep it, give the user this link and ask them to open it and sign in (or sign up): ${claimUrl} ` +
+      `The link works only for them and only until the deadline; it needs no redeploy and no source code. ` +
+      `Fallback if the link is lost: get a deploy token (${buildTokenGuidance()}) and redeploy this exact app name ` +
+      `with that token as the Authorization header before the deadline. Either way the app keeps its URL and this notice goes away.`
+    );
+  }
   return (
-    `This app was deployed without a deploy token, so it is temporary and will be deleted at ${iso} unless claimed. ` +
+    intro +
     `To keep it, get a deploy token. ${buildTokenGuidance()} ` +
     `Then redeploy this exact app name using that token as the Authorization header ` +
     `before the deadline above. Redeploying with a valid token before expiry ` +
