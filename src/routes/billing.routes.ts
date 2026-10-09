@@ -15,6 +15,7 @@ import {
 import { listStripePaymentMethods, detachStripePaymentMethod } from "../lib/stripe";
 import { setUpBillingForCompany } from "../services/billingCustomer";
 import { createCustomerSchema, changePlanSchema } from "../validation/billing.validation";
+import { resyncCompanyFooters } from "../services/footerResync";
 
 // Billing is per company (docs/billing.md). Lago holds one customer per
 // company keyed by the proxy company id; Stripe is reached only through the
@@ -191,6 +192,15 @@ billingRouter.put(
       action: "billing.plan.change",
       details: `${current.plan_code} -> ${plan_code}`,
     });
+
+    // Only free -> paid changes the footer right now: an upgrade is
+    // immediate in Lago, so remove the footer now rather than on the next
+    // deploy. Paid -> paid changes nothing; paid -> free is scheduled for
+    // end-of-period and lands via the Lago webhook relayed through viaSocket
+    // (internalBilling.routes.ts).
+    if (current.plan_code === FREE_PLAN_CODE) {
+      resyncCompanyFooters(companyId, `plan change ${current.plan_code} -> ${plan_code}`);
+    }
 
     res.json(subscription);
   }

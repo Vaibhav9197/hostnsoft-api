@@ -256,6 +256,20 @@ export async function getActiveSubscription(companyId: string): Promise<LagoSubs
   return subs.find((s) => s.status === "active") ?? null;
 }
 
+// Drives hostnsoft-deploy's "powered by" footer. No subscription counts as
+// free. Billing being unreachable must never block a deploy or config
+// push, so a failure means "not free" (no footer) and a warning.
+export async function isCompanyOnFreePlan(companyId: string | null | undefined): Promise<boolean> {
+  if (!companyId) return false;
+  try {
+    const sub = await getActiveSubscription(companyId);
+    return !sub || sub.plan_code === FREE_PLAN_CODE;
+  } catch (err) {
+    logger.warn(`[billing] free-plan check failed for ${companyId}: ${(err as Error).message}`);
+    return false;
+  }
+}
+
 // ---- Checkout ------------------------------------------------------------
 
 // A Stripe-hosted page where the customer adds/updates a payment method
