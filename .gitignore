@@ -3,5 +3,9 @@ dist/
 .env
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+# Litestream's per-database state folder (.<name>.db-litestream/)
+.*-litestream/
 .DS_Store
 dump.rdb
