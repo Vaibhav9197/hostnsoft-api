@@ -781,7 +781,7 @@ appScoped.put("/showcase", async (req, res) => {
   const target = await resolveTarget(body.collectionSlug);
   if (!target) return res.status(404).json(SHOWCASE_COLLECTION_UNKNOWN);
 
-  const app = await upsertAppDetails(project, req.company!.id, req.userId!, body);
+  const app = await upsertAppDetails(project, req.company!.id, req.userId!, body, target);
   const placed = await placeApp(app, target, req.userId!, body.code);
   const where = target.kind === "public" ? "/showcase" : `/showcase/${target.event.slug}`;
   const { status } = placed.placement;
