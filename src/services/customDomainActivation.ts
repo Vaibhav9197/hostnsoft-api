@@ -17,6 +17,7 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
+import { isCompanyOnFreePlan } from "../lib/lago";
 
 interface PushResult {
   pushed: boolean;
@@ -62,13 +63,14 @@ interface AppConfig {
 export async function pushAppConfig(project: Project, config: AppConfig): Promise<PushResult> {
   let response: Response;
   try {
+    const isFreePlan = await isCompanyOnFreePlan(project.companyId);
     response = await fetch(`${HOSTNSOFT_DEPLOY_URL}/internal/apps/${project.slug}/config`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Internal-Secret": INTERNAL_API_SECRET,
       },
-      body: JSON.stringify(config),
+      body: JSON.stringify({ ...config, isFreePlan }),
     });
   } catch (e) {
     const message = (e as Error).message;

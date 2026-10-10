@@ -18,6 +18,7 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { HOSTNSOFT_DEPLOY_URL, INTERNAL_API_SECRET } from "../lib/internalDeployClient";
+import { isCompanyOnFreePlan } from "../lib/lago";
 
 export type RenameAppResult =
   | { renamed: true; imageTag: string; domain: string }
@@ -71,6 +72,7 @@ export async function renameApp(project: Project, newSlug: string): Promise<Rena
         memoryMb,
         customDomains: activeDomains.map((d) => d.domain),
         envVars,
+        isFreePlan: await isCompanyOnFreePlan(project.companyId),
       }),
     });
   } catch (e) {
