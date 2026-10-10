@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     name: Redeploy api-service
-    runs-on: [self-hosted, hostnsoft-runner-prod]
+    runs-on: [self-hosted, hostnsoft-runners]
     timeout-minutes: 20
     steps:
       - name: Redeploy api-service
