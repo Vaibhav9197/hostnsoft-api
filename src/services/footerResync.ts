@@ -19,9 +19,13 @@ export function resyncCompanyFooters(companyId: string, reason: string): void {
         });
 
         for (const project of projects) {
-            const result = await pushCustomDomainConfig(project.id);
-            if (!result.pushed) {
-                logger.warn(`[footerResync] ${project.slug}: push failed after ${reason}: ${result.error}`);
+            try {
+                const result = await pushCustomDomainConfig(project.id);
+                if (!result.pushed) {
+                    logger.warn(`[footerResync] ${project.slug}: push failed after ${reason}: ${result.error}`);
+                }
+            } catch (e) {
+                logger.warn(`[footerResync] ${project.slug}: push threw after ${reason}: ${(e as Error).message}`);
             }
         }
         logger.info(`[footerResync] company ${companyId}: resynced ${projects.length} app(s) after ${reason}`);
