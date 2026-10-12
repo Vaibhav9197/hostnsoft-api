@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { logAudit } from "../services/audit";
@@ -11,10 +11,25 @@ import {
   listSubscriptions,
   getActiveSubscription,
   getLagoPlan,
+  applyLagoCoupon,
+  listAppliedCoupons,
+  deleteAppliedCoupon,
+  type LagoAppliedCoupon,
 } from "../lib/lago";
+import { createLimiter, type LimitScope } from "../lib/rateLimit";
+import { COUPON_RATE_WINDOW_MS, COUPON_RATE_PER_USER, COUPON_RATE_PER_COMPANY } from "../lib/couponConfig";
+import { checkCoupon, resolveCouponRow } from "../services/couponCheck";
+import { lagoCodeFor, markCouponUsed } from "../lib/couponTable";
+import { logger } from "../lib/logger";
 import { listStripePaymentMethods, detachStripePaymentMethod } from "../lib/stripe";
 import { setUpBillingForCompany } from "../services/billingCustomer";
-import { createCustomerSchema, changePlanSchema } from "../validation/billing.validation";
+import {
+  createCustomerSchema,
+  changePlanSchema,
+  couponCodeSchema,
+  applyCouponSchema,
+  checkCouponQuerySchema,
+} from "../validation/billing.validation";
 import { resyncCompanyFooters } from "../services/footerResync";
 
 // Billing is per company (docs/billing.md). Lago holds one customer per
@@ -173,24 +188,54 @@ billingRouter.put(
   "/companies/:companyId/billing/subscription",
   loadCompanyContext,
   async (req, res) => {
-    const { plan_code } = changePlanSchema.parse(req.body);
+    const { plan_code, coupon_code } = changePlanSchema.parse(req.body);
     const companyId = req.company!.id;
 
     if (!isPublicPlan(plan_code)) throw billingErrors.planNotAvailable(plan_code);
+    // A coupon on a move to free would sit on a $0 invoice (and a one-time
+    // percentage coupon would be consumed by it).
+    if (coupon_code && plan_code === FREE_PLAN_CODE) throw billingErrors.couponRequiresPaidPlan();
 
     const current = await getActiveSubscription(companyId);
     if (!current) throw billingErrors.noCustomer();
     if (current.plan_code === plan_code) throw billingErrors.alreadyOnPlan(plan_code);
 
-    if (plan_code !== FREE_PLAN_CODE) await requirePaymentMethod(companyId);
+    // The coupon table decides whether this coupon waives the card (e.g. a
+    // 100% student coupon). Checked server-side from the table, never from
+    // the client, so a forged check response changes nothing.
+    const check = coupon_code ? await checkCoupon(companyId, coupon_code, plan_code) : null;
+    if (check && !check.applicable) throw billingErrors.couponNotApplicable(check.blockers[0]);
+    if (plan_code !== FREE_PLAN_CODE && !check?.skipPaymentMethod) await requirePaymentMethod(companyId);
 
-    const subscription = await assignPlan(companyId, plan_code);
+    // Coupon first: an immediate upgrade invoices on assignPlan, so a coupon
+    // applied afterwards would miss that invoice. If the plan change then
+    // fails, take the coupon back off so the customer isn't left with it on
+    // the old (possibly free) plan.
+    let applied: LagoAppliedCoupon | null = null;
+    let row = null;
+    if (coupon_code) {
+      row = await resolveCouponRow(coupon_code);
+      applied = await applyLagoCoupon(companyId, lagoCodeFor(row));
+    }
+
+    let subscription;
+    try {
+      subscription = await assignPlan(companyId, plan_code);
+    } catch (err) {
+      if (applied) {
+        await deleteAppliedCoupon(companyId, applied.lago_id).catch((e) =>
+          logger.error(`[billing] coupon ${coupon_code} rollback failed for ${companyId}: ${(e as Error).message}`)
+        );
+      }
+      throw err;
+    }
+    if (row?.is_single_use) await markCouponUsed(row.discount_coupon);
 
     await logAudit({
       actorUserId: req.userId,
       companyId,
       action: "billing.plan.change",
-      details: `${current.plan_code} -> ${plan_code}`,
+      details: `${current.plan_code} -> ${plan_code}${coupon_code ? ` (coupon ${coupon_code})` : ""}`,
     });
 
     // Only free -> paid changes the footer right now: an upgrade is
@@ -230,5 +275,87 @@ billingRouter.delete(
     });
 
     res.json(subscription);
+  }
+);
+
+// ---- Coupons -------------------------------------------------------------
+// Check-then-apply (docs/billing.md "Coupons"). Coupons are created in the
+// Lago console; any code can be redeemed from here. Rate
+// limited per user and per company because the check endpoint distinguishes
+// valid from unknown codes.
+
+function couponLimiter(scope: LimitScope, limit: number, keyGenerator: (req: Request) => string) {
+  return createLimiter("coupon", "coupon requests", scope, limit, COUPON_RATE_WINDOW_MS, keyGenerator);
+}
+const couponLimiters = [
+  couponLimiter("user", COUPON_RATE_PER_USER, (req) => req.userId ?? "anonymous"),
+  couponLimiter("company", COUPON_RATE_PER_COMPANY, (req) => req.company?.id ?? "unknown"),
+];
+
+function trimAppliedCoupon(a: LagoAppliedCoupon) {
+  return {
+    code: a.coupon_code,
+    name: a.coupon_name,
+    amountCents: a.amount_cents ?? null,
+    amountCentsRemaining: a.amount_cents_remaining ?? null,
+    currency: a.amount_currency ?? null,
+    percentageRate: a.percentage_rate ?? null,
+    frequency: a.frequency,
+    frequencyDuration: a.frequency_duration ?? null,
+    frequencyDurationRemaining: a.frequency_duration_remaining ?? null,
+    expiresAt: a.expiration_at ?? null,
+    appliedAt: a.created_at,
+  };
+}
+
+billingRouter.get("/companies/:companyId/billing/coupons", loadCompanyContext, async (req, res) => {
+  const applied = await listAppliedCoupons(req.company!.id);
+  res.json({ coupons: applied.map(trimAppliedCoupon) });
+});
+
+billingRouter.get(
+  "/companies/:companyId/billing/coupons/:code",
+  loadCompanyContext,
+  ...couponLimiters,
+  async (req, res) => {
+    const code = couponCodeSchema.parse(req.params.code);
+    const { plan_code } = checkCouponQuerySchema.parse(req.query);
+    if (plan_code && !isPublicPlan(plan_code)) throw billingErrors.planNotAvailable(plan_code);
+    res.json(await checkCoupon(req.company!.id, code, plan_code));
+  }
+);
+
+// Standalone apply (billing page). Refused on the free plan or with a
+// pending downgrade to free — use the upgrade flow instead.
+billingRouter.post(
+  "/companies/:companyId/billing/coupons",
+  loadCompanyContext,
+  ...couponLimiters,
+  async (req, res) => {
+    const { coupon_code } = applyCouponSchema.parse(req.body);
+    const companyId = req.company!.id;
+
+    const current = await getActiveSubscription(companyId);
+    if (!current) throw billingErrors.noCustomer();
+    if (current.plan_code === FREE_PLAN_CODE) throw billingErrors.couponRequiresPaidPlan();
+
+    const check = await checkCoupon(companyId, coupon_code);
+    if (!check.applicable) {
+      if (check.blockers.includes("pending_free_downgrade")) throw billingErrors.couponRequiresPaidPlan();
+      throw billingErrors.couponNotApplicable(check.blockers[0]);
+    }
+
+    const row = await resolveCouponRow(coupon_code);
+    const applied = await applyLagoCoupon(companyId, lagoCodeFor(row));
+    if (row.is_single_use) await markCouponUsed(row.discount_coupon);
+
+    await logAudit({
+      actorUserId: req.userId,
+      companyId,
+      action: "billing.coupon.apply",
+      details: coupon_code,
+    });
+
+    res.status(201).json(trimAppliedCoupon(applied));
   }
 );

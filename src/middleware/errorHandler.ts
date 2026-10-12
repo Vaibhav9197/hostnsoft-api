@@ -31,7 +31,8 @@ export function errorHandler(
     const line = `[errorHandler] ${req.method} ${req.path} -> ${err.status}: ${err.message}`;
     if (err.status >= 500) logger.error(line);
     else logger.warn(line);
-    return res.status(err.status).json({ error: err.publicMessage, code: err.code });
+    const details = err instanceof BillingError && err.details !== undefined ? { details: err.details } : {};
+    return res.status(err.status).json({ error: err.publicMessage, code: err.code, ...details });
   }
 
   // body-parser's malformed-JSON error (and similar http-errors objects)

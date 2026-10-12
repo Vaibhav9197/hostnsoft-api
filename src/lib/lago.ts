@@ -14,6 +14,7 @@ import {
   PUBLIC_PLAN_CODES,
   isPublicPlan,
   billingErrors,
+  type CouponRejectReason,
   lagoCustomerExternalId,
   lagoSubscriptionExternalId,
   LAGO_PAYMENT_PROVIDER,
@@ -337,4 +338,112 @@ export async function listLagoPlans(): Promise<LagoPlan[]> {
   const body = await lagoRequest<{ plans?: LagoPlan[] }>(`/plans?per_page=100&page=1`);
   const byCode = new Map((body.plans ?? []).filter((p) => isPublicPlan(p.code)).map((p) => [p.code, p]));
   return PUBLIC_PLAN_CODES.flatMap((code) => byCode.get(code) ?? []);
+}
+
+// ---- Coupons -------------------------------------------------------------
+// Coupons are created in the Lago console and attach to the *customer* (not
+// a subscription); Lago deducts them from the next subscription invoices.
+// See docs/billing.md "Coupons".
+
+export interface LagoCoupon {
+  lago_id: string;
+  name: string;
+  code: string;
+  description?: string | null;
+  coupon_type: "fixed_amount" | "percentage";
+  amount_cents?: number | null;
+  amount_currency?: string | null;
+  percentage_rate?: string | null;
+  frequency: "once" | "recurring" | "forever";
+  frequency_duration?: number | null;
+  reusable: boolean;
+  limited_plans: boolean;
+  plan_codes?: string[];
+  expiration: "no_expiration" | "time_limit";
+  expiration_at?: string | null;
+  terminated_at?: string | null;
+}
+
+export interface LagoAppliedCoupon {
+  lago_id: string;
+  coupon_code: string;
+  coupon_name: string;
+  status: "active" | "terminated";
+  amount_cents?: number | null;
+  amount_cents_remaining?: number | null;
+  amount_currency?: string | null;
+  percentage_rate?: string | null;
+  frequency: "once" | "recurring" | "forever";
+  frequency_duration?: number | null;
+  frequency_duration_remaining?: number | null;
+  expiration_at?: string | null;
+  created_at: string;
+}
+
+// Read-only lookup; null when Lago has no coupon with that code. Lago may
+// return terminated coupons with terminated_at set — callers check it.
+export async function getLagoCoupon(code: string): Promise<LagoCoupon | null> {
+  try {
+    const body = await lagoRequest<{ coupon?: LagoCoupon }>(`/coupons/${encodeURIComponent(code)}`);
+    return body.coupon ?? null;
+  } catch (err) {
+    if (err instanceof LagoNotFound) return null;
+    throw err;
+  }
+}
+
+// Lago's 422 codes for applied coupons aren't in its OpenAPI spec; this map
+// is best-effort and the raw code is logged so it can be extended after the
+// first live run.
+// Verified live 2026-10-12: Lago answers `code: "validation_errors"` with
+// the real reason inside error_details, e.g.
+// { currency: ["currencies_does_not_match"] }, so match on both.
+function couponRejectReason(message: string, details: unknown): CouponRejectReason {
+  const m = `${message} ${JSON.stringify(details ?? "")}`.toLowerCase();
+  if (m.includes("reusable")) return "not_reusable";
+  if (m.includes("overlapping")) return "plan_overlap";
+  if (m.includes("currenc")) return "currency_mismatch";
+  return "other";
+}
+
+export async function applyLagoCoupon(companyId: string, code: string): Promise<LagoAppliedCoupon> {
+  const body = await lagoRequest<{ applied_coupon?: LagoAppliedCoupon }>(`/applied_coupons`, {
+    method: "POST",
+    body: JSON.stringify({
+      applied_coupon: { external_customer_id: lagoCustomerExternalId(companyId), coupon_code: code },
+    }),
+  }).catch((err) => {
+    if (err instanceof LagoNotFound) throw billingErrors.couponNotFound();
+    if (err instanceof LagoUnprocessable) {
+      logger.warn(`[lago] apply coupon ${code} for ${companyId} refused: ${err.message} ${JSON.stringify(err.details ?? null)}`);
+      throw billingErrors.couponNotApplicable(couponRejectReason(err.message, err.details), err.message);
+    }
+    throw err;
+  });
+  if (!body.applied_coupon) throw billingErrors.rejected("lago", "did not return the applied coupon");
+  return body.applied_coupon;
+}
+
+export async function listAppliedCoupons(companyId: string): Promise<LagoAppliedCoupon[]> {
+  const params = new URLSearchParams({
+    external_customer_id: lagoCustomerExternalId(companyId),
+    status: "active",
+    per_page: "100",
+  });
+  const body = await lagoRequest<{ applied_coupons?: LagoAppliedCoupon[] }>(`/applied_coupons?${params}`);
+  return body.applied_coupons ?? [];
+}
+
+// Rollback helper for "coupon applied, plan change failed". Best effort:
+// an already-gone coupon is fine.
+export async function deleteAppliedCoupon(companyId: string, appliedCouponId: string): Promise<void> {
+  try {
+    await lagoRequest<unknown>(
+      `/customers/${encodeURIComponent(lagoCustomerExternalId(companyId))}/applied_coupons/${encodeURIComponent(appliedCouponId)}`,
+      { method: "DELETE" }
+    );
+  } catch (err) {
+    if (err instanceof LagoNotFound) return;
+    throw err;
+  }
 }
