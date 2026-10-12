@@ -23,6 +23,24 @@ export const createCustomerSchema = z.object({
 
 export type CreateCustomerBody = z.infer<typeof createCustomerSchema>;
 
+// Coupon codes are Lago codes: short, URL-safe. Trimmed so a pasted
+// " SAVE10 " still matches.
+export const couponCodeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, "Coupon codes may only contain letters, numbers, - and _");
+
 export const changePlanSchema = z.object({
   plan_code: z.string().min(1),
+  coupon_code: couponCodeSchema.optional(),
+});
+
+export const applyCouponSchema = z.object({
+  coupon_code: couponCodeSchema,
+});
+
+export const checkCouponQuerySchema = z.object({
+  plan_code: z.string().min(1).optional(),
 });

@@ -71,7 +71,10 @@ An empty list from `GET /companies/:companyId/billing` also means "call 3".
 | `/companies/:companyId/billing/payment-methods/:paymentMethodId` | DELETE | detach a saved card (must belong to the company's Stripe customer) |
 | `/companies/:companyId/billing/checkout-url` | GET | Stripe-hosted (via Lago) page to add/update a payment method |
 | `/companies/:companyId/billing` | GET | status: live subscriptions, each with its full plan |
-| `/companies/:companyId/billing/subscription` | PUT | change plan (`{ plan_code }`, must be in `PUBLIC_PLAN_CODES`) |
+| `/companies/:companyId/billing/subscription` | PUT | change plan (`{ plan_code, coupon_code? }`, plan must be in `PUBLIC_PLAN_CODES`) |
+| `/companies/:companyId/billing/coupons/:code` | GET | **check** a coupon without applying it (`?plan_code=` for an upgrade) |
+| `/companies/:companyId/billing/coupons` | POST | apply a coupon on the current paid plan (`{ coupon_code }`) |
+| `/companies/:companyId/billing/coupons` | GET | active applied coupons |
 | `/companies/:companyId/billing/subscription` | DELETE | cancel = move to the free plan |
 
 Every route above except `GET /billing/plans` requires `proxy_auth_token`.
@@ -136,7 +139,14 @@ exists in Lago. Customer details are not included — use
 `GET .../billing/customer`. An empty list means billing isn't set up.
 
 ### PUT /companies/:companyId/billing/subscription
-Body `{ plan_code }`. Lago upserts the company's single subscription
+Body `{ plan_code, coupon_code? }`. With a coupon: the coupon is checked and
+applied **before** `assignPlan`. If its table row has `skip_payment_method`,
+the 402 card check is skipped (decided server-side from the table; the
+check endpoint's `skipPaymentMethod` is only a UI hint) (an immediate upgrade invoices on creation,
+so a coupon applied afterwards would miss it). If `assignPlan` then fails the
+applied coupon is deleted again, best effort, and the original error is
+returned. A coupon on a move to the free plan is a 409
+`BILLING_COUPON_REQUIRES_PAID_PLAN`. Lago upserts the company's single subscription
 (`external_id` = company id) with the new plan: upgrades apply immediately,
 downgrades at period end (a `pending` subscription shows in status until
 then). `billing_time` is `anniversary`.
@@ -166,6 +176,52 @@ answers with `{ error, code }`.
 | 400 | `BILLING_PLAN_NOT_AVAILABLE` | plan code not whitelisted |
 | 402 | `BILLING_PAYMENT_METHOD_REQUIRED` | paid plan chosen with no saved card |
 | 409 | `BILLING_PROVIDER_NOT_LINKED` | |
+| 404 | `BILLING_COUPON_NOT_FOUND` | unknown code |
+| 422 | `BILLING_COUPON_NOT_APPLICABLE` | `details.reason` ∈ `already_used`, `terminated`, `expired`, `already_applied`, `pending_free_downgrade`, `not_reusable`, `plan_overlap`, `currency_mismatch`, `other` |
+| 409 | `BILLING_COUPON_REQUIRES_PAID_PLAN` | standalone apply on free / pending downgrade to free, or coupon on a change to free |
+| 429 | `RATE_LIMITED` | coupon check/apply, per user and per company |
+
+`BillingError` can carry `details`; `errorHandler` adds it to the body when
+set (`{ error, code, details }`). Today only the coupon 422 uses it.
+
+## Coupons
+
+Coupons are **created in the Lago console**, never here. They attach to the
+Lago *customer* and are deducted from the next subscription invoices, before
+tax. Code in `src/services/couponCheck.ts` (rules), `src/lib/lago.ts`
+(calls), routes at the bottom of `billing.routes.ts`.
+
+- **Coupon table (viasocket) is the gate.** Lago has no coupon metadata and
+  no global one-time use, so each redeemable code has a row in a viasocket
+  table (ids hard-coded in `src/lib/couponTable.ts`, key in `COUPON_TABLE_AUTH_KEY`). No row,
+  or `internal_coupon` set → 404, so internal Lago coupons can't be redeemed
+  whatever their code. Columns: `discount_coupon` (what the user types),
+  `original_coupon` (the Lago code to apply; blank = same), `internal_coupon`,
+  `is_single_use` + `is_used` (global one-time; `is_used` is set after a
+  successful apply, best effort, logged at error if the write fails),
+  `skip_payment_method` (upgrade without a card — pair it with a 100% or
+  plan-amount coupon in Lago, or the invoice can't be collected).
+- **Check, then apply.** `GET .../coupons/:code` is read only and returns
+  `{ coupon, applicable, blockers[], warnings[] }`. Blockers: `already_used`, `terminated`,
+  `expired`, `already_applied` (active on this customer, even if reusable, so
+  nothing stacks), `pending_free_downgrade`. Warnings: `plan_mismatch`
+  (plan-limited coupon that doesn't cover the relevant plan: the `plan_code`
+  query during an upgrade, else the current plan), `currency_mismatch`.
+  Lago still enforces its own rules on apply; the check exists so the UI
+  can explain *before* a one-time coupon is consumed.
+- **Free plan.** A percentage `once` coupon is consumed by the very next
+  invoice, even a $0 one. So standalone apply is refused on the free plan or
+  with a pending downgrade to free, and a plan change *to* free refuses a
+  coupon. A free→paid upgrade with a coupon is fine (see PUT above).
+- **Rate limit.** `COUPON_RATE_PER_USER` (20) and `COUPON_RATE_PER_COMPANY`
+  (60) per `COUPON_RATE_WINDOW_MS` (1h), because the check endpoint tells
+  valid codes from unknown ones.
+- **Audit.** `billing.coupon.apply` on standalone apply; inside a plan
+  change the coupon is part of the `billing.plan.change` detail.
+- Lago's 422 codes for applied coupons aren't in its OpenAPI spec; the
+  `reason` mapping in `applyLagoCoupon` is best effort and the raw code is
+  logged at warn.
+- Rules self-check: `LAGO_API_KEY=x STRIPE_SECRET_KEY=x npx tsx scripts/check-coupon-rules.ts`.
 
 ## Not verified live (2026-09-05)
 The `LAGO_API_KEY` in `.env` was rejected (401) by both `api.getlago.com`

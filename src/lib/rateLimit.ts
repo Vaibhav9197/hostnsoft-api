@@ -7,12 +7,14 @@ import { RedisStore } from "rate-limit-redis";
 import type { Request, Response } from "express";
 import { redis, connectRedis } from "./redis";
 
-export type LimitScope = "email" | "ip" | "global";
+export type LimitScope = "email" | "ip" | "global" | "user" | "company";
 
 const SCOPE_DESCRIPTION: Record<LimitScope, string> = {
   email: "this email address",
   ip: "your IP address",
   global: "the service as a whole",
+  user: "your account",
+  company: "this company",
 };
 
 // keyPrefix namespaces the Redis counters per endpoint (e.g.

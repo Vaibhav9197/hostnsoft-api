@@ -73,11 +73,27 @@ export class BillingError extends Error {
     message: string,
     public readonly status: number,
     public readonly publicMessage: string,
-    public readonly code?: string
+    public readonly code?: string,
+    // Optional machine-readable extra (e.g. { reason }) that errorHandler
+    // includes in the JSON body when present.
+    public readonly details?: unknown
   ) {
     super(message);
   }
 }
+
+// Why Lago refused to apply a coupon, as a fixed enum. The raw Lago code is
+// logged, never returned.
+export type CouponRejectReason =
+  | "not_reusable"
+  | "already_applied"
+  | "already_used"
+  | "plan_overlap"
+  | "currency_mismatch"
+  | "terminated"
+  | "expired"
+  | "pending_free_downgrade"
+  | "other";
 
 export const billingErrors = {
   // Lago/Stripe unreachable, timed out, 5xx, or rejected OUR key.
@@ -138,6 +154,23 @@ export const billingErrors = {
       404,
       "Payment method not found",
       "BILLING_PAYMENT_METHOD_NOT_FOUND"
+    ),
+  couponNotFound: () =>
+    new BillingError("coupon code unknown", 404, "Coupon code not found", "BILLING_COUPON_NOT_FOUND"),
+  couponNotApplicable: (reason: CouponRejectReason, detail?: string) =>
+    new BillingError(
+      `coupon not applicable: ${reason}${detail ? ` (${detail})` : ""}`,
+      422,
+      "This coupon can't be applied",
+      "BILLING_COUPON_NOT_APPLICABLE",
+      { reason }
+    ),
+  couponRequiresPaidPlan: () =>
+    new BillingError(
+      "coupon apply refused: company is (or will be) on the free plan",
+      409,
+      "Coupons can only be applied on a paid plan. Apply it when you upgrade.",
+      "BILLING_COUPON_REQUIRES_PAID_PLAN"
     ),
   noStripeCustomer: () =>
     new BillingError(
