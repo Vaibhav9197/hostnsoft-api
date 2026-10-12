@@ -18,8 +18,8 @@ import {
 } from "../lib/lago";
 import { createLimiter, type LimitScope } from "../lib/rateLimit";
 import { COUPON_RATE_WINDOW_MS, COUPON_RATE_PER_USER, COUPON_RATE_PER_COMPANY } from "../lib/couponConfig";
-import { checkCoupon, resolveCouponRow } from "../services/couponCheck";
-import { lagoCodeFor, markCouponUsed } from "../lib/couponTable";
+import { checkCoupon, resolveCoupon } from "../services/couponCheck";
+import { markCouponUsed } from "../lib/couponTable";
 import { logger } from "../lib/logger";
 import { listStripePaymentMethods, detachStripePaymentMethod } from "../lib/stripe";
 import { setUpBillingForCompany } from "../services/billingCustomer";
@@ -214,8 +214,9 @@ billingRouter.put(
     let applied: LagoAppliedCoupon | null = null;
     let row = null;
     if (coupon_code) {
-      row = await resolveCouponRow(coupon_code);
-      applied = await applyLagoCoupon(companyId, lagoCodeFor(row));
+      const resolved = await resolveCoupon(coupon_code);
+      row = resolved.row;
+      applied = await applyLagoCoupon(companyId, resolved.coupon.code);
     }
 
     let subscription;
@@ -345,8 +346,8 @@ billingRouter.post(
       throw billingErrors.couponNotApplicable(check.blockers[0]);
     }
 
-    const row = await resolveCouponRow(coupon_code);
-    const applied = await applyLagoCoupon(companyId, lagoCodeFor(row));
+    const { row, coupon } = await resolveCoupon(coupon_code);
+    const applied = await applyLagoCoupon(companyId, coupon.code);
     if (row.is_single_use) await markCouponUsed(row.discount_coupon);
 
     await logAudit({

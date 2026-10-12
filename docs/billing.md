@@ -199,8 +199,10 @@ tax. Code in `src/services/couponCheck.ts` (rules), `src/lib/lago.ts`
   `original_coupon` (the Lago code to apply; blank = same), `internal_coupon`,
   `is_single_use` + `is_used` (global one-time; `is_used` is set after a
   successful apply, best effort, logged at error if the write fails),
-  `skip_payment_method` (upgrade without a card — pair it with a 100% or
-  plan-amount coupon in Lago, or the invoice can't be collected).
+  `skip_payment_method` (upgrade without a card). The flag alone isn't
+  enough: the card check is skipped only when the coupon also zeroes the
+  plan's first invoice (100%, or a fixed amount ≥ the plan price in the
+  same currency); otherwise the card is still required.
 - **Check, then apply.** `GET .../coupons/:code` is read only and returns
   `{ coupon, applicable, blockers[], warnings[] }`. Blockers: `already_used`, `terminated`,
   `expired`, `already_applied` (active on this customer, even if reusable, so
@@ -214,7 +216,7 @@ tax. Code in `src/services/couponCheck.ts` (rules), `src/lib/lago.ts`
   with a pending downgrade to free, and a plan change *to* free refuses a
   coupon. A free→paid upgrade with a coupon is fine (see PUT above).
 - **Rate limit.** `COUPON_RATE_PER_USER` (20) and `COUPON_RATE_PER_COMPANY`
-  (60) per `COUPON_RATE_WINDOW_MS` (1h), because the check endpoint tells
+  (60) per `COUPON_RATE_WINDOW_MS` (5 min), because the check endpoint tells
   valid codes from unknown ones.
 - **Audit.** `billing.coupon.apply` on standalone apply; inside a plan
   change the coupon is part of the `billing.plan.change` detail.

@@ -382,14 +382,31 @@ export interface LagoAppliedCoupon {
 
 // Read-only lookup; null when Lago has no coupon with that code. Lago may
 // return terminated coupons with terminated_at set — callers check it.
+// Lago codes are case-sensitive while people type whatever they like, so
+// try the code as given, then uppercase, then scan the list ignoring case. Always use the returned
+// coupon's `code` for later calls, never the user's spelling.
 export async function getLagoCoupon(code: string): Promise<LagoCoupon | null> {
-  try {
-    const body = await lagoRequest<{ coupon?: LagoCoupon }>(`/coupons/${encodeURIComponent(code)}`);
-    return body.coupon ?? null;
-  } catch (err) {
-    if (err instanceof LagoNotFound) return null;
-    throw err;
+  const exact = async (c: string) => {
+    try {
+      const body = await lagoRequest<{ coupon?: LagoCoupon }>(`/coupons/${encodeURIComponent(c)}`);
+      return body.coupon ?? null;
+    } catch (err) {
+      if (err instanceof LagoNotFound) return null;
+      throw err;
+    }
+  };
+  const direct = (await exact(code)) ?? (code !== code.toUpperCase() ? await exact(code.toUpperCase()) : null);
+  if (direct) return direct;
+  const want = code.toUpperCase();
+  for (let page = 1; page <= 10; page++) {
+    const body = await lagoRequest<{ coupons?: LagoCoupon[]; meta?: { next_page?: number | null } }>(
+      `/coupons?per_page=100&page=${page}`
+    );
+    const hit = (body.coupons ?? []).find((c) => c.code.toUpperCase() === want);
+    if (hit) return hit;
+    if (!body.meta?.next_page) break;
   }
+  return null;
 }
 
 // Lago's 422 codes for applied coupons aren't in its OpenAPI spec; this map

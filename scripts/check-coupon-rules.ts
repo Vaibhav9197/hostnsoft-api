@@ -9,7 +9,7 @@ const base: LagoCoupon = {
   frequency: "once", reusable: true, limited_plans: false, expiration: "no_expiration",
 };
 const row = { discount_coupon: "EMB-TEN" };
-const ctx = { row, appliedCodes: [], pendingFreeDowngrade: false, relevantPlanCode: "pro", relevantPlanCurrency: "USD", isUpgrade: false };
+const ctx = { row, appliedCodes: [], pendingFreeDowngrade: false, relevantPlanCode: "pro", relevantPlanCurrency: "USD", relevantPlanAmountCents: 1500, isUpgrade: false };
 
 let r = evaluateCoupon({ coupon: base, ...ctx });
 assert.equal(r.applicable, true); assert.deepEqual(r.warnings, []);
@@ -39,8 +39,17 @@ assert.equal(r.coupon.amountCents, 500);
 
 r = evaluateCoupon({ coupon: base, ...ctx, row: { ...row, is_single_use: true, is_used: true } });
 assert.deepEqual(r.blockers, ["already_used"]);
+// skip card only when flagged AND the coupon zeroes the first invoice
 r = evaluateCoupon({ coupon: base, ...ctx, row: { ...row, skip_payment_method: true } });
+assert.equal(r.skipPaymentMethod, false); // 10% doesn't zero it
+r = evaluateCoupon({ coupon: { ...base, percentage_rate: "100.0" }, ...ctx, row: { ...row, skip_payment_method: true } });
 assert.equal(r.skipPaymentMethod, true);
+r = evaluateCoupon({ coupon: { ...base, coupon_type: "fixed_amount", amount_cents: 1500, amount_currency: "USD", percentage_rate: null }, ...ctx, row: { ...row, skip_payment_method: true } });
+assert.equal(r.skipPaymentMethod, true);
+r = evaluateCoupon({ coupon: { ...base, coupon_type: "fixed_amount", amount_cents: 1400, amount_currency: "USD", percentage_rate: null }, ...ctx, row: { ...row, skip_payment_method: true } });
+assert.equal(r.skipPaymentMethod, false);
+r = evaluateCoupon({ coupon: { ...base, percentage_rate: "100.0" }, ...ctx, row: { ...row, skip_payment_method: false } });
+assert.equal(r.skipPaymentMethod, false); // not flagged
 r = evaluateCoupon({ coupon: { ...base, code: "lago-internal-code" }, ...ctx, row: { ...row, original_coupon: "lago-internal-code" } });
 assert.equal(r.coupon.code, "EMB-TEN");
 

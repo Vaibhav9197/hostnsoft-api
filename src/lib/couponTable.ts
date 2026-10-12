@@ -45,13 +45,14 @@ async function tableRequest<T>(path: string, init: RequestInit = {}): Promise<T>
   return (await res.json()) as T;
 }
 
-// Row for a user-facing code, or null. `code` is already validated to
-// [A-Za-z0-9_-] by couponCodeSchema, so it's safe inside the filter string.
+// Row for a user-facing code, or null. Matching ignores case (the table's
+// `=` is case-sensitive, so compare uppercased on both sides). `code` is
+// already validated to [A-Za-z0-9_-] by couponCodeSchema, so it's safe
+// inside the filter string.
 export async function getCouponRow(code: string): Promise<CouponRow | null> {
-  const filter = encodeURIComponent(`discount_coupon = '${code}'`);
+  const filter = encodeURIComponent(`upper(discount_coupon) = '${code.toUpperCase()}'`);
   const body = await tableRequest<{ data?: { rows?: CouponRow[] } }>(`?filter=${filter}&random=${Math.random()}`);
-  const rows = body.data?.rows ?? [];
-  return rows.find((r) => r.discount_coupon?.toUpperCase() === code.toUpperCase()) ?? rows[0] ?? null;
+  return body.data?.rows?.[0] ?? null;
 }
 
 // The Lago coupon code behind a row.

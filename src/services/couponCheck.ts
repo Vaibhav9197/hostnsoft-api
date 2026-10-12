@@ -39,12 +39,16 @@ export interface CouponCheckResult {
   skipPaymentMethod: boolean;
 }
 
-// A user-typed code resolved through the coupon table to its Lago code.
-// Throws couponNotFound when the table has no (non-internal) row.
-export async function resolveCouponRow(code: string): Promise<CouponRow> {
+// A user-typed code resolved through the coupon table to its Lago coupon.
+// Throws couponNotFound when the table has no (non-internal) row or Lago has
+// no coupon behind it. Matching ignores case on both sides; `coupon.code`
+// is Lago's exact spelling and is what apply must use.
+export async function resolveCoupon(code: string): Promise<{ row: CouponRow; coupon: LagoCoupon }> {
   const row = await getCouponRow(code);
   if (!row || row.internal_coupon) throw billingErrors.couponNotFound();
-  return row;
+  const coupon = await getLagoCoupon(lagoCodeFor(row));
+  if (!coupon) throw billingErrors.couponNotFound();
+  return { row, coupon };
 }
 
 export function summarizeCoupon(c: LagoCoupon): CouponSummary {
@@ -72,13 +76,11 @@ export async function checkCoupon(
   code: string,
   targetPlanCode?: string
 ): Promise<CouponCheckResult> {
-  const row = await resolveCouponRow(code);
-  const [coupon, applied, subscriptions] = await Promise.all([
-    getLagoCoupon(lagoCodeFor(row)),
+  const [{ row, coupon }, applied, subscriptions] = await Promise.all([
+    resolveCoupon(code),
     listAppliedCoupons(companyId),
     listSubscriptions(companyId),
   ]);
-  if (!coupon) throw billingErrors.couponNotFound();
 
   const active = subscriptions.find((s) => s.status === "active");
   if (!active) throw billingErrors.noCustomer();
@@ -93,6 +95,7 @@ export async function checkCoupon(
     pendingFreeDowngrade: subscriptions.some((s) => s.status === "pending" && s.plan_code === FREE_PLAN_CODE),
     relevantPlanCode,
     relevantPlanCurrency: plan?.amount_currency ?? null,
+    relevantPlanAmountCents: plan?.amount_cents ?? null,
     isUpgrade: targetPlanCode != null,
   });
 }
@@ -106,6 +109,7 @@ export function evaluateCoupon(input: {
   pendingFreeDowngrade: boolean;
   relevantPlanCode: string;
   relevantPlanCurrency: string | null;
+  relevantPlanAmountCents: number | null;
   isUpgrade: boolean;
   now?: number;
 }): CouponCheckResult {
@@ -139,6 +143,14 @@ export function evaluateCoupon(input: {
     applicable: blockers.length === 0,
     blockers,
     warnings,
-    skipPaymentMethod: Boolean(row.skip_payment_method),
+    // The table flag alone isn't enough: the coupon must also zero the
+    // plan's first invoice, or Lago would have nothing to collect with.
+    skipPaymentMethod: Boolean(row.skip_payment_method) && zeroesInvoice(coupon, input.relevantPlanAmountCents, input.relevantPlanCurrency),
   };
+}
+
+function zeroesInvoice(coupon: LagoCoupon, planAmountCents: number | null, planCurrency: string | null): boolean {
+  if (coupon.coupon_type === "percentage") return Number(coupon.percentage_rate) >= 100;
+  if (planAmountCents == null || !planCurrency || !coupon.amount_currency) return false;
+  return coupon.amount_currency.toUpperCase() === planCurrency.toUpperCase() && (coupon.amount_cents ?? 0) >= planAmountCents;
 }
