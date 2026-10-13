@@ -6,7 +6,7 @@ import { deployCredentialFields, resolveDeployActor } from "../services/deployAc
 import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 import { isCompanyOnFreePlan } from "../lib/lago";
-import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
+import { buildClaimUrl } from "../lib/orphanClaim";
 
 export const internalProjectsRouter = Router();
 
@@ -136,6 +136,11 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   // Free-plan flag for hostnsoft-deploy's footer.
   const isFreePlan = await isCompanyOnFreePlan(project.companyId);
 
+  // Only the deploy that created the orphan carries a code (see
+  // claimOrphanProject) — so only that one response has a link, and the
+  // link is the one copy of the code that ever leaves this service.
+  const claimUrl = claim.claimCode ? buildClaimUrl(project.slug, claim.claimCode) : null;
+
   res.json({
     projectId: project.id,
     slug: project.slug,
@@ -154,9 +159,13 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     ...(project.isOrphan && project.orphanExpiresAt
       ? {
         orphanExpiresAt: project.orphanExpiresAt.toISOString(),
-        orphanMessage: buildOrphanMessage(project.orphanExpiresAt),
+        orphanMessage: buildOrphanMessage(project.orphanExpiresAt, claimUrl),
         orphanLoginUrl: ORPHAN_LOGIN_URL,
         howToGetToken: buildTokenSteps(),
+        // The keep-this-app link for the deployer — first deploy only.
+        // hostnsoft-deploy relays it as links.claim; the status/lookup
+        // replies never carry it, since they need no credential.
+        ...(claimUrl ? { claimUrl } : {}),
       }
       : {}),
   });

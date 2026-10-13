@@ -57,6 +57,15 @@ model Project {
   isOrphan        Boolean   @default(false)
   orphanExpiresAt DateTime?
 
+  // SHA-256 of the one-time claim code in the claim link handed back on
+  // the deploy that created this orphan (see services/projectClaim.ts and
+  // lib/orphanClaim.ts). Only the hash is stored, like a deploy token:
+  // the code itself appears once, in that first deploy response, and
+  // never again. Cleared when the project is claimed by either path. Null
+  // on orphans created before this column existed — those can only be
+  // claimed by redeploying with a token.
+  claimCodeHash String?
+
   // The Deployment currently live on this project — set on every
   // successful deploy (internalDeployments.routes.ts) and every
   // successful rollback (deployments.routes.ts), so "what's actually

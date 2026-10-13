@@ -2,12 +2,16 @@ import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
+import { generateClaimCode } from "../lib/orphanClaim";
 import { checkSlug, type SlugRejection } from "../lib/reservedSlugs";
 
 export type ClaimResult =
   // adopted: this claim just moved a previously anonymous (orphan) app
   // into the caller's company.
-  | { project: Project; conflict: false; rejected: null; adopted?: boolean }
+  // claimCode: set only by claimOrphanProject, and only on the deploy that
+  // CREATED the orphan — the one time the raw code exists outside its hash
+  // (see lib/orphanClaim.ts). The route turns it into the claim link.
+  | { project: Project; conflict: false; rejected: null; adopted?: boolean; claimCode?: string }
   | { project: null; conflict: true; rejected: null }
   | { project: null; conflict: false; rejected: SlugRejection };
 
@@ -76,9 +80,11 @@ export async function claimProjectForCompany(
     // anonymous deploy is being claimed with a real token for the first
     // time: assign it to this company and clear every orphan field so it
     // behaves identically to a project that was always token-created.
+    // claimCodeHash goes too: a claimed app has nothing left to claim, so
+    // the link from the original deploy must stop working here as well.
     const adopted = await prisma.project.update({
       where: { id: project.id },
-      data: { companyId, isOrphan: false, orphanExpiresAt: null },
+      data: { companyId, isOrphan: false, orphanExpiresAt: null, claimCodeHash: null },
     });
     return { project: adopted, conflict: false, rejected: null, adopted: true };
   }
@@ -96,20 +102,31 @@ export async function claimProjectForCompany(
 // same anonymous session does NOT reset its expiry — the 24h clock
 // starts once, at first creation); a slug already claimed by a real
 // company is never touchable anonymously.
+//
+// A fresh orphan also gets its claim code here, in the same create: the
+// code is the deployer's proof of ownership for the claim link, so it is
+// handed back exactly once, to the deploy that brought the app into
+// being. An anonymous redeploy of an existing orphan gets no code — the
+// name alone must never be enough to obtain one, or anyone who guessed
+// the name could claim the app out from under its deployer.
 export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
   const rejected = await slugRejection(slug);
   if (rejected) return { project: null, conflict: false, rejected };
 
   let project: Project;
+  let claimCode: string | undefined;
   try {
+    const claim = generateClaimCode();
     project = await prisma.project.create({
       data: {
         slug,
         name: slug,
         isOrphan: true,
         orphanExpiresAt: new Date(Date.now() + ORPHAN_TTL_MS),
+        claimCodeHash: claim.hash,
       },
     });
+    claimCode = claim.code;
   } catch (err) {
     if (!isUniqueConstraintViolation(err)) throw err;
     project = await prisma.project.findUniqueOrThrow({ where: { slug } });
@@ -121,5 +138,5 @@ export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
     return { project: null, conflict: true, rejected: null };
   }
 
-  return { project, conflict: false, rejected: null };
+  return { project, conflict: false, rejected: null, ...(claimCode ? { claimCode } : {}) };
 }
