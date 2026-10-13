@@ -88,7 +88,6 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   }
   const actor = resolved.actor;
 
-<<<<<<< Updated upstream
   let project: Project;
   if (actor.companyId) {
     const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
@@ -97,7 +96,7 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
     }
     if (claim.conflict) {
       return res.status(409).json({
-        error: `Project slug "${body.projectSlug}" belongs to a different company`,
+        error: `Project slug "${body.projectSlug}" belongs to a different workspace`,
         code: "app_name_taken",
       });
     }
@@ -116,17 +115,6 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       return res.status(401).json(unauthorizedDeployTokenBody());
     }
     project = orphan;
-=======
-  const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
-  if (claim.rejected) {
-    return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
-  }
-  if (claim.conflict) {
-    return res.status(409).json({
-      error: `Project slug "${body.projectSlug}" belongs to a different workspace`,
-      code: "app_name_taken",
-    });
->>>>>>> Stashed changes
   }
 
   // finishedAt stays null while in_progress — set the moment the
