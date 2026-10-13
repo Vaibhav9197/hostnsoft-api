@@ -1,9 +1,13 @@
-import type { Project } from "@prisma/client";
+import type { Prisma, Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
-import { ORPHAN_TTL_MS } from "../lib/orphanConfig";
+import { ORPHAN_CLEANUP_INTERVAL_MS, ORPHAN_TTL_MS } from "../lib/orphanConfig";
 import { generateClaimCode } from "../lib/orphanClaim";
 import { checkSlug, type SlugRejection } from "../lib/reservedSlugs";
+
+// What the routes relay as a 409 — a reserved name (SlugRejection) or an
+// expired orphan (expiredOrphanRejection below). They only read these two.
+export type ClaimRejection = { reason: string; code: string };
 
 export type ClaimResult =
   // adopted: this claim just moved a previously anonymous (orphan) app
@@ -13,7 +17,40 @@ export type ClaimResult =
   // (see lib/orphanClaim.ts). The route turns it into the claim link.
   | { project: Project; conflict: false; rejected: null; adopted?: boolean; claimCode?: string }
   | { project: null; conflict: true; rejected: null }
-  | { project: null; conflict: false; rejected: SlugRejection };
+  | { project: null; conflict: false; rejected: ClaimRejection };
+
+/**
+ * An orphan whose 24 hours are up is frozen until orphan cleanup
+ * (services/orphanCleanup.ts) removes it: no redeploy, adopt or claim
+ * link may touch it. Cleanup decides what to delete from a list it reads
+ * once per run, so an expired orphan that could still be adopted or
+ * redeployed would have that new deploy — and, after an adopt, a
+ * company's project — torn down and deleted along with it.
+ *
+ * Every write that takes an orphan over puts this in its own where, not
+ * just in a check beforehand, so an orphan that expires between the read
+ * and the write can't slip through either. A null expiry never expires
+ * (cleanup's own query skips it too).
+ */
+export function unexpiredOrphanWhere(now: Date = new Date()): Prisma.ProjectWhereInput {
+  return { isOrphan: true, OR: [{ orphanExpiresAt: null }, { orphanExpiresAt: { gt: now } }] };
+}
+
+function isExpiredOrphan(project: Project): boolean {
+  return project.isOrphan && project.orphanExpiresAt !== null && project.orphanExpiresAt.getTime() <= Date.now();
+}
+
+// The name frees up once cleanup has run, so trying again later works —
+// as a fresh app, without the expired one's data.
+function expiredOrphanRejection(slug: string): ClaimRejection {
+  const minutes = Math.ceil(ORPHAN_CLEANUP_INTERVAL_MS / 60_000);
+  return {
+    reason:
+      `The temporary app "${slug}" has expired and is being removed, which takes up to ${minutes} minutes. ` +
+      `Deploy again after that to start it fresh under this name, or deploy now under a different name.`,
+    code: "app_expiring",
+  };
+}
 
 /**
  * Reserved names are refused only when the slug isn't already a project.
@@ -82,10 +119,23 @@ export async function claimProjectForCompany(
     // behaves identically to a project that was always token-created.
     // claimCodeHash goes too: a claimed app has nothing left to claim, so
     // the link from the original deploy must stop working here as well.
-    const adopted = await prisma.project.update({
-      where: { id: project.id },
+    // Only while its 24 hours are still running — see unexpiredOrphanWhere.
+    const moved = await prisma.project.updateMany({
+      where: { id: project.id, ...unexpiredOrphanWhere() },
       data: { companyId, isOrphan: false, orphanExpiresAt: null, claimCodeHash: null },
     });
+    if (moved.count === 0) {
+      // Either it expired, or someone else took it over (the claim link,
+      // another token) since the read above. Look again to say which.
+      const current = await prisma.project.findUnique({ where: { id: project.id } });
+      if (current && !current.isOrphan) {
+        return current.companyId === companyId
+          ? { project: current, conflict: false, rejected: null }
+          : { project: null, conflict: true, rejected: null };
+      }
+      return { project: null, conflict: false, rejected: expiredOrphanRejection(slug) };
+    }
+    const adopted = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
     return { project: adopted, conflict: false, rejected: null, adopted: true };
   }
 
@@ -136,6 +186,14 @@ export async function claimOrphanProject(slug: string): Promise<ClaimResult> {
     // Already claimed by a real company — an anonymous caller can never
     // take over or redeploy to it, even under its own name.
     return { project: null, conflict: true, rejected: null };
+  }
+
+  // Expired: refused, not reused — see unexpiredOrphanWhere. Nothing is
+  // written here, so a deploy that gets past this just before expiry is
+  // covered on hostnsoft-deploy's side instead: orphan cleanup skips any
+  // app with a deploy in flight (tearDownApp's ifIdle).
+  if (isExpiredOrphan(project)) {
+    return { project: null, conflict: false, rejected: expiredOrphanRejection(slug) };
   }
 
   return { project, conflict: false, rejected: null, ...(claimCode ? { claimCode } : {}) };

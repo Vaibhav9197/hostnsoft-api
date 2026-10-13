@@ -14,6 +14,7 @@ import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
 import { applyCurrentConfig } from "../services/redeploy";
 import { claimCodeMatches } from "../lib/orphanClaim";
+import { unexpiredOrphanWhere } from "../services/projectClaim";
 import { logger } from "../lib/logger";
 
 export const projectsRouter = Router();
@@ -113,9 +114,12 @@ projectsRouter.post(
     // isOrphan in the where, not just the id: two people opening the same
     // link at once (or a token redeploy landing in the same instant) must
     // end with exactly one claimant. Whoever's update matches zero rows
-    // lost, and sees the same 404 as a stale link.
+    // lost, and sees the same 404 as a stale link. The expiry is in the
+    // where too, so an app that expires between the check above and this
+    // write can't be claimed out from under orphan cleanup — see
+    // unexpiredOrphanWhere.
     const moved = await prisma.project.updateMany({
-      where: { id: candidate.id, isOrphan: true },
+      where: { id: candidate.id, ...unexpiredOrphanWhere() },
       data: {
         companyId: req.company!.id,
         createdBy: req.userId!,
