@@ -209,7 +209,7 @@ authRouter.post("/auth/switch-company", requireProxyToken, async (req, res) => {
   const { companyId } = switchCompanySchema.parse(req.body);
 
   if (!(await isCompanyMember(req.userId!, companyId))) {
-    return res.status(404).json({ error: "Company not found" });
+    return res.status(404).json({ error: "Workspace not found" });
   }
 
   await switchCompany(req.proxyAuthToken!, companyId);

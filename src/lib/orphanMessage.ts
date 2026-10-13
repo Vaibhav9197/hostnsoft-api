@@ -20,7 +20,7 @@ export const PUBLIC_TOKEN_REQUEST_URL = `${API_PUBLIC_URL}/public/deploy-tokens/
 
 const DASHBOARD_STEPS = [
   `Open ${FRONTEND_ORIGIN} and sign in (or create an account).`,
-  `Select your company (create one if you don't have any).`,
+  `Select your workspace (create one if you don't have any).`,
   `Open "Deploy Tokens" for that company.`,
   `Create a token (or copy an existing one).`,
 ];
@@ -28,8 +28,8 @@ const DASHBOARD_STEPS = [
 const API_STEPS = [
   `Send POST ${PUBLIC_TOKEN_REQUEST_URL} with header "Content-Type: application/json" ` +
   `and JSON body {"email": "<your email address>"}.`,
-  `If you have no account yet, one is created for you along with a company.`,
-  `Check that inbox (and spam): a new deploy token for each of your companies is emailed to it (existing tokens keep working).`,
+  `If you have no account yet, one is created for you along with a workspace.`,
+  `Check that inbox (and spam): a new deploy token for each of your workspaces is emailed to it (existing tokens keep working).`,
   `Copy the token from the email.`,
 ];
 

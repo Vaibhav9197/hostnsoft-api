@@ -116,14 +116,14 @@ export const billingErrors = {
     new BillingError(
       "no Lago customer for this company",
       404,
-      "Billing is not set up for this company",
+      "Billing is not set up for this workspace",
       "BILLING_CUSTOMER_NOT_FOUND"
     ),
   customerExists: () =>
     new BillingError(
-      "Lago customer already exists for this company",
+      "Billing is already set up for this workspace",
       409,
-      "Billing is already set up for this company",
+      "Billing is already set up for this workspace",
       "BILLING_CUSTOMER_EXISTS"
     ),
   planNotAvailable: (code: string) =>
@@ -137,7 +137,7 @@ export const billingErrors = {
     new BillingError(
       `company is already on plan ${code}`,
       409,
-      "The company is already on that plan",
+      "The workspace is already on that plan",
       "BILLING_ALREADY_ON_PLAN"
     ),
   // 402 Payment Required: the caller must add a card (checkout-url) first.

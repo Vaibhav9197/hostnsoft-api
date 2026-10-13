@@ -89,7 +89,7 @@ export async function loadAppBySlug(req: Request, res: Response, next: NextFunct
     }
 
     return res.status(404).json({
-      error: `No app named "${req.params.appName}" in this company.`,
+      error: `No app named "${req.params.appName}" in this workspace.`,
       code: "app_not_found",
     });
   }
@@ -108,7 +108,7 @@ export async function loadAppById(req: Request, res: Response, next: NextFunctio
   });
 
   if (!project) {
-    return res.status(404).json({ error: "No such app in this company.", code: "app_not_found" });
+    return res.status(404).json({ error: "No such app in this workspace.", code: "app_not_found" });
   }
 
   req.project = project;

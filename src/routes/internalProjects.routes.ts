@@ -95,7 +95,7 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
 
   if (claim.conflict) {
     return res.status(409).json({
-      error: `App name "${slug}" is already in use by a different company`,
+      error: `App name "${slug}" is already in use by a different workspace`,
       code: "app_name_taken",
     });
   }

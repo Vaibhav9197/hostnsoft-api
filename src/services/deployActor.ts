@@ -129,7 +129,7 @@ export async function resolveDeployActor(
         ok: false,
         status: 403,
         body: {
-          error: "That account is not a member of the company this app belongs to",
+          error: "That account is not a member of the workspace this app belongs to",
           code: "not_a_company_member",
         },
       };

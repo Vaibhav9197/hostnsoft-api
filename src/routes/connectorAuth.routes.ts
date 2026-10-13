@@ -97,7 +97,7 @@ connectorAuthRouter.post(
       return res.status(409).json({
         error: "no_company",
         message:
-          "This account has no company yet. Finish setup on the Embarko dashboard, then reconnect.",
+          "This account has no workspace yet. Finish setup on the Embarko dashboard, then reconnect.",
       });
     }
 

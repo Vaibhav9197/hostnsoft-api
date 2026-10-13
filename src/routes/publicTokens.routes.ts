@@ -16,7 +16,7 @@ const requestSchema = z.object({ email: z.string().trim().email().max(254) });
 // The one response body every accepted request gets, whatever happened
 // behind it (see publicTokenRequest.ts). Do not vary it.
 export const PUBLIC_TOKEN_ACCEPTED_MESSAGE =
-  "If this email address is valid, a deploy token for each of your companies has been sent to it. " +
+  "If this email address is valid, a deploy token for each of your workspaces has been sent to it. " +
   "Check the inbox (and spam folder). Each request creates a new token; your existing tokens keep working.";
 
 // Three independent windows (email, IP, global), each its own counter in

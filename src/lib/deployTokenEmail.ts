@@ -63,8 +63,8 @@ export function renderDeployTokenEmail(input: DeployTokenEmailInput): string {
           <td style="padding:0 0 18px 0; font-size:14px; line-height:1.6; color:#2c3e50;">
             ${
               plural
-                ? "Here is a new deploy token for each company you belong to."
-                : "Here is a new deploy token for your company."
+                ? "Here is a new deploy token for each workspace you belong to."
+                : "Here is a new deploy token for your workspace."
             }
             Use it as the <code style="${MONO} font-size:13px;">Authorization</code> header when deploying.
           </td>

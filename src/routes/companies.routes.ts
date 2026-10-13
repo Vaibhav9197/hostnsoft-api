@@ -73,7 +73,7 @@ companiesRouter.get("/companies/:companyId", requireProxyToken, loadCompanyConte
   // A member a moment ago, but the company no longer resolves — deleted on
   // proxy inside the membership cache window.
   if (!company) {
-    return res.status(404).json({ error: "Company not found" });
+    return res.status(404).json({ error: "Workspace not found" });
   }
 
   res.json({ ...company, projectCount });

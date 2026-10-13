@@ -184,7 +184,7 @@ type RawUser =
 
 function toCompany(raw: RawCompany): ProxyCompany | null {
   if (!raw?.id) return null;
-  return { ...raw, id: String(raw.id), name: raw.name || "Unnamed company" };
+  return { ...raw, id: String(raw.id), name: raw.name || "Unnamed workspace" };
 }
 
 function toUser(raw: RawUser): ProxyUser | null {

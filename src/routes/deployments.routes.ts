@@ -100,7 +100,7 @@ deploymentsRouter.post(
       // 502 (which reads as "something's wrong with the service").
       if (outcome.code === "rollback_image_unavailable") {
         return res.status(422).json({
-          error: `Cannot roll back: the image is no longer available. You can only roll back up to the last ${outcome.retainCount} deployments.`,
+          error: `Cannot roll back: that version is too old to restore. You can only roll back up to the last ${outcome.retainCount} deployments.`,
           code: "rollback_image_unavailable",
           retainCount: outcome.retainCount,
         });

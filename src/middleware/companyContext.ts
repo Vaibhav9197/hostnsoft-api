@@ -19,11 +19,11 @@ export async function loadCompanyContext(
 ) {
   const { companyId } = req.params;
   if (!companyId) {
-    return res.status(404).json({ error: "Company not found" });
+    return res.status(404).json({ error: "Workspace not found" });
   }
 
   if (!(await isCompanyMember(req.userId!, companyId))) {
-    return res.status(404).json({ error: "Company not found" });
+    return res.status(404).json({ error: "Workspace not found" });
   }
 
   req.company = { id: companyId };
