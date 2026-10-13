@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { createDeploymentWithNextVersion, markProjectDeploymentLive } from "../services/deploymentVersioning";
 import { unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
@@ -13,11 +14,13 @@ export const internalDeploymentsRouter = Router();
 
 const recordSchema = z.object({
   // Same credential shapes as POST /internal/projects/claim — a deploy
-  // token, or a proxy_auth_token + companyId for a dashboard upload. See
-  // services/deployActor.ts. Unlike claim, "neither" is not a valid
-  // combination here (anonymous deploys record no history at all — see
-  // docs/Anonymous-deploy-req.md's out-of-scope list), so it's rejected
-  // below rather than silently accepted as a companyless row.
+  // token, or a proxy_auth_token + companyId for a dashboard upload, or
+  // (since 2026-10-08) neither, for an anonymous deploy. See
+  // services/deployActor.ts. An anonymous call is accepted only while the
+  // project is still an unclaimed orphan — the row it writes is what lets
+  // the claim link keep the app with no rebuild (see projects.routes.ts's
+  // POST /companies/:companyId/orphans/claim): applyCurrentConfig needs
+  // the running image's tag, and only this endpoint knows it.
   ...deployCredentialFields,
   projectSlug: z.string().min(1),
   // Whatever hostnsoft-deploy used for the image tag (X-App-Version, or
@@ -83,24 +86,35 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   if (!resolved.ok) {
     return res.status(resolved.status).json(resolved.body);
   }
-  if (!resolved.actor.companyId) {
-    // No credential at all. There's no company to attribute history to,
-    // and this endpoint has nothing else to fall back on — same 401 a
-    // dead deploy token gets, since from hostnsoft-deploy's side both
-    // mean "this deploy can't be recorded, don't retry as-is".
-    return res.status(401).json(unauthorizedDeployTokenBody());
-  }
   const actor = resolved.actor;
 
-  const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
-  if (claim.rejected) {
-    return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
-  }
-  if (claim.conflict) {
-    return res.status(409).json({
-      error: `Project slug "${body.projectSlug}" belongs to a different company`,
-      code: "app_name_taken",
-    });
+  let project: Project;
+  if (actor.companyId) {
+    const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
+    if (claim.rejected) {
+      return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
+    }
+    if (claim.conflict) {
+      return res.status(409).json({
+        error: `Project slug "${body.projectSlug}" belongs to a different company`,
+        code: "app_name_taken",
+      });
+    }
+    project = claim.project;
+  } else {
+    // No credential at all: an anonymous deploy. Unlike the claim
+    // endpoint this never creates a project — hostnsoft-deploy has already
+    // claimed (or reused) the orphan before building, so the row must
+    // exist and must still be an orphan. A claimed app gets the same 401 a
+    // dead deploy token does: from hostnsoft-deploy's side both mean
+    // "this deploy can't be recorded, don't retry as-is", and an anonymous
+    // caller must never be able to append history to someone's claimed
+    // app by name alone.
+    const orphan = await prisma.project.findUnique({ where: { slug: body.projectSlug } });
+    if (!orphan || !orphan.isOrphan) {
+      return res.status(401).json(unauthorizedDeployTokenBody());
+    }
+    project = orphan;
   }
 
   // finishedAt stays null while in_progress — set the moment the
@@ -111,7 +125,7 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   let deployment;
   if (body.deploymentId) {
     const existing = await prisma.deployment.findFirst({
-      where: { id: body.deploymentId, projectId: claim.project.id },
+      where: { id: body.deploymentId, projectId: project.id },
     });
     if (!existing) {
       return res.status(404).json({ error: "Deployment not found" });
@@ -127,15 +141,19 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       },
     });
   } else {
-    deployment = await createDeploymentWithNextVersion(claim.project.id, {
+    deployment = await createDeploymentWithNextVersion(project.id, {
       appVersion: body.appVersion,
       imageTag: body.imageTag,
       memoryMb: body.memoryMb,
       status: body.status,
       errorDetail: body.errorDetail,
-      triggeredBy: actor.triggeredBy,
+      // "anonymous" for a deploy with no credential: there is no label and
+      // no person to name, but history should still say so rather than
+      // leave the column blank.
+      triggeredBy: actor.triggeredBy ?? "anonymous",
       // From the credential, not the request: a proxy_auth_token is a
-      // person in the dashboard, a deploy token is an agent/CI/script.
+      // person in the dashboard, a deploy token is an agent/CI/script —
+      // and so is an anonymous deploy, which only ever comes from one.
       source: actor.kind === "proxyAuth" ? "dashboard" : "agent",
       agentName: actor.kind === "proxyAuth" ? null : body.agentName ?? null,
       finishedAt,
@@ -151,7 +169,7 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       await logAudit({
         actorUserId: actor.userId,
         companyId: actor.companyId,
-        projectId: claim.project.id,
+        projectId: project.id,
         action: "project.deploy",
         details: `uploaded ${deployment.version} (${body.appVersion})`,
       });
@@ -180,10 +198,10 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   // not a case this endpoint needs to guard against today).
   if (body.status === "success") {
     await markProjectDeploymentLive(
-      claim.project.id,
+      project.id,
       deployment.id,
       body.memoryMb,
-      claim.project.memoryMb,
+      project.memoryMb,
       body.kind
     );
   }

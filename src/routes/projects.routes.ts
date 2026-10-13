@@ -12,6 +12,9 @@ import { startSlugChange, resolveSlugChangeStatus, SLUG_CHANGE_STATUS } from "..
 import { tearDownApp } from "../services/appTeardown";
 import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
+import { applyCurrentConfig } from "../services/redeploy";
+import { claimCodeMatches } from "../lib/orphanClaim";
+import { logger } from "../lib/logger";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -62,6 +65,108 @@ projectsRouter.post(
       details: slug,
     });
     res.status(201).json(project);
+  }
+);
+
+const claimOrphanSchema = z.object({
+  appName: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  code: z.string().min(1).max(200),
+});
+
+// Keep an anonymous app by signing in — the claim-link path, see
+// docs/Anonymous-deploy-req.md ("Claim link", 2026-10-08). The deploy that
+// created the orphan handed back a link to the dashboard's /claim page
+// carrying the app name and a one-time code (lib/orphanClaim.ts); that
+// page signs the person in, has them pick (or create) a company, and
+// calls this. The code is the proof of ownership — an orphan stores no
+// owner, so without it anyone who knew the name could take the app.
+//
+// Redeploying the same name with a deploy token (services/projectClaim.ts's
+// adopt branch) still claims too, and stays the fallback for a lost link.
+//
+// Wrong code, unknown name, expired, already claimed: all the same 404, on
+// purpose. Telling them apart would let someone holding only a name learn
+// whether an app exists and whether it is still up for grabs.
+projectsRouter.post(
+  "/companies/:companyId/orphans/claim",
+  loadCompanyContext,
+  async (req, res) => {
+    const { appName, code } = claimOrphanSchema.parse(req.body);
+
+    const notFound = () =>
+      res.status(404).json({
+        error:
+          "This link doesn't match a temporary app. It may have been claimed already, or its 24 hours may have run out.",
+        code: "claim_not_found",
+      });
+
+    const candidate = await prisma.project.findUnique({ where: { slug: appName } });
+    if (
+      !candidate ||
+      !candidate.isOrphan ||
+      (candidate.orphanExpiresAt !== null && candidate.orphanExpiresAt.getTime() <= Date.now()) ||
+      !claimCodeMatches(code, candidate.claimCodeHash)
+    ) {
+      return notFound();
+    }
+
+    // isOrphan in the where, not just the id: two people opening the same
+    // link at once (or a token redeploy landing in the same instant) must
+    // end with exactly one claimant. Whoever's update matches zero rows
+    // lost, and sees the same 404 as a stale link.
+    const moved = await prisma.project.updateMany({
+      where: { id: candidate.id, isOrphan: true },
+      data: {
+        companyId: req.company!.id,
+        createdBy: req.userId!,
+        isOrphan: false,
+        orphanExpiresAt: null,
+        claimCodeHash: null,
+      },
+    });
+    if (moved.count === 0) return notFound();
+    const project = await prisma.project.findUniqueOrThrow({ where: { id: candidate.id } });
+
+    await logAudit({
+      actorUserId: req.userId,
+      companyId: req.company!.id,
+      projectId: project.id,
+      action: "project.claim",
+      details: `${project.slug} (claim link)`,
+    });
+
+    // The app is claimed from here on whatever happens below — the
+    // deletion is cancelled and it is in the dashboard. What's left is
+    // the orphan banner, which hostnsoft-deploy's config push rebuilds
+    // the running image's job spec without (no rebuild, no source). That
+    // needs the current image's tag, which the anonymous deploy recorded
+    // (internalDeployments.routes.ts); an orphan from before that was
+    // recorded, or whose record call failed, has nothing to re-push, so
+    // the banner stays until the next deploy. Said in the reply rather
+    // than failing the claim: losing the app over a missing history row
+    // would be far worse than a stale banner.
+    const outcome = await applyCurrentConfig(project, {
+      triggeredBy: req.userId!,
+      source: "dashboard",
+      agentName: null,
+    });
+    if (!outcome.ok) {
+      logger.warn(
+        `[orphanClaim] "${project.slug}" claimed by ${req.userId} but the banner could not be cleared now (${outcome.code}); it clears on the next deploy`
+      );
+    }
+
+    const [health, status] = await Promise.all([
+      fetchAppHealth(project.slug),
+      resolveProjectStatus(project.currentDeploymentId),
+    ]);
+    res.json({
+      project: { ...project, status, health },
+      // Whether the no-rebuild re-push without the banner was started.
+      applied: outcome.ok,
+      deploymentId: outcome.ok ? outcome.deployment.id : null,
+      bannerClearsOn: outcome.ok ? "now" : "next_deploy",
+    });
   }
 );
 
