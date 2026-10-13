@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { rememberCompany } from "./companyStore";
 import { TtlCache } from "../lib/ttlCache";
 import { createLagoCustomer, getLagoCustomer, subscribeToFreePlan } from "../lib/lago";
 import type { CreateLagoCustomerInput, LagoCustomer, LagoSubscription } from "../lib/lago";
@@ -55,6 +56,7 @@ export async function setUpBillingForCompany(
     }
   );
 
+  await rememberCompany(companyId, { lagoCustomerId: customer.lago_id, stripeCustomerId });
   const subscription = await subscribeToFreePlan(companyId);
   return { customer, subscription };
 }

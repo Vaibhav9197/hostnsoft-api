@@ -8,6 +8,7 @@
 // use as Lago's external_id (see lagoCustomerExternalId).
 
 import { logger } from "./logger";
+import { rememberCompany, getStoredPlanCode } from "../services/companyStore";
 import {
   LAGO_API_URL,
   FREE_PLAN_CODE,
@@ -229,6 +230,8 @@ export async function assignPlan(companyId: string, planCode: string): Promise<L
   if (!body.subscription) {
     throw billingErrors.rejected("lago", "did not return the subscription");
   }
+  // Only an active (immediate) change is "current"; a pending downgrade lands via the webhook.
+  if (body.subscription.status === "active") await rememberCompany(companyId, { planCode });
   return body.subscription;
 }
 
@@ -259,15 +262,16 @@ export async function getActiveSubscription(companyId: string): Promise<LagoSubs
 
 // Drives hostnsoft-deploy's "powered by" footer. No subscription counts as
 // free. Billing being unreachable must never block a deploy or config
-// push, so a failure means "not free" (no footer) and a warning.
+// push, so a failure falls back to the plan mirrored in our Company row,
+// and "not free" (no footer) if that is unknown too.
 export async function isCompanyOnFreePlan(companyId: string | null | undefined): Promise<boolean> {
   if (!companyId) return false;
   try {
     const sub = await getActiveSubscription(companyId);
     return !sub || sub.plan_code === FREE_PLAN_CODE;
   } catch (err) {
-    logger.warn(`[billing] free-plan check failed for ${companyId}: ${(err as Error).message}`);
-    return false;
+    logger.warn(`[billing] free-plan check failed for ${companyId}, using stored plan: ${(err as Error).message}`);
+    return (await getStoredPlanCode(companyId).catch(() => null)) === FREE_PLAN_CODE;
   }
 }
 
