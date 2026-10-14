@@ -13,10 +13,15 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
   res.setHeader("X-Request-Id", requestId);
 
   const url = redactSecrets(req.originalUrl);
+  // deploy-service polls /health once a minute for the uptime monitor;
+  // logging every healthy answer would add ~2900 lines a day. A failing
+  // one is still logged, alongside the health route's own reason.
+  const quiet = req.path === "/health";
 
   runWithRequestId(requestId, () => {
-    logger.info(`--> ${req.method} ${url}`);
+    if (!quiet) logger.info(`--> ${req.method} ${url}`);
     res.on("finish", () => {
+      if (quiet && res.statusCode < 400) return;
       logger.info(`<-- ${req.method} ${url} ${res.statusCode}`);
     });
     next();
