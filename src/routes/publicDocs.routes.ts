@@ -4,8 +4,8 @@ export const publicDocsRouter = Router();
 
 // The customer-facing docs used to be authored in this repo, under
 // public-docs/, and served from here as both HTML and raw markdown. They now
-// live in the site repo (hostnsoft/content/docs/) and are bundled into the
-// site at build time, so embarko.ai is the only place they exist.
+// are the agent guide on the website (embarko.ai/docs, built in the site
+// repo), so embarko.ai is the only place they exist.
 //
 // Two copies of the same documentation is how they drift, and they did: this
 // repo kept serving a description of a synchronous deploy API for some time
@@ -18,9 +18,10 @@ export const publicDocsRouter = Router();
 const DOC_DESTINATIONS: Record<string, string> = {
   index: "https://embarko.ai/docs",
   docs: "https://embarko.ai/docs",
-  troubleshoot: "https://embarko.ai/docs/troubleshoot",
-  // Shortened on the site; the old slug is what the redirect has to match.
-  "limitations-and-recommendations": "https://embarko.ai/docs/limitations",
+  // Straight to the guide topic that replaced each page, not via the site's
+  // own redirects for the old addresses.
+  troubleshoot: "https://embarko.ai/docs/errors",
+  "limitations-and-recommendations": "https://embarko.ai/docs/prerequisites",
   hackathons: "https://embarko.ai/hackathons",
 };
 

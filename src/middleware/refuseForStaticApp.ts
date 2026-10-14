@@ -1,9 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import { API_PUBLIC_URL } from "../lib/publicTokenConfig";
 
-// The deploy service answers on the same host, without /api: that is where
-// its capabilities topics live.
-const STATIC_SITES_HELP = `${API_PUBLIC_URL.replace(/\/api$/, "")}/capabilities/static-sites`;
+// The agent guide's topic on static sites: what they can't do, and why.
+const STATIC_SITES_HELP = "https://embarko.ai/docs/static-sites";
 
 // A static site (Project.kind "static") is served straight from its files:
 // no process runs, so nothing reads env vars and there is no memory to

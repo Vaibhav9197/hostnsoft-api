@@ -161,7 +161,7 @@ appScoped.delete("/", async (req, res) => {
 // Keys only, never values.
 //
 // Env vars double as this platform's secret store (there is no separate
-// one — /capabilities reports secrets as unavailable), so returning
+// one — the agent guide says so), so returning
 // values here would pull customer credentials into an agent's context,
 // which is transcribed, summarised and often retained. An agent needs to
 // know WHICH vars are set in order to reason about configuration; it
