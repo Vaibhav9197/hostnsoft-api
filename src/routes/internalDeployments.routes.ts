@@ -46,7 +46,15 @@ const recordSchema = z.object({
   // updated in place (see deploymentId below) rather than a second row
   // being created.
   status: z.enum(["in_progress", "success", "failed"]),
-  imageTag: z.string().optional(),
+  // Defense in depth: this value is later interpolated into a shell command
+  // and a Nomad job spec by hostnsoft-deploy, so it must be exactly an
+  // "<app>:<version>" image reference — letters, digits, dot, dash,
+  // underscore only. The handler additionally checks it belongs to this
+  // project's slug. A malformed tag is rejected before it is ever stored.
+  imageTag: z
+    .string()
+    .regex(/^[a-z0-9-]+:[A-Za-z0-9._-]+$/, 'imageTag must be "<app>:<version>"')
+    .optional(),
   memoryMb: z.number().int().optional(),
   errorDetail: z.string().optional(),
   // "static" (files served directly, no server process) or "service"
@@ -97,6 +105,13 @@ const recordSchema = z.object({
 // duplicating the create-then-catch-conflict logic.
 internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) => {
   const body = recordSchema.parse(req.body);
+
+  // The image name must be this project's own slug — a recorded tag is only
+  // ever "<projectSlug>:<version>". Blocks pointing a deployment row at
+  // another app's image (see services/redeploy.ts, which later runs it).
+  if (body.imageTag && body.imageTag.split(":")[0] !== body.projectSlug) {
+    return res.status(400).json({ error: "imageTag must reference this project's own image", code: "invalid_image_tag" });
+  }
 
   const resolved = await resolveDeployActor(req, body);
   if (!resolved.ok) {
