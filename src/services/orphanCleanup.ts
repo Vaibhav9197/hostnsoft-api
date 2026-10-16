@@ -10,6 +10,13 @@
  * block the DB row from being cleaned up, or an expired orphan would
  * pile up forever waiting for a teardown that keeps failing. A failed
  * teardown is logged for manual follow-up, not retried indefinitely.
+ *
+ * The one exception is a deploy still in flight (tearDownApp's "busy"):
+ * that orphan is skipped and picked up again next run, once the deploy has
+ * finished. Nothing new can start on it meanwhile — an expired orphan
+ * can't be redeployed, adopted or claimed (projectClaim.ts's
+ * unexpiredOrphanWhere) — so this only ever waits out a deploy that began
+ * before the 24 hours ran out.
  */
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
@@ -22,9 +29,22 @@ async function cleanupExpiredOrphans(): Promise<void> {
   });
 
   for (const project of expired) {
-    await tearDownApp(project.slug);
+    const teardown = await tearDownApp(project.slug, { ifIdle: true });
+    if (teardown === "busy") {
+      logger.info(`[orphanCleanup] "${project.slug}" has a deploy in progress, left for the next run`);
+      continue;
+    }
     try {
-      await prisma.project.delete({ where: { id: project.id } });
+      // Re-checked in the delete itself, not trusted from the list read
+      // above: only a row that is STILL an expired orphan goes. Anything
+      // that took the app over since is never deleted here.
+      const removed = await prisma.project.deleteMany({
+        where: { id: project.id, isOrphan: true, orphanExpiresAt: { lt: new Date() } },
+      });
+      if (removed.count === 0) {
+        logger.warn(`[orphanCleanup] "${project.slug}" is no longer an expired orphan, project row kept`);
+        continue;
+      }
       logger.info(`[orphanCleanup] removed expired orphan project "${project.slug}"`);
     } catch (e) {
       logger.error(`[orphanCleanup] could not delete project row for "${project.slug}": ${(e as Error).message}`);
