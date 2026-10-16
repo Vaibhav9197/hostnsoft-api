@@ -37,5 +37,5 @@ export function startOrphanCleanupLoop(): void {
     cleanupExpiredOrphans().catch((e) => {
       logger.error(`[orphanCleanup] loop iteration failed: ${(e as Error).message}`);
     });
-  }, ORPHAN_CLEANUP_INTERVAL_MS);
+  }, ORPHAN_CLEANUP_INTERVAL_MS).unref(); // .unref(): don't keep the process alive on shutdown
 }

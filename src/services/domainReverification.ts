@@ -36,5 +36,5 @@ export function startDomainReverificationLoop(): void {
     reverifyAllActiveDomains().catch((e) => {
       logger.error(`[domainReverification] loop iteration failed: ${(e as Error).message}`);
     });
-  }, DOMAIN_REVERIFICATION_INTERVAL_MS);
+  }, DOMAIN_REVERIFICATION_INTERVAL_MS).unref(); // .unref(): don't keep the process alive on shutdown
 }
