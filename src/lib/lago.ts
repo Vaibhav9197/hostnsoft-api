@@ -193,6 +193,15 @@ export async function createLagoCustomer(
   return body.customer;
 }
 
+// POST /customers is create-or-update by external_id; sending only the
+// name leaves everything else on the customer untouched.
+export async function updateLagoCustomerName(companyId: string, name: string): Promise<void> {
+  await lagoRequest(`/customers`, {
+    method: "POST",
+    body: JSON.stringify({ customer: { external_id: lagoCustomerExternalId(companyId), name } }),
+  });
+}
+
 // ---- Subscriptions -------------------------------------------------------
 
 export interface LagoSubscription {

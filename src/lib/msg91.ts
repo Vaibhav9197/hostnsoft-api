@@ -120,6 +120,20 @@ async function proxyRequest<T>(
       PROXY_USER_LIMIT_CODE
     );
   }
+  if (response.status === 422) {
+    // Proxy's input validation (e.g. updateCompany without an email). Its
+    // message is meant for the user, so it surfaces as a 400 verbatim.
+    const message = await response
+      .json()
+      .then((b: unknown) => { const m = (b as { message?: unknown })?.message; return typeof m === "string" ? m : null; })
+      .catch(() => null);
+    throw new ProxyError(
+      `proxy returned 422 on ${path}: ${message ?? "unknown"}`,
+      400,
+      message ?? "Identity service rejected the input",
+      "PROXY_INVALID_INPUT"
+    );
+  }
   if (!response.ok) {
     throw rejectedError(`proxy returned ${response.status} on ${path}`);
   }
@@ -367,6 +381,40 @@ export async function createCompany(
 
   await identityByPat.delete(proxyAuthToken);
   return created;
+}
+
+export interface UpdateCompanyInput {
+  name: string;
+  email: string;
+  meta?: Record<string, unknown>;
+  timezone?: string;
+  timeZoneName?: string;
+}
+
+// PUT /c/updateCompany — acts on the PAT's *current* company (no id in the
+// call), so callers switchCompany first when needed. Proxy requires name
+// AND email on every update, and does not merge meta: send the full value.
+export async function updateCompany(
+  proxyAuthToken: string,
+  companyId: string,
+  company: UpdateCompanyInput
+): Promise<ProxyCompany> {
+  const body = (await userRequest(proxyAuthToken, `/updateCompany`, {
+    method: "PUT",
+    body: JSON.stringify({ company }),
+  })) as ProxySingleEnvelope<RawCompany>;
+
+  if (body.hasError) {
+    throw rejectedError(`proxy refused updateCompany: ${body.message ?? "unknown"}`);
+  }
+
+  await Promise.all([identityByPat.delete(proxyAuthToken), companyCache.delete(companyId)]);
+  // Proxy's update response shape is not relied on; re-read the record.
+  const updated = await getCompanyById(companyId);
+  if (!updated) {
+    throw rejectedError("proxy did not return the updated company");
+  }
+  return updated;
 }
 
 // The frontend revokes the PAT against proxy directly on logout; our job is
