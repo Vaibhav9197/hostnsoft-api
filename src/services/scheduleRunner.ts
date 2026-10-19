@@ -114,7 +114,7 @@ function callApp(slug: string, path: string, headers: Record<string, string>): P
       req.destroy();
       finish({
         httpStatus: null,
-        error: `No complete response within ${Math.round(SCHEDULE_RUN_TIMEOUT_MS / 1000)}s (wake-up included). Reply sooner and finish the work in the background.`,
+        error: `No complete response within ${Math.round(SCHEDULE_RUN_TIMEOUT_MS / 1000)}s. Reply sooner and finish the work in the background.`,
         responseExcerpt: null,
       });
     }, SCHEDULE_RUN_TIMEOUT_MS);
