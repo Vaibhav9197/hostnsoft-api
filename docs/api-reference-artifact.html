@@ -1912,6 +1912,30 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
 
     <hr class="rule" />
 
+    <section class="resource" id="health">
+      <div class="resource-head"><h2>Health <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">Which code is serving, for uptime checks and for confirming a deploy. Both services read their git commit once at startup, so this reports what is loaded in memory, not what was pulled onto disk. The prod deploy workflow polls it after each redeploy and fails unless <code>commit</code> is the commit it just pushed.</p>
+
+      <article class="endpoint" id="ep-health">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/health</span>
+          <span class="role-chip">none</span>
+        </div>
+        <p class="endpoint-desc">This API at <code>ship.embarko.ai/api/health</code>; the deploy endpoint at <code>ship.embarko.ai/health</code> (same fields, <code>status: "ok"</code>). <code>commit</code> is the full SHA, or <code>"unknown"</code> if git could not be read (a <code>GIT_COMMIT</code> env var overrides it).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{ "status": "ok v1",
+  "commit": "46022720728655ca7b4b7650ed2f52061d967424",
+  "startedAt": "2026-10-19T06:30:12.481Z" }</code></pre>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <hr class="rule" />
+
     <section class="resource" id="models">
       <div class="resource-head"><h2>Data models</h2></div>
       <p class="resource-intro">Only what's local to this API. <strong>There is no User, Company, or CompanyMembership table</strong> — every <code>userId</code>/<code>companyId</code> below is a plain proxy id string with no foreign key, since the row it refers to isn't ours.</p>
