@@ -6,12 +6,11 @@
  * Same Schedule and Run shapes as the agent API (services/schedules.ts).
  */
 import { Router } from "express";
-import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { loadProjectContext } from "../middleware/projectContext";
-import { LAST_RUN, toRunResponse, toScheduleResponse } from "../services/schedules";
+import { LAST_RUN, listRuns, runsQuerySchema, toScheduleResponse } from "../services/schedules";
 import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
 
 export const schedulesRouter = Router();
@@ -34,24 +33,18 @@ schedulesRouter.get(
   }
 );
 
-const runsQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) });
-
+// ?limit, ?page, ?outcome=ok|failed|skipped|running, ?trigger=schedule|manual
 schedulesRouter.get(
   "/companies/:companyId/projects/:projectId/schedules/:scheduleId/runs",
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
-    const { limit } = runsQuerySchema.parse(req.query);
+    const query = runsQuerySchema.parse(req.query);
     const schedule = await prisma.schedule.findFirst({
       where: { id: req.params.scheduleId, projectId: req.project!.id },
       select: { id: true },
     });
     if (!schedule) return res.status(404).json({ error: "Schedule not found", code: "schedule_not_found" });
-    const runs = await prisma.scheduleRun.findMany({
-      where: { scheduleId: schedule.id },
-      orderBy: { startedAt: "desc" },
-      take: limit,
-    });
-    res.json({ runs: runs.map(toRunResponse) });
+    res.json(await listRuns(schedule.id, query));
   }
 );

@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Schedule, ScheduleRun } from "@prisma/client";
 import { platformAppUrl } from "./showcase";
 import { parsePublicHttpsUrl } from "../lib/publicHttpsUrl";
-import { SCHEDULE_MIN_INTERVAL_MS } from "../lib/scheduleConfig";
+import { SCHEDULE_MIN_INTERVAL_MS, SCHEDULE_RUN_HISTORY } from "../lib/scheduleConfig";
 import { prisma } from "../lib/prisma";
 
 export class ScheduleValidationError extends Error {
@@ -203,6 +203,44 @@ export async function scheduleSummaries(projectIds: string[]): Promise<Map<strin
     if (row.failing) s.failing += row._count._all;
   }
   return out;
+}
+
+// Run history, one page at a time, newest first, for the agent API and the
+// dashboard alike. Page numbers rather than cursors: a schedule keeps at
+// most SCHEDULE_RUN_HISTORY runs, so a total and an offset are cheap and
+// let the panel say "page 2 of 5". `outcome` and `trigger` filter.
+export const runsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(1),
+  outcome: z.enum(["ok", "failed", "skipped", "running"]).optional(),
+  trigger: z.enum(["schedule", "manual"]).optional(),
+});
+
+export async function listRuns(scheduleId: string, query: z.infer<typeof runsQuerySchema>) {
+  const where = {
+    scheduleId,
+    ...(query.outcome && { outcome: query.outcome }),
+    ...(query.trigger && { trigger: query.trigger }),
+  };
+  const [total, runs] = await Promise.all([
+    prisma.scheduleRun.count({ where }),
+    prisma.scheduleRun.findMany({
+      where,
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+  ]);
+  return {
+    runs: runs.map(toRunResponse),
+    page: query.page,
+    pageSize: query.limit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / query.limit)),
+    // How many runs are kept per schedule, so a reader knows why the
+    // history starts where it does.
+    kept: SCHEDULE_RUN_HISTORY,
+  };
 }
 
 export async function scheduleSummary(projectId: string): Promise<ScheduleSummary> {

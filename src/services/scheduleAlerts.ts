@@ -64,13 +64,36 @@ function renderEmail({ event, schedule, run, project }: AlertInput): { subject: 
   return { subject, html };
 }
 
+// Stand-ins written where no person was behind an action (projectClaim.ts
+// uses "hostnsoft-deploy" for a project first deployed with a deploy
+// token; scheduleSync.ts falls back to "system"). Not proxy users, so
+// asking proxy for their email can only fail.
+const NOT_A_PERSON = new Set(["hostnsoft-deploy", "system"]);
+
+// Who gets the email: the person who created the app, else the person
+// behind the schedule — for a deploy-token deploy, the token's creator
+// (scheduleSync / agentApps record that). The first one proxy knows wins.
+async function findOwnerEmail(input: AlertInput): Promise<string | null> {
+  const candidates = [input.project.createdBy, input.schedule.createdBy].filter(
+    (id, i, all): id is string => !!id && !NOT_A_PERSON.has(id) && all.indexOf(id) === i
+  );
+  for (const id of candidates) {
+    const user = await getUserById(id).catch(() => null);
+    if (user?.email) return user.email;
+  }
+  return null;
+}
+
 async function sendEmail(input: AlertInput): Promise<void> {
-  const ownerId = input.project.createdBy ?? input.schedule.createdBy;
-  const owner = await getUserById(ownerId).catch(() => null);
-  if (!owner?.email) {
-    logger.warn(`[scheduleAlerts] no email for owner of "${input.project.slug}"; ${input.event} not mailed`);
+  const email = await findOwnerEmail(input);
+  if (!email) {
+    logger.warn(
+      `[scheduleAlerts] no email for owner of "${input.project.slug}" ` +
+        `(project.createdBy=${input.project.createdBy}, schedule.createdBy=${input.schedule.createdBy}); ${input.event} not mailed`
+    );
     return;
   }
+  const owner = { email };
   const { subject, html } = renderEmail(input);
   await callWebhook(Webhook.SCHEDULE_ALERT_EMAIL, {
     to: [{ email: owner.email }],

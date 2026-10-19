@@ -161,7 +161,7 @@ Deploy-token authenticated, under `/api/apps/:appName` (see
 | DELETE | `/schedules/:id` | `204` |
 | POST | `/schedules/run` | Run every schedule once now. `202 {runs: [Run + scheduleId, path, statusUrl]}`; a schedule already running appears as `{scheduleId, path, started: false, code: "run_in_progress"}`; `404 no_schedules` |
 | POST | `/schedules/:id/run` | Run once now, also when paused. `202 Run + statusUrl`; `409 run_in_progress` |
-| GET | `/schedules/:id/runs?limit=20` | `{runs: [Run]}`, newest first, max 100 |
+| GET | `/schedules/:id/runs?limit=20&page=1&outcome=&trigger=` | `{runs: [Run], page, pageSize, total, totalPages, kept}`, newest first. `outcome` = ok/failed/skipped/running, `trigger` = schedule/manual; `total` counts matches. Page numbers, not cursors: at most `SCHEDULE_RUN_HISTORY` (100) runs are kept per schedule |
 | GET | `/schedules/:id/runs/:runId` | `Run` |
 
 Schedule: `id, name, cron, timezone, path, url, enabled, nextRunAt,
@@ -200,7 +200,14 @@ Overview, only when it has jobs: timing in words, next run, last run and the
 app's reply. A running app with a failing job reads "Needs attention" on its
 card and header (`HealthPill`'s `failingJobs`), the section moves to the top,
 and the failing job gets "Fix with your AI", a prompt with the job and its last
-error (`consoleFixSchedulePrompt`). Nothing in the panel changes a schedule.
+error (`consoleFixSchedulePrompt`). "All runs" opens every kept run of a job,
+20 a page, filterable by result and by what started it
+(`ScheduleRunsDialog`). Nothing in the panel changes a schedule.
+
+Alert recipient (fixed 2026-10-19): the app's creator, else the schedule's
+creator, skipping stand-ins that aren't people. A deploy-token deploy records
+the project's creator as `"hostnsoft-deploy"`, so before this fix alerts for
+those apps found no email and were never sent.
 
 ## Limits
 

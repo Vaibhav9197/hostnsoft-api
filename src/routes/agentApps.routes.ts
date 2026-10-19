@@ -43,6 +43,8 @@ import { readAgentName, type DeployAttribution } from "../lib/deployAttribution"
 import {
   LAST_RUN,
   ScheduleValidationError,
+  listRuns,
+  runsQuerySchema,
   createScheduleSchema,
   nextRunAfter,
   normalizeCron,
@@ -674,19 +676,12 @@ appScoped.post("/schedules/:scheduleId/run", refuseForStaticApp("schedules"), as
   });
 });
 
-const runsQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) });
-
+// ?limit, ?page, ?outcome=ok|failed|skipped|running, ?trigger=schedule|manual
 appScoped.get("/schedules/:scheduleId/runs", async (req, res) => {
-  const { limit } = runsQuerySchema.parse(req.query);
+  const query = runsQuerySchema.parse(req.query);
   const schedule = await findSchedule(req, res);
   if (!schedule) return;
-
-  const runs = await prisma.scheduleRun.findMany({
-    where: { scheduleId: schedule.id },
-    orderBy: { startedAt: "desc" },
-    take: limit,
-  });
-  res.json({ runs: runs.map(toRunResponse) });
+  res.json(await listRuns(schedule.id, query));
 });
 
 appScoped.get("/schedules/:scheduleId/runs/:runId", async (req, res) => {

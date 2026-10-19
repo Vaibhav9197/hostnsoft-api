@@ -1191,10 +1191,10 @@
       <article class="endpoint" id="ep-schedules-runs">
         <div class="endpoint-head">
           <span class="method get">GET</span>
-          <span class="path">/api/apps/:appName/schedules/:scheduleId/runs?limit=20</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId/runs?limit=20&amp;page=1&amp;outcome=&amp;trigger=</span>
           <span class="role-chip">deploy token</span>
         </div>
-        <p class="endpoint-desc">Run history, newest first. <code>limit</code> 1–100, default 20. Response: <code>{runs: [Run]}</code>. A <code>skipped</code> run means the previous one was still in progress at the due time.</p>
+        <p class="endpoint-desc">Run history, newest first, a page at a time. <code>limit</code> 1–100 (default 20), <code>page</code> from 1. Filters: <code>outcome</code> = <code>ok</code> / <code>failed</code> / <code>skipped</code> / <code>running</code>, <code>trigger</code> = <code>schedule</code> / <code>manual</code>. Response: <code>{runs: [Run], page, pageSize, total, totalPages, kept}</code>, where <code>total</code> counts the runs matching the filters and <code>kept</code> is how many runs a schedule keeps (100). Page numbers rather than cursors because history is capped. A <code>skipped</code> run means the previous one was still in progress at the due time.</p>
       </article>
 
       <article class="endpoint" id="ep-schedules-dash-list">
@@ -1209,10 +1209,10 @@
       <article class="endpoint" id="ep-schedules-dash-runs">
         <div class="endpoint-head">
           <span class="method get">GET</span>
-          <span class="path">/companies/:companyId/projects/:projectId/schedules/:scheduleId/runs?limit=20</span>
+          <span class="path">/companies/:companyId/projects/:projectId/schedules/:scheduleId/runs?limit=20&amp;page=1&amp;outcome=&amp;trigger=</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc"><strong>New 2026-10-19.</strong> Run history for one job, newest first, same as the agent endpoint. <code>404</code> <code>schedule_not_found</code>.</p>
+        <p class="endpoint-desc"><strong>New 2026-10-19.</strong> Run history for one job, a page at a time with the same filters and response as the agent endpoint. Backs the panel's "All runs" view. <code>404</code> <code>schedule_not_found</code>.</p>
       </article>
 
       <article class="endpoint" id="ep-schedules-run-get">
