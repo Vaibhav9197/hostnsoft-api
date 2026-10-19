@@ -9,6 +9,7 @@ import type { Schedule, ScheduleRun } from "@prisma/client";
 import { platformAppUrl } from "./showcase";
 import { parsePublicHttpsUrl } from "../lib/publicHttpsUrl";
 import { SCHEDULE_MIN_INTERVAL_MS } from "../lib/scheduleConfig";
+import { prisma } from "../lib/prisma";
 
 export class ScheduleValidationError extends Error {
   constructor(message: string, readonly code: string) {
@@ -181,6 +182,32 @@ export function toScheduleResponse(schedule: Schedule & { runs: ScheduleRun[] },
 }
 
 export const LAST_RUN = { runs: { orderBy: { startedAt: "desc" as const }, take: 1 } };
+
+// The `schedules` field on every project response (list, get-one, claim):
+// how many the app has and how many are failing, so the dashboard can say
+// "Needs attention" without a call per app. One grouped query for any
+// number of projects.
+export type ScheduleSummary = { count: number; failing: number };
+
+export async function scheduleSummaries(projectIds: string[]): Promise<Map<string, ScheduleSummary>> {
+  const out = new Map<string, ScheduleSummary>(projectIds.map((id) => [id, { count: 0, failing: 0 }]));
+  if (projectIds.length === 0) return out;
+  const rows = await prisma.schedule.groupBy({
+    by: ["projectId", "failing"],
+    where: { projectId: { in: projectIds } },
+    _count: { _all: true },
+  });
+  for (const row of rows) {
+    const s = out.get(row.projectId)!;
+    s.count += row._count._all;
+    if (row.failing) s.failing += row._count._all;
+  }
+  return out;
+}
+
+export async function scheduleSummary(projectId: string): Promise<ScheduleSummary> {
+  return (await scheduleSummaries([projectId])).get(projectId)!;
+}
 
 // ------------------------------------------------------------------
 // Schedules declared in the app's embarko.json, which the deploy carries —

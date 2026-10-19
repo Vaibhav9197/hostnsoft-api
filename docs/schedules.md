@@ -187,7 +187,20 @@ is a `400` on the deploy.
 Audit actions: `schedule.create`, `schedule.update`, `schedule.delete`,
 `schedule.run`, `schedule.sync` (a deploy applied its list).
 
-No dashboard endpoints or UI yet (decided 2026-10-17: agent + API first).
+## Dashboard
+
+Added 2026-10-19, read-only (`routes/schedules.routes.ts`, proxy_auth_token):
+`GET /companies/:companyId/projects/:projectId/schedules` and
+`.../schedules/:scheduleId/runs`, same shapes as the agent API. Every project
+response (list, get-one, orphan claim) carries `schedules: {count, failing}`
+from one grouped query (`scheduleSummaries`).
+
+The panel (website repo) shows a "Scheduled jobs" section on the app's
+Overview, only when it has jobs: timing in words, next run, last run and the
+app's reply. A running app with a failing job reads "Needs attention" on its
+card and header (`HealthPill`'s `failingJobs`), the section moves to the top,
+and the failing job gets "Fix with your AI", a prompt with the job and its last
+error (`consoleFixSchedulePrompt`). Nothing in the panel changes a schedule.
 
 ## Limits
 
