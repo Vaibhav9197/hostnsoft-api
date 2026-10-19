@@ -2,11 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
-import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { actorPersonId, deployCredentialFields, resolveDeployActor } from "../services/deployActor";
 import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 import { isCompanyOnFreePlan } from "../lib/lago";
 import { buildClaimUrl } from "../lib/orphanClaim";
+import { ScheduleValidationError, validateDeclaredSchedules } from "../services/schedules";
+import { ensureCronSecret } from "../services/scheduleSync";
+import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
 
 export const internalProjectsRouter = Router();
 
@@ -24,6 +27,12 @@ const claimSchema = z.object({
   // already validated the X-App-Type header it came from; re-checked here
   // so nothing longer or stranger can reach the column another way.
   appType: z.string().trim().min(1).max(60).optional(),
+  // The `schedules` list from the app's embarko.json, read from the upload
+  // by hostnsoft-deploy (its embarko-config.js) but not otherwise checked —
+  // validated here, before any build, so a bad one refuses the deploy at
+  // once. Applied only when the deploy succeeds
+  // (internalDeployments.routes.ts). Absent = leave the app's schedules alone.
+  schedules: z.unknown().optional(),
 });
 
 // Called by hostnsoft-deploy BEFORE it spends any build/Nomad resources
@@ -39,7 +48,19 @@ const claimSchema = z.object({
 // usage. No requireProxyToken — the credential in the body is the
 // credential, same trust shape as the other /internal/* endpoints.
 internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
-  const { slug, appType, ...credentials } = claimSchema.parse(req.body);
+  const { slug, appType, schedules: rawSchedules, ...credentials } = claimSchema.parse(req.body);
+
+  // Checked before the credential: a malformed list is the caller's mistake
+  // whoever they are, and costs nothing to report.
+  let declared: ReturnType<typeof validateDeclaredSchedules> | undefined;
+  if (rawSchedules !== undefined) {
+    try {
+      declared = validateDeclaredSchedules(rawSchedules, SCHEDULE_MAX_PER_APP);
+    } catch (e) {
+      if (e instanceof ScheduleValidationError) return res.status(400).json({ error: e.message, code: e.code });
+      throw e;
+    }
+  }
 
   const resolved = await resolveDeployActor(req, credentials);
   if (!resolved.ok) {
@@ -128,6 +149,28 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   // are only ever set through the company-scoped route, which requires
   // an already-claimed project), so this naturally comes back empty for
   // anonymous deploys without any special-casing.
+  // Schedules need an owner (alerts go to them) and a deploy token to manage
+  // them, so a temporary app's are not taken. The deploy itself goes ahead;
+  // the reply says why its schedules were not.
+  let schedulesClaim: { declared: number; accepted: boolean; reason?: string } | undefined;
+  if (declared) {
+    if (project.isOrphan || !resolved.actor.companyId) {
+      schedulesClaim = {
+        declared: declared.length,
+        accepted: false,
+        reason: "Schedules need a kept app. Get a deploy token, then deploy again with the same embarko.json.",
+      };
+    } else {
+      // Before the env read below, so a new secret is in this deploy's env.
+      if (declared.length > 0) await ensureCronSecret(project.id, actorPersonId(resolved.actor) ?? project.createdBy ?? "system");
+      schedulesClaim = { declared: declared.length, accepted: true };
+    }
+  }
+
+  // Lets the deploy reply say "kept as they are" when this upload declares
+  // none but the app has some — see docs/schedules.md "Declared on deploy".
+  const scheduleCount = await prisma.schedule.count({ where: { projectId: project.id } });
+
   const envVars = await prisma.envVar.findMany({
     where: { projectId: project.id },
     select: { key: true, value: true },
@@ -148,6 +191,8 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     memoryMb: project.memoryMb,
     customDomains: activeDomains.map((d) => d.domain),
     envVars,
+    scheduleCount,
+    ...(schedulesClaim ? { schedules: schedulesClaim } : {}),
     // Orphan fields — see docs/Anonymous-deploy-req.md. isOrphan is
     // always present; the other two are only meaningful (and only sent)
     // when it's true, so hostnsoft-deploy can check one field to decide

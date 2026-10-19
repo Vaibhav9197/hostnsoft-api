@@ -53,6 +53,8 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                                       ├─ name (mutable display name, independent of slug)
                                       ├─ Deployments (versioned history — one row per attempt)
                                       ├─ EnvVars (key/value, scoped to the project)
+                                      ├─ Schedules → ScheduleRuns (timed GET calls into the app;
+                                      │   docs/schedules.md, added 2026-10-17)
                                       └─ current resource allocation (memory; cpu once enforced)
  AuditLog (actorUserId, companyId, projectId — all plain strings)
 ```

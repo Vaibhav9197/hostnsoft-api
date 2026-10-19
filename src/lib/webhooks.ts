@@ -20,6 +20,9 @@ export enum Webhook {
   // Showcase listing pending / approved / rejected — see src/services/showcaseMail.ts.
   // ponytail: same flow URL as above.
   SHOWCASE_NOTIFY_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
+  // A schedule started failing / recovered — see src/services/scheduleAlerts.ts.
+  // ponytail: same flow URL as above.
+  SCHEDULE_ALERT_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
 }
 
 export class WebhookError extends Error { }

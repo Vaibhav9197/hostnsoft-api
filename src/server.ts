@@ -4,6 +4,7 @@ import { connectRedis } from "./lib/redis";
 import { logger } from "./lib/logger";
 import { startDomainReverificationLoop } from "./services/domainReverification";
 import { startOrphanCleanupLoop } from "./services/orphanCleanup";
+import { startScheduleRunner } from "./services/scheduleRunner";
 
 const port = Number(process.env.PORT ?? 4100);
 const app = createApp();
@@ -49,3 +50,4 @@ connectRedis()
 // itself, which stays a pure factory (also used directly by tests).
 startDomainReverificationLoop();
 startOrphanCleanupLoop();
+startScheduleRunner();

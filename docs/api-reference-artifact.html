@@ -428,6 +428,19 @@
     </div>
 
     <div class="navgroup">
+      <div class="navgroup-label">Schedules (agent)</div>
+      <a class="navlink" href="#ep-schedules-list">List <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-create">Create <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-get">Get one <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-update">Update <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-delete">Delete <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-run-all">Run all now <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-run">Run now <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-runs">List runs <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-schedules-run-get">Get run <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+    </div>
+
+    <div class="navgroup">
       <div class="navgroup-label">Deploy tokens</div>
       <a class="navlink" href="#ep-tokens-create">Create</a>
       <a class="navlink" href="#ep-tokens-list">List</a>
@@ -1059,6 +1072,140 @@
 
     <hr class="rule" />
 
+    <section class="resource" id="schedules">
+      <div class="resource-head"><h2>Schedules <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">Timed calls into an app. <strong>Normally declared in the app's <a href="#deploy"><code>embarko.json</code></a></strong>, which the deploy reads and which also gives the app its <code>CRON_SECRET</code>; the endpoints below read runs, run them now, and pause or add an alert webhook to one schedule. Deploy token, addressed by app name — no dashboard endpoints yet. A schedule created with <code>POST</code> here also gets <code>CRON_SECRET</code> created if missing; it reaches the running app on the next deploy or env-vars apply. At each due time the platform sends <code>GET &lt;path&gt;</code> to the app's own address, through the same wake-up path a visitor takes, so a sleeping app is woken. Headers: <code>User-Agent: Embarko-Scheduler/1.0 (+https://embarko.ai/docs/schedules)</code>, <code>X-Embarko-Schedule-Id</code>, <code>X-Embarko-Run-Id</code>, and <code>Authorization: Bearer &lt;CRON_SECRET&gt;</code> when the app has an env var named <code>CRON_SECRET</code>. 2xx = <code>ok</code>; anything else, a redirect (not followed), or no complete response within 5 minutes (wake-up included) = <code>failed</code>. The first 2KB of the body is kept on the run. One alert email to the app's owner when a schedule starts failing and one when it recovers (not per run), plus the same events to the optional <code>alertWebhookUrl</code>. Limits, same on every plan: 5 schedules per app, at most every 5 minutes, last 100 runs kept. Every endpoint returns the same Schedule shape (see <a href="#models">Data models</a>). Spec: <code>docs/schedules.md</code>.</p>
+
+      <article class="endpoint" id="ep-schedules-list">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/apps/:appName/schedules</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">All of the app's schedules, oldest first. Response: <code>{schedules: [Schedule], limit}</code>.</p>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-create">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/apps/:appName/schedules</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">Creates a schedule. <code>cron</code> is five fields (minute hour day-of-month month day-of-week); <code>@hourly</code>, <code>@daily</code>, <code>@weekly</code>, <code>@monthly</code>, <code>@yearly</code> are accepted and stored expanded. <code>timezone</code> is an IANA name, default <code>"UTC"</code>. <code>path</code> must start with <code>/</code>; a query string is allowed. <code>enabled</code> defaults to <code>true</code>. Response: <code>201 Schedule</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{
+  "cron": "0 9 * * 1-5",
+  "timezone": "Asia/Kolkata",
+  "path": "/tasks/daily-digest",
+  "name": "daily digest",
+  "alertWebhookUrl": "https://hooks.slack.com/services/…"
+}</code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note"><strong>Errors:</strong> <code>400</code> <code>invalid_cron</code> / <code>schedule_too_frequent</code> (any two of the next 60 occurrences under 5 min apart) / <code>invalid_timezone</code> / <code>invalid_path</code> / <code>invalid_alert_webhook</code> (must be public <code>https://</code>; private, loopback and link-local addresses refused) · <code>409</code> <code>schedule_limit_reached</code> · <code>409</code> <code>not_supported_for_static</code>. <code>alertWebhookUrl</code> is treated as a secret: never returned, only <code>alertWebhook: {set, host}</code>.</div>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">One schedule.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{
+  "id": "cm…", "name": "daily digest",
+  "cron": "0 9 * * 1-5", "timezone": "Asia/Kolkata",
+  "path": "/tasks/daily-digest",
+  "url": "https://my-app.embarko.app/tasks/daily-digest",
+  "enabled": true, "nextRunAt": "2026-10-19T03:30:00.000Z",
+  "failing": false, "consecutiveFailures": 0,
+  "alertWebhook": { "set": true, "host": "hooks.slack.com" },
+  "lastRun": null,
+  "createdAt": "…", "updatedAt": "…",
+  "links": { "runNow": "/api/apps/my-app/schedules/cm…/run",
+             "runs": "/api/apps/my-app/schedules/cm…/runs" }
+}</code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note"><code>404</code> <code>schedule_not_found</code>.</div>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-update">
+        <div class="endpoint-head">
+          <span class="method patch" style="background:var(--patch-bg);color:var(--patch)">PATCH</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">A merge: any of the create fields; absent fields are left alone. <code>name</code> and <code>alertWebhookUrl</code> accept <code>null</code> to clear. <code>nextRunAt</code> is recomputed when <code>cron</code>, <code>timezone</code> or <code>enabled</code> changes; a paused schedule has <code>nextRunAt: null</code>. Same validation errors as create.</p>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-delete">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">Deletes the schedule and its run history. <code>204</code>.</p>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-run-all">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/apps/:appName/schedules/run</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">Runs every schedule of the app once now — the deploy reply's <code>links.runSchedules</code>, the check after a deploy that declared schedules. <strong>Async</strong>: <code>202 {runs: [...]}</code>, each a Run plus <code>scheduleId</code>, <code>path</code> and <code>statusUrl</code>; a schedule whose last run is still going appears as <code>{scheduleId, path, started: false, code: "run_in_progress"}</code>.</p>
+        <div class="endpoint-note"><code>404</code> <code>no_schedules</code> (none yet: right after going live, retry once after a few seconds) · <code>409</code> <code>not_supported_for_static</code>.</div>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-run">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId/run</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">Runs it once now, outside its timing, also when paused — how an agent checks a new schedule works. <strong>Async</strong>: <code>202</code> with the Run and a <code>statusUrl</code> to poll until <code>terminal: true</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{
+  "id": "cm…", "trigger": "manual", "outcome": "running", "terminal": false,
+  "httpStatus": null, "error": null, "responseExcerpt": null,
+  "startedAt": "…", "finishedAt": null, "durationMs": null,
+  "statusUrl": "/api/apps/my-app/schedules/cm…/runs/cm…"
+}</code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note"><code>409</code> <code>run_in_progress</code> while this schedule's previous run is still going.</div>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-runs">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId/runs?limit=20</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">Run history, newest first. <code>limit</code> 1–100, default 20. Response: <code>{runs: [Run]}</code>. A <code>skipped</code> run means the previous one was still in progress at the due time.</p>
+      </article>
+
+      <article class="endpoint" id="ep-schedules-run-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/apps/:appName/schedules/:scheduleId/runs/:runId</span>
+          <span class="role-chip">deploy token</span>
+        </div>
+        <p class="endpoint-desc">One run — what <code>statusUrl</code> points at. <code>404</code> <code>run_not_found</code>.</p>
+      </article>
+
+    </section>
+
+    <hr class="rule" />
+
     <section class="resource" id="tokens">
       <div class="resource-head"><h2>Deploy tokens</h2></div>
       <p class="resource-intro">Company-wide scope: a token authenticates as "any project in this company" against <code>ship.embarko.ai/apps</code>. The raw token is shown exactly once, at creation or rotation — never again.</p>
@@ -1602,6 +1749,12 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
                 <strong>App type (2026-09-29):</strong> the optional <code>X-App-Type</code> header (<code>appType</code> in a JSON body) records what the app is for, as a short label: <code>personal website</code>, <code>portfolio</code>, <code>task management</code>, <code>feedback system</code>, and so on. It's stored as the project's <a href="#ep-projects-get"><code>appType</code></a> and doesn't change how the app is built. At most 60 printable ASCII characters, otherwise <code>400</code> <code>invalid_app_type</code>. Leaving it out keeps any earlier value. Agents are told to fill it from context or ask the user once; the dashboard doesn't ask.
               </p>
               <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+                <strong>embarko.json (2026-10-17):</strong> an optional file in the app's top folder, read from the upload (any upload path, including a JSON body's <code>files</code>) before the claim: <code>{"$schema": "https://embarko.ai/schema/embarko.json", "schedules": [{cron, path, timezone?, name?}]}</code>. <code>schedules</code> is the app's <em>whole</em> set of <a href="#schedules">schedules</a>: matched by path, listed ones are created or updated (keeping run history), unlisted ones deleted, <code>[]</code> deletes all; no file or no <code>schedules</code> key changes nothing. Refused before any build with <code>400</code>: <code>invalid_embarko_json</code> (not JSON — line and column given —, not one object, <code>schedules</code> not a list, over 64 KB), <code>secrets_in_embarko_json</code> (a secret-looking key or value; use env vars), or a schedule error (<code>invalid_schedules</code>, <code>invalid_cron</code>, <code>schedule_too_frequent</code>, <code>invalid_timezone</code>, <code>invalid_path</code>, <code>duplicate_schedule_path</code>, <code>schedule_limit_reached</code>), each naming the entry. Applied only when the deploy succeeds. The app gets a <code>CRON_SECRET</code> env var if it has none (never replaced), in the env of this same deploy. The 202 adds <code>schedules: {declared, appliesWhen: "live"}</code> and <code>links.runSchedules</code>; a temporary app deploys, but its reply says <code>schedules: {declared, applied: false, reason}</code>.
+              </p>
+              <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
+                <strong>Warnings (2026-10-17):</strong> problems that don't stop the deploy come back in the 202 as <code>warnings: [{code, detail}]</code>, with a sentence in <code>next</code> and <code>links.help</code>: <code>embarko_json_not_at_top</code> (found only in a subfolder), <code>embarko_json_misnamed</code> (<code>.embarko</code>, <code>embarko.yaml</code>…), <code>embarko_json_unknown_keys</code> (ignored), <code>in_process_timer</code> (no schedules in embarko.json and the dependencies list a timer library such as <code>node-cron</code> or <code>APScheduler</code>, whose jobs stop when the app sleeps; the entry adds <code>libraries</code> and the <code>expressions: [{cron, file}]</code> found), <code>schedules_unchanged</code> (the app has schedules, this upload declares none: kept), <code>schedules_on_static_site</code> (not applied).
+              </p>
+              <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
                 <strong>Agent name (2026-09-29):</strong> the optional <code>X-Agent-Name</code> header (<code>agentName</code> in a JSON body) is stored on the new deployment as <a href="#models"><code>agentName</code></a>, next to a <code>source</code> of <code>"dashboard"</code> (PAT) or <code>"agent"</code> (deploy token) that's derived from the credential. Same limits as <code>X-App-Type</code>; otherwise <code>400</code> <code>invalid_agent_name</code>. Self-reported, never used for access. The agent API's rollback and env-var apply calls read the same header (a malformed value there is ignored, not rejected).
               </p>
             </div>
@@ -1826,6 +1979,38 @@ X-Agent-Name:     claude     <span style="color:var(--ink-faint)">// optional, w
           <tbody>
             <tr><td class="fname">id, companyId, label, tokenPrefix</td><td class="ftype">string</td></tr>
             <tr><td class="fname">revokedAt, lastUsedAt</td><td class="ftype">date | null</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">Schedule <span class="role-chip new" style="margin-left:6px;">new</span></div><div class="desc">A timed call into one app. Cascade-deleted with its project.</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id, name</td><td class="ftype">string (name nullable)</td></tr>
+            <tr><td class="fname">cron, timezone, path</td><td class="ftype">string</td><td class="fdesc">five-field cron, IANA zone, path on the app</td></tr>
+            <tr><td class="fname">url</td><td class="ftype">string</td><td class="fdesc">response only: the full address called</td></tr>
+            <tr><td class="fname">enabled</td><td class="ftype">boolean</td></tr>
+            <tr><td class="fname">nextRunAt</td><td class="ftype">date | null</td><td class="fdesc">null while paused</td></tr>
+            <tr><td class="fname">failing, consecutiveFailures</td><td class="ftype">boolean, number</td><td class="fdesc">drives the one-alert-each-way logic</td></tr>
+            <tr><td class="fname">alertWebhook</td><td class="ftype">{set, host}</td><td class="fdesc">the URL itself is never returned</td></tr>
+            <tr><td class="fname">lastRun</td><td class="ftype">Run | null</td></tr>
+            <tr><td class="fname">createdAt, updatedAt</td><td class="ftype">date</td></tr>
+            <tr><td class="fname">links</td><td class="ftype">{runNow, runs}</td><td class="fdesc">agent API paths for this schedule</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="model-card">
+        <div class="model-card-head"><div class="name">Run <span class="role-chip new" style="margin-left:6px;">new</span></div><div class="desc">One call (or skipped call) of a schedule. Newest 100 kept per schedule.</div></div>
+        <table>
+          <tbody>
+            <tr><td class="fname">id</td><td class="ftype">string</td></tr>
+            <tr><td class="fname">trigger</td><td class="ftype">"schedule" | "manual"</td></tr>
+            <tr><td class="fname">outcome</td><td class="ftype">"running" | "ok" | "failed" | "skipped"</td></tr>
+            <tr><td class="fname">terminal</td><td class="ftype">boolean</td><td class="fdesc">false only while running</td></tr>
+            <tr><td class="fname">httpStatus, durationMs</td><td class="ftype">number | null</td></tr>
+            <tr><td class="fname">error, responseExcerpt</td><td class="ftype">string | null</td><td class="fdesc">excerpt = first 2KB of the app's response</td></tr>
+            <tr><td class="fname">startedAt, finishedAt</td><td class="ftype">date (finishedAt nullable)</td></tr>
           </tbody>
         </table>
       </div>

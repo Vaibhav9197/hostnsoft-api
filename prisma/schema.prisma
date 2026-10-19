@@ -104,9 +104,73 @@ model Project {
   deployments Deployment[]
   envVars     EnvVar[]
   domains     Domain[]
+  schedules   Schedule[]
   appDetails  AppDetails?
 
   @@index([companyId])
+}
+
+// A timed HTTP call into the app — see docs/schedules.md. The platform
+// itself never runs app code on a timer: at each due time it sends
+// GET <path> to the app's own address, through the same wake-up path a
+// visitor takes, so a sleeping app wakes and the scale-to-zero logic needs
+// no change.
+model Schedule {
+  id        String  @id @default(cuid())
+  projectId String
+  name      String? // free-text label, e.g. "daily digest"
+  cron      String // five-field cron expression, evaluated in `timezone`
+  timezone  String  @default("UTC") // IANA name
+  path      String // starts with "/", query string allowed
+  enabled   Boolean @default(true)
+
+  // Optional extra failure/recovery destination, besides the owner's email.
+  // Treated like a secret (Slack webhook URLs are bearer credentials):
+  // never returned by any endpoint, only whether one is set and its host.
+  alertWebhookUrl String?
+
+  // When the runner next calls it. Advanced BEFORE a run starts (a
+  // compare-and-set on the old value), so two runner processes can never
+  // both fire the same occurrence. Null while disabled.
+  nextRunAt DateTime?
+
+  // Failure state for alerting: one alert when it starts failing, one when
+  // it recovers — never one per failed run.
+  consecutiveFailures Int     @default(0)
+  failing             Boolean @default(false)
+
+  createdBy String // proxy userId — the deploy token's creator on the agent path
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runs    ScheduleRun[]
+
+  @@index([projectId])
+  @@index([enabled, nextRunAt])
+}
+
+// One call the runner made (or chose not to make). Pruned to the newest
+// SCHEDULE_RUN_HISTORY rows per schedule.
+model ScheduleRun {
+  id         String    @id @default(cuid())
+  scheduleId String
+  // "manual" (POST .../run) | "schedule"
+  trigger    String    @default("schedule")
+  // "running" | "ok" | "failed" | "skipped" (previous run still in flight)
+  outcome    String
+  httpStatus Int?
+  error      String?
+  // First SCHEDULE_RESPONSE_EXCERPT_BYTES of the response body, so an
+  // agent can return a one-line summary of what the run did.
+  responseExcerpt String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, startedAt])
 }
 
 // A client-owned domain (or subdomain) attached to a project — see

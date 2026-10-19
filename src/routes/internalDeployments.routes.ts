@@ -5,7 +5,11 @@ import { prisma } from "../lib/prisma";
 import { createDeploymentWithNextVersion, markProjectDeploymentLive } from "../services/deploymentVersioning";
 import { unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
-import { deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { actorPersonId, deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import { validateDeclaredSchedules } from "../services/schedules";
+import { syncDeclaredSchedules } from "../services/scheduleSync";
+import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
+import { logger } from "../lib/logger";
 import { logAudit } from "../services/audit";
 import { requireInternalSecret } from "../middleware/requireInternalSecret";
 import { agentNameSchema } from "../lib/deployAttribution";
@@ -57,6 +61,10 @@ const recordSchema = z.object({
   // Only read on the row-creating call, and ignored for a dashboard
   // deploy — see schema.prisma's Deployment.agentName.
   agentName: agentNameSchema.optional(),
+  // The deploy's declared schedules, the same list the claim already
+  // checked. Sent on the success call only; applied here so a failed
+  // build never changes what runs. Absent = leave schedules alone.
+  schedules: z.unknown().optional(),
 });
 
 // Called by hostnsoft-deploy (server-to-server) once a deploy attempt has
@@ -204,6 +212,18 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
       project.memoryMb,
       body.kind
     );
+
+    // Best-effort: the app is live either way, and the claim already
+    // validated this list, so a failure here is logged, not returned.
+    // Static sites and temporary apps take no schedules (see the claim).
+    if (body.schedules !== undefined && !project.isOrphan && body.kind !== "static") {
+      try {
+        const declared = validateDeclaredSchedules(body.schedules, SCHEDULE_MAX_PER_APP);
+        await syncDeclaredSchedules(project, declared, actorPersonId(actor) ?? project.createdBy ?? "system");
+      } catch (e) {
+        logger.error(`[record] could not apply declared schedules for "${project.slug}": ${(e as Error).message}`);
+      }
+    }
   }
 
   res.status(201).json(deployment);
