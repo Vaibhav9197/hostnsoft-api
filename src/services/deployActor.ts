@@ -28,7 +28,9 @@ import { findLiveDeployToken, unauthorizedDeployTokenBody } from "./deployTokenA
 //     credential that's present and fails is an error, never a silent
 //     downgrade to anonymous.
 export type DeployActor =
-  | { kind: "deployToken"; companyId: string; userId: null; triggeredBy: string }
+  // tokenCreatedBy: the proxy user who minted the token — the person behind
+  // an agent's deploy, for anything that needs one (schedule alerts).
+  | { kind: "deployToken"; companyId: string; userId: null; triggeredBy: string; tokenCreatedBy: string }
   | { kind: "proxyAuth"; companyId: string; userId: string; triggeredBy: string }
   | { kind: "anonymous"; companyId: null; userId: null; triggeredBy: null };
 
@@ -71,6 +73,7 @@ export async function resolveDeployActor(
         companyId: record.companyId,
         userId: null,
         triggeredBy: record.label,
+        tokenCreatedBy: record.createdBy,
       },
     };
   }
@@ -151,4 +154,11 @@ export async function resolveDeployActor(
   }
 
   return { ok: true, actor: { kind: "anonymous", companyId: null, userId: null, triggeredBy: null } };
+}
+
+// The person a deploy acts for: the signed-in user, or a deploy token's
+// creator. Null only for an anonymous deploy.
+export function actorPersonId(actor: DeployActor): string | null {
+  if (actor.kind === "deployToken") return actor.tokenCreatedBy;
+  return actor.userId;
 }

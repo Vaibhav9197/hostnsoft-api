@@ -1,13 +1,15 @@
 import { logger } from "../lib/logger";
 import { rememberCompany } from "./companyStore";
 import { TtlCache } from "../lib/ttlCache";
-import { createLagoCustomer, getLagoCustomer, subscribeToFreePlan } from "../lib/lago";
+import { createLagoCustomer, getLagoCustomer, subscribeToFreePlan, updateLagoCustomerName } from "../lib/lago";
 import type { CreateLagoCustomerInput, LagoCustomer, LagoSubscription } from "../lib/lago";
 import {
   createStripeCustomer,
   deleteStripeCustomer,
   updateStripeCustomerMetadata,
+  updateStripeCustomerName,
 } from "../lib/stripe";
+import { prisma } from "../lib/prisma";
 
 // Billing bootstrap for a company — three remote writes in order, with the
 // Stripe customer rolled back if Lago refuses, so a failed attempt leaves
@@ -105,4 +107,18 @@ export async function ensureBillingForCompany(
     logger.error(`[billing] ensureBillingForCompany failed for ${companyId}:`, err);
     return "pending";
   }
+}
+
+// After a rename on proxy: keep the names on invoices in step. Best effort —
+// proxy already has the new name, so a billing hiccup must not fail the
+// rename. Companies with no billing yet pick the name up at setup.
+export async function syncBillingCustomerName(companyId: string, name: string): Promise<void> {
+  const row = await prisma.company
+    .findUnique({ where: { id: companyId }, select: { lagoCustomerId: true, stripeCustomerId: true } })
+    .catch(() => null);
+  if (!row) return;
+  await Promise.all([
+    row.lagoCustomerId ? updateLagoCustomerName(companyId, name) : null,
+    row.stripeCustomerId ? updateStripeCustomerName(row.stripeCustomerId, name) : null,
+  ]).catch((err) => logger.warn(`[billing] could not sync name for company ${companyId}:`, err));
 }

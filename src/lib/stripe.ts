@@ -114,6 +114,10 @@ export async function updateStripeCustomerMetadata(
   );
 }
 
+export async function updateStripeCustomerName(stripeCustomerId: string, name: string): Promise<void> {
+  await stripeRequest<StripeCustomer>(`/customers/${encodeURIComponent(stripeCustomerId)}`, formBody({ name }));
+}
+
 // Rollback only — used when the Lago half of customer creation fails so
 // the shared account isn't left with an orphan customer.
 export async function deleteStripeCustomer(stripeCustomerId: string): Promise<void> {

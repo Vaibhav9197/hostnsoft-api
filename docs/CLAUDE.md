@@ -53,6 +53,8 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                                       ├─ name (mutable display name, independent of slug)
                                       ├─ Deployments (versioned history — one row per attempt)
                                       ├─ EnvVars (key/value, scoped to the project)
+                                      ├─ Schedules → ScheduleRuns (timed GET calls into the app;
+                                      │   docs/schedules.md, added 2026-10-17)
                                       └─ current resource allocation (memory; cpu once enforced)
  AuditLog (actorUserId, companyId, projectId — all plain strings)
 ```
@@ -288,6 +290,7 @@ it has an endpoint here (removed 2026-09-04).
 |---|---|---|
 | `GET /companies` | any authenticated user + `proxy_auth_token` header | Lists companies the current user belongs to, straight from proxy (user-key call). |
 | `GET /companies/:companyId` | any member | Company details from proxy — id, name — plus local project count. |
+| `PATCH /companies/:companyId` `{name?, email?, meta?, timezone?, timeZoneName?}` | any member | Partial update, forwarded to proxy `PUT /c/updateCompany`. Proxy acts on the PAT's *current* company, requires `name` + `email` every call, and replaces `meta` wholesale — so the route switches the PAT to `:companyId` if needed, fills omitted fields from the current record (email falls back to the caller's), and merges `meta` key-wise. A changed name is also pushed to the Lago and Stripe customers, best effort. Proxy 422 surfaces as `400 PROXY_INVALID_INPUT` with proxy's message. |
 | `POST /auth/switch-company` `{companyId}` | any member + `proxy_auth_token` header | Moves proxy's current company for this user so the embed matches the dashboard. Nothing local changes. Audited as `company.switch`. |
 
 ### Projects

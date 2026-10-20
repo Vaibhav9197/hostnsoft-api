@@ -14,7 +14,9 @@ import { fetchAppHealth } from "../services/appHealth";
 import { resolveProjectStatus, resolveProjectStatuses, NO_DEPLOYMENTS_STATUS } from "../services/projectStatus";
 import { applyCurrentConfig } from "../services/redeploy";
 import { claimCodeMatches } from "../lib/orphanClaim";
+import { unexpiredOrphanWhere } from "../services/projectClaim";
 import { logger } from "../lib/logger";
+import { scheduleSummaries, scheduleSummary } from "../services/schedules";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -113,9 +115,12 @@ projectsRouter.post(
     // isOrphan in the where, not just the id: two people opening the same
     // link at once (or a token redeploy landing in the same instant) must
     // end with exactly one claimant. Whoever's update matches zero rows
-    // lost, and sees the same 404 as a stale link.
+    // lost, and sees the same 404 as a stale link. The expiry is in the
+    // where too, so an app that expires between the check above and this
+    // write can't be claimed out from under orphan cleanup — see
+    // unexpiredOrphanWhere.
     const moved = await prisma.project.updateMany({
-      where: { id: candidate.id, isOrphan: true },
+      where: { id: candidate.id, ...unexpiredOrphanWhere() },
       data: {
         companyId: req.company!.id,
         createdBy: req.userId!,
@@ -156,12 +161,13 @@ projectsRouter.post(
       );
     }
 
-    const [health, status] = await Promise.all([
+    const [health, status, schedules] = await Promise.all([
       fetchAppHealth(project.slug),
       resolveProjectStatus(project.currentDeploymentId),
+      scheduleSummary(project.id),
     ]);
     res.json({
-      project: { ...project, status, health },
+      project: { ...project, status, health, schedules },
       // Whether the no-rebuild re-push without the banner was started.
       applied: outcome.ok,
       deploymentId: outcome.ok ? outcome.deployment.id : null,
@@ -187,9 +193,12 @@ projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (
   // company's project count ever makes this endpoint too slow in
   // practice; not a real problem at today's expected scale (a handful of
   // projects per company, not thousands).
-  const [statusById, healthList] = await Promise.all([
+  // schedules: {count, failing} — one grouped query for every project, so
+  // the app cards can show "Needs attention" for a failing scheduled job.
+  const [statusById, healthList, scheduleById] = await Promise.all([
     resolveProjectStatuses(projects),
     Promise.all(projects.map((p) => fetchAppHealth(p.slug))),
+    scheduleSummaries(projects.map((p) => p.id)),
   ]);
 
   res.json(
@@ -197,6 +206,7 @@ projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (
       ...p,
       status: (p.currentDeploymentId && statusById.get(p.currentDeploymentId)) || NO_DEPLOYMENTS_STATUS,
       health: healthList[i],
+      schedules: scheduleById.get(p.id)!,
     }))
   );
 });
@@ -206,11 +216,12 @@ projectsRouter.get(
   loadCompanyContext,
   loadProjectContext,
   async (req, res) => {
-    const [health, status] = await Promise.all([
+    const [health, status, schedules] = await Promise.all([
       fetchAppHealth(req.project!.slug),
       resolveProjectStatus(req.project!.currentDeploymentId),
+      scheduleSummary(req.project!.id),
     ]);
-    res.json({ ...req.project, status, health });
+    res.json({ ...req.project, status, health, schedules });
   }
 );
 

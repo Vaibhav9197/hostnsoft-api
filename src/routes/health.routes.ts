@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis";
 import { logger } from "../lib/logger";
+import { BUILD_INFO } from "../lib/buildInfo";
 
 export const healthRouter = Router();
 
@@ -34,11 +35,21 @@ async function check(name: string, run: () => Promise<unknown>): Promise<"ok" | 
 // through Traefik), which an external uptime monitor polls. 503 when any
 // dependency is down, so the monitor alerts on the status code alone.
 // The body names what failed, never why: the reason is in the log.
+//
+// `commit` and `startedAt` say which code is serving and since when — see
+// lib/buildInfo.ts. The deploy workflow greps `commit` from a 200 answer,
+// so a deploy onto a box whose database or Redis is down fails its check.
 healthRouter.get("/health", async (_req, res) => {
   const [db, cache] = await Promise.all([
     check("db", () => prisma.$queryRaw`SELECT 1`),
     check("redis", () => redis.ping()),
   ]);
   const ok = db === "ok" && cache === "ok";
-  res.status(ok ? 200 : 503).json({ status: ok ? "ok" : "down", db, redis: cache });
+  res.status(ok ? 200 : 503).json({
+    status: ok ? "ok" : "down",
+    db,
+    redis: cache,
+    commit: BUILD_INFO.commit,
+    startedAt: BUILD_INFO.startedAt,
+  });
 });

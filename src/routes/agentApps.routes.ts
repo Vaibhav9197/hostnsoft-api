@@ -40,6 +40,24 @@ import { EDGE_HOSTNAME, ORIGIN_SERVER_IP, platformZoneOf } from "../lib/customDo
 import { fetchAppAnalytics, type AnalyticsRange } from "../services/appAnalytics";
 import { tearDownApp } from "../services/appTeardown";
 import { readAgentName, type DeployAttribution } from "../lib/deployAttribution";
+import {
+  LAST_RUN,
+  ScheduleValidationError,
+  listRuns,
+  runsQuerySchema,
+  createScheduleSchema,
+  nextRunAfter,
+  normalizeCron,
+  toRunResponse,
+  toScheduleResponse,
+  updateScheduleSchema,
+  validatePath,
+  validateTiming,
+} from "../services/schedules";
+import { startRun } from "../services/scheduleRunner";
+import { ensureCronSecret } from "../services/scheduleSync";
+import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
+import { UnsafeUrlError, assertPublicHttpsUrl } from "../lib/publicHttpsUrl";
 
 export const agentAppsRouter = Router();
 
@@ -161,7 +179,7 @@ appScoped.delete("/", async (req, res) => {
 // Keys only, never values.
 //
 // Env vars double as this platform's secret store (there is no separate
-// one — /capabilities reports secrets as unavailable), so returning
+// one — the agent guide says so), so returning
 // values here would pull customer credentials into an agent's context,
 // which is transcribed, summarised and often retained. An agent needs to
 // know WHICH vars are set in order to reason about configuration; it
@@ -426,6 +444,252 @@ appScoped.delete("/env-vars/:key", async (req, res) => {
     details: `${req.params.key} (${agentActor(req)})`,
   });
   res.status(204).end();
+});
+
+// Schedules — timed calls into the app (see docs/schedules.md and
+// services/schedules.ts). At each due time the platform sends
+// GET <path> to the app's own address; a sleeping app is woken by it like
+// any visitor. Every endpoint returns the same schedule shape
+// (toScheduleResponse), list included.
+function sendScheduleError(res: Response, err: unknown) {
+  if (err instanceof ScheduleValidationError) {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
+  if (err instanceof UnsafeUrlError) {
+    return res.status(400).json({ error: `alertWebhookUrl: ${err.message}`, code: "invalid_alert_webhook" });
+  }
+  throw err;
+}
+
+async function findSchedule(req: Request, res: Response) {
+  const schedule = await prisma.schedule.findFirst({
+    where: { id: req.params.scheduleId, projectId: req.project!.id },
+    include: LAST_RUN,
+  });
+  if (!schedule) res.status(404).json({ error: "Schedule not found", code: "schedule_not_found" });
+  return schedule;
+}
+
+appScoped.get("/schedules", async (req, res) => {
+  const schedules = await prisma.schedule.findMany({
+    where: { projectId: req.project!.id },
+    orderBy: { createdAt: "asc" },
+    include: LAST_RUN,
+  });
+  res.json({
+    schedules: schedules.map((s) => toScheduleResponse(s, req.project!.slug)),
+    limit: SCHEDULE_MAX_PER_APP,
+  });
+});
+
+appScoped.post("/schedules", refuseForStaticApp("schedules"), async (req, res) => {
+  const body = createScheduleSchema.parse(req.body);
+  const project = req.project!;
+
+  let cron: string;
+  let path: string;
+  try {
+    cron = normalizeCron(body.cron);
+    validateTiming(cron, body.timezone);
+    path = validatePath(body.path);
+    if (body.alertWebhookUrl) await assertPublicHttpsUrl(body.alertWebhookUrl);
+  } catch (err) {
+    return sendScheduleError(res, err);
+  }
+
+  const count = await prisma.schedule.count({ where: { projectId: project.id } });
+  if (count >= SCHEDULE_MAX_PER_APP) {
+    return res.status(409).json({
+      error: `This app already has ${count} schedules, the most allowed. Delete or change one instead.`,
+      code: "schedule_limit_reached",
+      limit: SCHEDULE_MAX_PER_APP,
+    });
+  }
+
+  // Same as a deploy-declared schedule: the app gets a CRON_SECRET if it has
+  // none. Created here it reaches the running app on its next deploy or
+  // env-vars apply — the guide says so.
+  await ensureCronSecret(project.id, req.userId!);
+
+  const schedule = await prisma.schedule.create({
+    data: {
+      projectId: project.id,
+      name: body.name,
+      cron,
+      timezone: body.timezone,
+      path,
+      enabled: body.enabled,
+      alertWebhookUrl: body.alertWebhookUrl,
+      nextRunAt: body.enabled ? nextRunAfter(cron, body.timezone, new Date()) : null,
+      createdBy: req.userId!,
+    },
+    include: LAST_RUN,
+  });
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: project.id,
+    action: "schedule.create",
+    details: `${schedule.id} ${cron} ${path} (${agentActor(req)})`,
+  });
+
+  res.status(201).json(toScheduleResponse(schedule, project.slug));
+});
+
+// Run every schedule of the app once now — the one check an agent makes
+// after a deploy that declared schedules. Same per-schedule rule as below:
+// one already running is reported, not started twice.
+appScoped.post("/schedules/run", refuseForStaticApp("schedules"), async (req, res) => {
+  const project = req.project!;
+  const schedules = await prisma.schedule.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
+  if (schedules.length === 0) {
+    return res.status(404).json({
+      error: "This app has no schedules. Deploy with \"schedules\" in embarko.json, or create one, first.",
+      code: "no_schedules",
+    });
+  }
+
+  const runs = [];
+  for (const schedule of schedules) {
+    const run = await startRun(schedule, project, "manual");
+    runs.push(
+      run
+        ? {
+            scheduleId: schedule.id,
+            path: schedule.path,
+            ...toRunResponse(run),
+            statusUrl: `/api/apps/${project.slug}/schedules/${schedule.id}/runs/${run.id}`,
+          }
+        : { scheduleId: schedule.id, path: schedule.path, started: false, code: "run_in_progress" }
+    );
+  }
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: project.id,
+    action: "schedule.run",
+    details: `all (${schedules.length}) (${agentActor(req)})`,
+  });
+
+  res.status(202).json({ runs });
+});
+
+appScoped.get("/schedules/:scheduleId", async (req, res) => {
+  const schedule = await findSchedule(req, res);
+  if (schedule) res.json(toScheduleResponse(schedule, req.project!.slug));
+});
+
+// A merge: fields absent from the body are left alone. nextRunAt is
+// recomputed whenever timing or enabled changes.
+appScoped.patch("/schedules/:scheduleId", refuseForStaticApp("schedules"), async (req, res) => {
+  const body = updateScheduleSchema.parse(req.body ?? {});
+  const existing = await findSchedule(req, res);
+  if (!existing) return;
+
+  let cron = existing.cron;
+  let path = existing.path;
+  const timezone = body.timezone ?? existing.timezone;
+  try {
+    if (body.cron !== undefined) cron = normalizeCron(body.cron);
+    if (body.cron !== undefined || body.timezone !== undefined) validateTiming(cron, timezone);
+    if (body.path !== undefined) path = validatePath(body.path);
+    if (body.alertWebhookUrl) await assertPublicHttpsUrl(body.alertWebhookUrl);
+  } catch (err) {
+    return sendScheduleError(res, err);
+  }
+
+  const enabled = body.enabled ?? existing.enabled;
+  const timingChanged = cron !== existing.cron || timezone !== existing.timezone || enabled !== existing.enabled;
+
+  const schedule = await prisma.schedule.update({
+    where: { id: existing.id },
+    data: {
+      cron,
+      timezone,
+      path,
+      enabled,
+      ...(body.name !== undefined && { name: body.name }),
+      ...(body.alertWebhookUrl !== undefined && { alertWebhookUrl: body.alertWebhookUrl }),
+      ...(timingChanged && { nextRunAt: enabled ? nextRunAfter(cron, timezone, new Date()) : null }),
+    },
+    include: LAST_RUN,
+  });
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "schedule.update",
+    details: `${schedule.id} ${Object.keys(body).join(", ")} (${agentActor(req)})`,
+  });
+
+  res.json(toScheduleResponse(schedule, req.project!.slug));
+});
+
+appScoped.delete("/schedules/:scheduleId", async (req, res) => {
+  const schedule = await findSchedule(req, res);
+  if (!schedule) return;
+
+  await prisma.schedule.delete({ where: { id: schedule.id } });
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "schedule.delete",
+    details: `${schedule.id} (${agentActor(req)})`,
+  });
+
+  res.status(204).end();
+});
+
+// Run it once now, outside its timing — how an agent checks a schedule
+// works without waiting for the next occurrence. Works on a paused
+// schedule too. 202: the call can take minutes (wake-up included), so the
+// result is polled at statusUrl.
+appScoped.post("/schedules/:scheduleId/run", refuseForStaticApp("schedules"), async (req, res) => {
+  const schedule = await findSchedule(req, res);
+  if (!schedule) return;
+
+  const { runs: _runs, ...row } = schedule;
+  const run = await startRun(row, req.project!, "manual");
+  if (!run) {
+    return res.status(409).json({
+      error: "This schedule's previous run is still in progress. Poll its runs and try again when it finishes.",
+      code: "run_in_progress",
+    });
+  }
+
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: req.company!.id,
+    projectId: req.project!.id,
+    action: "schedule.run",
+    details: `${schedule.id} (${agentActor(req)})`,
+  });
+
+  res.status(202).json({
+    ...toRunResponse(run),
+    statusUrl: `/api/apps/${req.project!.slug}/schedules/${schedule.id}/runs/${run.id}`,
+  });
+});
+
+// ?limit, ?page, ?outcome=ok|failed|skipped|running, ?trigger=schedule|manual
+appScoped.get("/schedules/:scheduleId/runs", async (req, res) => {
+  const query = runsQuerySchema.parse(req.query);
+  const schedule = await findSchedule(req, res);
+  if (!schedule) return;
+  res.json(await listRuns(schedule.id, query));
+});
+
+appScoped.get("/schedules/:scheduleId/runs/:runId", async (req, res) => {
+  const run = await prisma.scheduleRun.findFirst({
+    where: { id: req.params.runId, scheduleId: req.params.scheduleId, schedule: { projectId: req.project!.id } },
+  });
+  if (!run) return res.status(404).json({ error: "Run not found", code: "run_not_found" });
+  res.json(toRunResponse(run));
 });
 
 // The app's name IS its address, so this is a rename and a migration at
