@@ -5,7 +5,14 @@ import { prisma } from "../lib/prisma";
 import { createDeploymentWithNextVersion, markProjectDeploymentLive } from "../services/deploymentVersioning";
 import { unauthorizedDeployTokenBody } from "../services/deployTokenAuth";
 import { claimProjectForCompany } from "../services/projectClaim";
-import { actorPersonId, deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import {
+  accessActorOfDeploy,
+  actorPersonId,
+  deployCreatedBy,
+  deployCredentialFields,
+  resolveDeployActor,
+} from "../services/deployActor";
+import { checkAppAccess } from "../services/tokenAccess";
 import { validateDeclaredSchedules } from "../services/schedules";
 import { syncDeclaredSchedules } from "../services/scheduleSync";
 import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
@@ -97,8 +104,26 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   const actor = resolved.actor;
 
   let project: Project;
-  if (actor.companyId) {
-    const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, actor.userId);
+  // A user token's deploy can be to an app in another workspace its person
+  // may deploy to (services/tokenAccess.ts) — which the claim already
+  // decided, before the build. Re-checked here rather than trusted, same as
+  // the credential: this endpoint must be safe on its own. Anything this
+  // doesn't settle falls through to the company-scoped backstop below,
+  // exactly as before user tokens.
+  const crossWorkspace =
+    actor.kind === "deployToken" && actor.token.kind === "user"
+      ? await prisma.project.findUnique({ where: { slug: body.projectSlug } })
+      : null;
+  const access = accessActorOfDeploy(actor);
+  if (
+    crossWorkspace?.companyId &&
+    crossWorkspace.companyId !== actor.companyId &&
+    access &&
+    (await checkAppAccess(access, crossWorkspace, "app.deploy")).ok
+  ) {
+    project = crossWorkspace;
+  } else if (actor.companyId) {
+    const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, deployCreatedBy(actor));
     if (claim.rejected) {
       return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });
     }

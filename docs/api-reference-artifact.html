@@ -410,6 +410,7 @@
       <a class="navlink" href="#ep-projects-get">Get one</a>
       <a class="navlink" href="#ep-projects-rename">Rename</a>
       <a class="navlink" href="#ep-projects-memory">Set memory</a>
+      <a class="navlink" href="#ep-projects-move">Move to workspace <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
       <a class="navlink" href="#ep-projects-delete">Delete</a>
     </div>
 
@@ -935,6 +936,31 @@
         <div class="endpoint-note"><strong>Static sites:</strong> refused with <code>409</code> <code>not_supported_for_static</code> when the project's <code>kind</code> is <code>"static"</code> — nothing runs on the server, so there is no memory to size. The body carries <code>error</code>, <code>code</code>, a <code>next</code> step and <code>links.help</code> (the deploy service's <code>/capabilities/static-sites</code> topic).</div>
       </article>
 
+      <article class="endpoint" id="ep-projects-move">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects/:projectId/move</span>
+          <span class="role-chip">proxy_auth_token</span>
+          <span class="chip role-chip new" style="margin-left:8px;">new</span>
+        </div>
+        <p class="endpoint-desc">Moves the app to another workspace the caller belongs to. Only ownership changes: same address, same <code>id</code>, same running version, <strong>no redeploy</strong>. Env vars, custom domains, schedules, deploy history, old names and the app's Showcase details go with it; deploy tokens, audit history and event pages stay with their workspace. Needs <code>app.move</code> in <code>:companyId</code> and <code>app.create</code> in the target (any member, until roles land). Audited as <code>project.move</code> in <strong>both</strong> workspaces, details <code>{from, to, fromName, toName, slug}</code>. If the two workspaces are on different plans, the free-plan footer is re-applied to the running version (no rebuild).</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"targetCompanyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span> <span class="tok-punc">}</span></code></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code><span class="tok-punc">{</span>
+  <span class="tok-key">"project"</span><span class="tok-punc">:</span> <span class="tok-punc">{ …</span> <span class="tok-comment">// exactly GET one's shape, companyId now the target</span> <span class="tok-punc">},</span>
+  <span class="tok-key">"from"</span><span class="tok-punc">:</span> <span class="tok-str">"company_old"</span><span class="tok-punc">,</span> <span class="tok-key">"to"</span><span class="tok-punc">:</span> <span class="tok-str">"company_new"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"footerResync"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span> <span class="tok-comment">// true: plans differ, footer being re-applied</span>
+<span class="tok-punc">}</span></code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note">Codes: <code>400 same_workspace</code>; <code>403 no_access</code> (no <code>app.move</code> here, or the target isn't a workspace where the caller can add apps — a non-member target looks the same as a made-up id); <code>409 rename_in_progress</code> / <code>deploy_in_progress</code> (wait, then retry); <code>409 plan_limit_reached</code> (reserved: no plan limits exist on app creation today, so a move checks none either); <code>409 move_conflict</code> (the app changed mid-move). Afterwards the old workspace's deploy tokens get <code>409 app_moved</code> for this app — see <a href="#ep-deploy-upload">deploy</a>.</div>
+      </article>
+
       <article class="endpoint" id="ep-projects-delete">
         <div class="endpoint-head">
           <span class="method delete">DELETE</span>
@@ -1230,7 +1256,7 @@
 
     <section class="resource" id="tokens">
       <div class="resource-head"><h2>Deploy tokens</h2></div>
-      <p class="resource-intro">Company-wide scope: a token authenticates as "any project in this company" against <code>ship.embarko.ai/apps</code>. The raw token is shown exactly once, at creation or rotation — never again.</p>
+      <p class="resource-intro">Two kinds (<code>kind</code>, 2026-10-21). <strong><code>"user"</code></strong> ("Just me" in the dashboard): the token acts as the person who made it — it reaches every app in every workspace that person may deploy to, checked live on each call, and stops reaching a workspace the moment they leave it; the workspace it was made in (<code>companyId</code>) is its <em>default</em>, where a deploy of a brand-new app lands, and the workspace whose list shows it. <strong><code>"workspace"</code></strong> ("Whole workspace"): reaches this workspace's apps only, whoever made it — for CI and shared machines. Agent-email and connector tokens are always <code>"user"</code>; existing dashboard tokens stayed <code>"workspace"</code>. The raw token is shown exactly once, at creation or rotation — never again. Every token response (create, rotate, list) carries the same fields.</p>
 
       <article class="endpoint" id="ep-tokens-create">
         <div class="endpoint-head">
@@ -1241,14 +1267,16 @@
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span> <span class="tok-punc">}</span></code></pre>
+            <pre><code><span class="tok-punc">{</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"workspace"</span> <span class="tok-punc">}</span> <span class="tok-comment">// kind optional: "user" (default) | "workspace"</span></code></pre>
           </div>
           <div class="panel">
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span> <span class="tok-comment">// shown once</span>
+  <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"tokenPrefix"</span><span class="tok-punc">:</span> <span class="tok-str">"emb_a1b2c3d4"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"emb_a1b2c3d4"</span><span class="tok-punc">,</span> <span class="tok-comment">// same value; prefix kept for older callers</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"revokedAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+  <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"workspace"</span><span class="tok-punc">,</span> <span class="tok-key">"createdBy"</span><span class="tok-punc">:</span> <span class="tok-str">"user_..."</span><span class="tok-punc">,</span>
+  <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"emb_a1b2c3d4..."</span> <span class="tok-comment">// shown once</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
@@ -1266,9 +1294,11 @@
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">[</span>
   <span class="tok-punc">{</span>
-    <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4"</span><span class="tok-punc">,</span>
+    <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"tokenPrefix"</span><span class="tok-punc">:</span> <span class="tok-str">"emb_a1b2c3d4"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"emb_a1b2c3d4"</span><span class="tok-punc">,</span>
     <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T09:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"revokedAt"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-08T14:02:11.000Z"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span> <span class="tok-comment">// or "agent" (public email endpoint) / "connector" (AI-connector exchange, below)</span>
+    <span class="tok-key">"source"</span><span class="tok-punc">:</span> <span class="tok-str">"dashboard"</span><span class="tok-punc">,</span> <span class="tok-comment">// or "agent" (public email endpoint) / "connector" (AI-connector exchange, below)</span>
+    <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"workspace"</span><span class="tok-punc">,</span> <span class="tok-comment">// or "user" — see the intro above</span>
+    <span class="tok-key">"createdBy"</span><span class="tok-punc">:</span> <span class="tok-str">"user_..."</span> <span class="tok-comment">// proxy user id; for a user token, the person it acts as</span>
   <span class="tok-punc">}</span>
 <span class="tok-punc">]</span></code></pre>
           </div>
@@ -1290,11 +1320,12 @@
           <span class="path">/companies/:companyId/tokens/:tokenId/rotate</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Issues a replacement under the same label. The old token gets a <strong>1-hour grace period</strong> before it actually stops working, so an in-flight CI run doesn't break the instant you rotate.</p>
+        <p class="endpoint-desc">Issues a replacement under the same label and the same <code>kind</code>. The old token gets a <strong>1-hour grace period</strong> before it actually stops working, so an in-flight CI run doesn't break the instant you rotate. The replacement's <code>createdBy</code> is whoever rotated it — so a rotated <code>"user"</code> token acts as the rotator, never as the original owner (a teammate rotating your personal token can't end up holding a token that acts as you).</p>
+        <div class="endpoint-note">Create, revoke and rotate also answer <code>403 no_access</code> when the caller lacks <code>tokens.manage</code> in this workspace (every member has it until roles land).</div>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-comment">// same shape as create above, plus oldTokenValidUntil</span>
+            <pre><code><span class="tok-comment">// same shape as create above (kind carried over), plus oldTokenValidUntil</span>
 <span class="tok-punc">{</span>
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_new..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"CI pipeline"</span><span class="tok-punc">,</span> <span class="tok-key">"prefix"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_e5f6..."</span><span class="tok-punc">,</span>
   <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-07T10:30:00.000Z"</span><span class="tok-punc">,</span> <span class="tok-key">"token"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_e5f6..."</span><span class="tok-punc">,</span> <span class="tok-comment">// shown once</span>
@@ -1321,7 +1352,7 @@
             <pre><code><span class="tok-punc">{</span> <span class="tok-key">"message"</span><span class="tok-punc">:</span> <span class="tok-str">"If this email address is valid, a deploy token for each of your companies has been sent to it. ..."</span> <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note info">Doesn't rotate or revoke anything — every call mints a fresh token under a new label (<code>email &lt;timestamp&gt; UTC</code>); older tokens keep working. Revoke unwanted ones from the dashboard like any other token.</div>
+        <div class="endpoint-note info">Doesn't rotate or revoke anything — every call mints a fresh token under a new label (<code>email &lt;timestamp&gt; UTC</code>); older tokens keep working. Revoke unwanted ones from the dashboard like any other token. Each is a <code>kind: "user"</code> token whose default workspace is the one it was minted for.</div>
       </article>
 
       <article class="endpoint" id="ep-connector-token">
@@ -1331,7 +1362,7 @@
           <span class="role-chip open">proxy_auth_token in body, no header needed</span>
           <span class="chip role-chip new" style="margin-left:8px;">new</span>
         </div>
-        <p class="endpoint-desc">The one-click connector flow: when Embarko is connected as a ChatGPT/Claude connector, the AI client opens MSG91's hosted login widget, the person logs in exactly as on the dashboard, and the widget hands the client a <code>proxy_auth_token</code> in-page. This endpoint exchanges that for a Deploy Token — no copying, no pasting. Mints a <strong>brand-new</strong> token every call (existing tokens are never touched), scoped to the identity's current company, with <code>source: "connector"</code>.</p>
+        <p class="endpoint-desc">The one-click connector flow: when Embarko is connected as a ChatGPT/Claude connector, the AI client opens MSG91's hosted login widget, the person logs in exactly as on the dashboard, and the widget hands the client a <code>proxy_auth_token</code> in-page. This endpoint exchanges that for a Deploy Token — no copying, no pasting. Mints a <strong>brand-new</strong> token every call (existing tokens are never touched), with <code>source: "connector"</code> and <code>kind: "user"</code>: it acts as the person who signed in, in every workspace they are in; their current company is its default workspace (where new apps go).</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1342,7 +1373,7 @@
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"accessToken"</span><span class="tok-punc">:</span> <span class="tok-str">"hns_a1b2c3d4..."</span><span class="tok-punc">,</span> <span class="tok-comment">// shown once — this IS the deploy token</span>
   <span class="tok-key">"tokenId"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"Connector Token: 14:02 IST"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"user"</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span> <span class="tok-comment">// default workspace</span>
   <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-11T10:49:55.520Z"</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
@@ -1366,7 +1397,7 @@
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response (valid)</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"valid"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"valid"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"kind"</span><span class="tok-punc">:</span> <span class="tok-str">"user"</span><span class="tok-punc">,</span> <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">"company_..."</span><span class="tok-punc">,</span> <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span>
   <span class="tok-key">"tokenId"</span><span class="tok-punc">:</span> <span class="tok-str">"tok_..."</span><span class="tok-punc">,</span> <span class="tok-key">"label"</span><span class="tok-punc">:</span> <span class="tok-str">"Connector Token: 14:02 IST"</span><span class="tok-punc">,</span>
   <span class="tok-key">"lastUsedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-11T10:49:55.564Z"</span>
 <span class="tok-punc">}</span></code></pre>
@@ -1775,7 +1806,7 @@ X-App-Id:         cmh1q2w3e… <span style="color:var(--ink-faint)">// optional,
                 <strong>embarko.json (2026-10-17):</strong> an optional file in the app's top folder, read from the upload (any upload path, including a JSON body's <code>files</code>) before the claim: <code>{"$schema": "https://embarko.ai/schema/embarko.json", "schedules": [{cron, path, timezone?, name?}]}</code>. <code>schedules</code> is the app's <em>whole</em> set of <a href="#schedules">schedules</a>: matched by path, listed ones are created or updated (keeping run history), unlisted ones deleted, <code>[]</code> deletes all; no file or no <code>schedules</code> key changes nothing. Refused before any build with <code>400</code>: <code>invalid_embarko_json</code> (not JSON — line and column given —, not one object, <code>schedules</code> not a list, over 64 KB), <code>secrets_in_embarko_json</code> (a secret-looking key or value; use env vars), or a schedule error (<code>invalid_schedules</code>, <code>invalid_cron</code>, <code>schedule_too_frequent</code>, <code>invalid_timezone</code>, <code>invalid_path</code>, <code>duplicate_schedule_path</code>, <code>schedule_limit_reached</code>), each naming the entry. Applied only when the deploy succeeds. The app gets a <code>CRON_SECRET</code> env var if it has none (never replaced), in the env of this same deploy. The 202 adds <code>schedules: {declared, appliesWhen: "live"}</code> and <code>links.runSchedules</code>; a temporary app deploys, but its reply says <code>schedules: {declared, applied: false, reason}</code>.
               </p>
               <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
-                <strong>App id (2026-10-21):</strong> every deploy reply carries <code>app.id</code>, the project's <a href="#ep-projects-get"><code>id</code></a>, plus <code>action</code> (<code>"created"</code> when this deploy made the app, else <code>"updated"</code>) and, when something changed outside the deploy, <code>notices: [{code, from, to, detail}]</code>. The deployer keeps the id as <code>"appId"</code> in embarko.json (the skill writes it) or sends it as <code>X-App-Id</code>; the header wins. The file's <code>appId</code> is read for deploy-token deploys only, never for a dashboard upload, which goes to the app the person picked. The app is resolved by id, else by current name, else by old name, and only then created. A renamed app is built under its <em>current</em> name, with notice <code>app_renamed</code>. Errors: <code>400 invalid_app_id</code> (header) or <code>400 invalid_embarko_json</code> (file); <code>404 app_not_found</code> (no such id in the caller's company); <code>410 app_deleted</code> (that app was deleted; never recreated by id). <code>409 app_name_taken</code> now also covers another app's old name.
+                <strong>App id (2026-10-21):</strong> every deploy reply carries <code>app.id</code>, the project's <a href="#ep-projects-get"><code>id</code></a>, plus <code>action</code> (<code>"created"</code> when this deploy made the app, else <code>"updated"</code>) and, when something changed outside the deploy, <code>notices: [{code, from, to, detail}]</code>. The deployer keeps the id as <code>"appId"</code> in embarko.json (the skill writes it) or sends it as <code>X-App-Id</code>; the header wins. The file's <code>appId</code> is read for deploy-token deploys only, never for a dashboard upload, which goes to the app the person picked. The app is resolved by id, else by current name, else by old name, and only then created. A renamed app is built under its <em>current</em> name, with notice <code>app_renamed</code>. Errors: <code>400 invalid_app_id</code> (header) or <code>400 invalid_embarko_json</code> (file); <code>404 app_not_found</code> (no such id in the caller's company); <code>410 app_deleted</code> (that app was deleted; never recreated by id). <code>409 app_name_taken</code> now also covers another app's old name. <strong>Token kinds and moved apps (2026-10-21):</strong> a <code>"user"</code> token reaches an existing app — by id, name or old name — in any workspace its person may deploy to (names are unique platform-wide, so there is only ever one app a name can mean); a new app is created in the token's default workspace, which needs <code>app.create</code> there. A <code>"workspace"</code> token or a dashboard upload reaches its own workspace only, as before. New codes: <code>409 app_moved</code> — the app was moved to another workspace this caller can't reach (a workspace token of the old workspace, or a person not in the new one); the message never names the new workspace, and no copy is ever made. <code>403 no_access</code> — the token's person lost access to the app's workspace (or, for a new app, to the token's default workspace); the message names that workspace and what to ask for. A caller with no connection to the app still gets <code>404 app_not_found</code> / <code>409 app_name_taken</code>. A user token that reaches a moved app gets the notice <code>{code: "app_moved", from?, to?, detail}</code> on the first deploy after the move; <code>from</code>/<code>to</code> are workspace names, present only when the caller is in both. The agent API (<code>/api/apps/:appName/…</code>, <code>/api/slug-changes/:projectId</code>) follows the same rules, and its 404 now reads "No app named … that this token can reach".
               </p>
               <p style="margin:10px 0 0;color:var(--ink-dim);font-size:13.5px;">
                 <strong>Warnings (2026-10-17):</strong> problems that don't stop the deploy come back in the 202 as <code>warnings: [{code, detail}]</code>, with a sentence in <code>next</code> and <code>links.help</code>: <code>embarko_json_not_at_top</code> (found only in a subfolder), <code>embarko_json_misnamed</code> (<code>.embarko</code>, <code>embarko.yaml</code>…), <code>embarko_json_unknown_keys</code> (ignored), <code>in_process_timer</code> (no schedules in embarko.json and the dependencies list a timer library such as <code>node-cron</code> or <code>APScheduler</code>, whose jobs stop when the app sleeps; the entry adds <code>libraries</code> and the <code>expressions: [{cron, file}]</code> found), <code>schedules_unchanged</code> (the app has schedules, this upload declares none: kept), <code>schedules_on_static_site</code> (not applied).

@@ -8,15 +8,22 @@
  * breaks. The person revokes unwanted ones from the dashboard like any
  * other token — they all show up in GET /companies/:companyId/tokens with
  * source "connector".
+ *
+ * Always a user token (DeployToken.kind, 2026-10-21): it is minted for the
+ * one person who just signed in, so it acts as them — any workspace they
+ * are in — and `companyId` (their current workspace) is only where new apps
+ * go. Their AI client then follows an app the person moves between
+ * workspaces, and stops reaching a workspace the moment they leave it.
  */
 import type { DeployToken } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { generateDeployToken, type DeployTokenSource } from "../lib/deployTokens";
+import { generateDeployToken, type DeployTokenKind, type DeployTokenSource } from "../lib/deployTokens";
 import { logAudit } from "./audit";
 
 export const CONNECTOR_TOKEN_LABEL_PREFIX = "Connector Token: ";
 
 const SOURCE: DeployTokenSource = "connector";
+const KIND: DeployTokenKind = "user";
 
 export async function mintConnectorToken(
   companyId: string,
@@ -33,6 +40,7 @@ export async function mintConnectorToken(
       tokenHash,
       tokenPrefix: prefix,
       source: SOURCE,
+      kind: KIND,
     },
   });
   await logAudit({ actorUserId: actor.userId, companyId, action: "token.create", details: label });

@@ -13,9 +13,21 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Company-wide deploy token. Only the hash is stored; the raw token is shown
-// once at creation, like a GitHub PAT. The token IS the company identity for
-// hostnsoft-deploy (src/services/deployTokenAuth.ts).
+// A deploy token. Only the hash is stored; the raw token is shown once at
+// creation, like a GitHub PAT. Two kinds (`kind`, added 2026-10-21):
+//   "workspace" — the token IS the company identity: it reaches the apps of
+//     `companyId` and nothing else, whoever minted it, for as long as it
+//     lives. For CI and shared machines, where the work must not stop when
+//     the person who set it up leaves.
+//   "user" — the token acts AS `createdBy`: it reaches every app in every
+//     workspace that person can reach, checked live on each call
+//     (src/lib/permissions.ts can()), so losing membership loses access at
+//     once. `companyId` keeps its column but changes meaning: it is the
+//     token's DEFAULT workspace — where a deploy of a brand-new app lands —
+//     and the workspace whose token list shows it (and whose members can
+//     revoke it). Reusing the column rather than adding a defaultCompanyId
+//     keeps every existing "tokens of this workspace" query correct for both
+//     kinds. See src/services/tokenAccess.ts.
 model DeployToken {
   id          String    @id @default(cuid())
   companyId   String
@@ -31,6 +43,11 @@ model DeployToken {
   // (the public email endpoint), or "connector" (an AI client exchanging a
   // proxy_auth_token via POST /connector/token). String, not enum — SQLite.
   source      String    @default("dashboard")
+  // "workspace" | "user" — see the model comment. String, not enum — SQLite.
+  // Independent of `source`: source says who minted it, kind what it may
+  // reach. The migration made every agent/connector token a user token,
+  // since those were always minted for one signed-in person.
+  kind        String    @default("workspace")
 
   @@index([companyId])
 }

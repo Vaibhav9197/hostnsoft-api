@@ -12,6 +12,16 @@ import crypto from "crypto";
 export const DEPLOY_TOKEN_SOURCES = ["dashboard", "agent", "connector"] as const;
 export type DeployTokenSource = (typeof DEPLOY_TOKEN_SOURCES)[number];
 
+// What a token may reach — DeployToken.kind, see schema.prisma.
+// "user": acts as its creator, across every workspace they can reach.
+// "workspace": its own workspace's apps, whoever made it.
+// A person-facing default, used wherever a token is minted for one signed-in
+// person (dashboard, email, connector): an agent holding it can then follow
+// that person's apps between workspaces. "workspace" is the opt-in for CI.
+export const DEPLOY_TOKEN_KINDS = ["user", "workspace"] as const;
+export type DeployTokenKind = (typeof DEPLOY_TOKEN_KINDS)[number];
+export const DEFAULT_DEPLOY_TOKEN_KIND: DeployTokenKind = "user";
+
 export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
