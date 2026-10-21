@@ -78,6 +78,7 @@ export async function createEvent(data: {
   title: string;
   intro: string | null;
   customHtml: string | null;
+  autoApprove: boolean;
   companyId: string;
   createdBy: string;
 }): Promise<ShowcaseEvent> {
@@ -394,10 +395,19 @@ function notify(event: ShowcaseEvent, app: AppWithProject, listing: ShowcaseEven
   void (listing.status === "pending" ? mailPendingListing(event, app) : mailListingDecision(event, app, listing));
 }
 
-// On an event the listing is approved at once when the code matches or the
-// app belongs to the organiser; otherwise it waits for review. A rejected
+// On an event the listing is approved at once when the event auto-approves,
+// the code matches, or the app belongs to the organiser; otherwise it waits
+// for review. A rejected
 // listing submitted again goes back into the queue (or straight in, with
 // the code), reason cleared.
+export function approvesAtOnce(
+  event: Pick<ShowcaseEvent, "autoApprove" | "submitCode" | "companyId">,
+  app: Pick<AppDetails, "companyId">,
+  code?: string
+): boolean {
+  return event.autoApprove || (!!code && code === event.submitCode) || app.companyId === event.companyId;
+}
+
 export async function placeApp(
   app: AppWithProject,
   target: PlaceTarget,
@@ -412,8 +422,8 @@ export async function placeApp(
   }
 
   const event = target.event;
-  const autoApprove = (!!code && code === event.submitCode) || app.companyId === event.companyId;
-  const status: ListingStatus = autoApprove ? "approved" : "pending";
+  const approved = approvesAtOnce(event, app, code);
+  const status: ListingStatus = approved ? "approved" : "pending";
 
   try {
     const listing = await prisma.showcaseEventListing.create({
@@ -434,8 +444,8 @@ export async function placeApp(
       notify(event, app, listing);
       return { app, placement: eventPlacement(listing, event), created: true };
     }
-    // Pending, and this time the code (or ownership) clears it.
-    if (listing.status === "pending" && autoApprove) {
+    // Pending, and this time the code, ownership or auto-approve clears it.
+    if (listing.status === "pending" && approved) {
       listing = await prisma.showcaseEventListing.update({
         where: { id: listing.id },
         data: { status: "approved", reviewedAt: new Date() },
@@ -559,6 +569,7 @@ export function toPublicEvent(e: ShowcaseEvent, projectCount: number, opts: Even
     intro: e.intro,
     ...eventHtml(e, opts),
     type: "event" as const,
+    autoApprove: e.autoApprove,
     projectCount,
     createdAt: e.createdAt.toISOString(),
   };
@@ -579,6 +590,7 @@ export function toOwnerEvent(e: ShowcaseEvent, counts: EventCounts, opts: EventS
     companyId: e.companyId,
     createdBy: e.createdBy,
     submitCode: e.submitCode,
+    autoApprove: e.autoApprove,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
     counts,

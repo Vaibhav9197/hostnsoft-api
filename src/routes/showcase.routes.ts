@@ -64,6 +64,7 @@ const createEventSchema = z.object({
   title: z.string().trim().min(1).max(80),
   intro: z.string().trim().max(600).optional().nullable(),
   customHtml: eventCustomHtmlSchema.optional(),
+  autoApprove: z.boolean().optional(),
 });
 
 // POST .../collections — create an event page. Live at once, open to every company's apps.
@@ -74,6 +75,7 @@ showcaseRouter.post("/companies/:companyId/showcase/collections", loadCompanyCon
       ...body,
       intro: body.intro ?? null,
       customHtml: body.customHtml ?? null,
+      autoApprove: body.autoApprove ?? false,
       companyId: req.company!.id,
       createdBy: req.userId!,
     });
@@ -116,11 +118,15 @@ showcaseRouter.get("/companies/:companyId/showcase/collections/:collectionId", l
   });
 });
 
-const updateEventSchema = z.object({ customHtml: eventCustomHtmlSchema });
+const updateEventSchema = z
+  .object({ customHtml: eventCustomHtmlSchema.optional(), autoApprove: z.boolean().optional() })
+  .refine((b) => b.customHtml !== undefined || b.autoApprove !== undefined, "Send customHtml or autoApprove");
 
-// PATCH .../collections/:collectionId {customHtml} — the one thing an
-// organiser can change after creating an event: the HTML block on its page.
-// Name, address and intro stay fixed. "" or null clears it.
+// PATCH .../collections/:collectionId {customHtml?, autoApprove?} — what an
+// organiser can change after creating an event: the HTML block on its page
+// and whether submissions are approved at once. Name, address and intro stay
+// fixed. "" or null clears the HTML. Turning autoApprove on leaves listings
+// already pending for review.
 showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, async (req, res) => {
   if (req.params.collectionId === PUBLIC_PAGE_ID) {
     return res.status(409).json({ error: "The public gallery has no page content to edit", code: "SHOWCASE_PUBLIC_PAGE" });
@@ -130,10 +136,14 @@ showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId",
   if (!event) return;
 
   const [updated, counts] = await Promise.all([
-    prisma.showcaseEvent.update({ where: { id: event.id }, data: { customHtml: body.customHtml } }),
+    prisma.showcaseEvent.update({ where: { id: event.id }, data: body }),
     eventCounts([event.id]),
   ]);
-  await audit(req, "showcase.event.update", `${event.slug}: customHtml ${body.customHtml ? `set (${body.customHtml.length} chars)` : "cleared"}`);
+  const changes = [
+    body.customHtml !== undefined && `customHtml ${body.customHtml ? `set (${body.customHtml.length} chars)` : "cleared"}`,
+    body.autoApprove !== undefined && `autoApprove ${body.autoApprove ? "on" : "off"}`,
+  ].filter(Boolean);
+  await audit(req, "showcase.event.update", `${event.slug}: ${changes.join(", ")}`);
   res.json(toOwnerEvent(updated, counts.get(event.id)!, { html: true }));
 });
 

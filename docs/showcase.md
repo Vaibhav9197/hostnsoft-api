@@ -2,7 +2,8 @@
 
 **Added 2026-09-15; reworked 2026-09-30 (v3: `AppDetails`, public flag,
 events; company pages removed) plus event approvals and a submit code.
-Event pages got organiser custom HTML on 2026-10-06.**
+Event pages got organiser custom HTML on 2026-10-06, and an auto-approve
+switch on 2026-10-21.**
 Single reference for the feature.
 
 Embarko Showcase (`embarko.ai/showcase`) is a public gallery of apps built
@@ -13,7 +14,7 @@ search engines. An app is described once (`AppDetails`), then shown on:
 | Page | Where | Live |
 | --- | --- | --- |
 | Public | `/showcase` (a flag on the app) | at once |
-| Event | `/showcase/<event-slug>`, made by a company for a hackathon or demo day | when the organiser approves, or at once with the event's code or if the app is the organiser's own |
+| Event | `/showcase/<event-slug>`, made by a company for a hackathon or demo day | at once if the event auto-approves; otherwise when the organiser approves, or at once with the event's code or if the app is the organiser's own |
 
 Submissions come mostly from the **agent** that deployed the app (deploy
 token); the console form does the same.
@@ -24,7 +25,7 @@ token); the console form does the same.
 | --- | --- | --- |
 | Agent | The coding agent holding the app's deploy token | Submits to the gallery or an event, with or without the code. Updates details later, even one field. |
 | App owner | Members of the app's company | Sees placements and status, withdraws, can submit from the console. |
-| Organiser | Members of the event's company | Sees the code, approves / rejects (optional reason), hides / removes. |
+| Organiser | Members of the event's company | Sees the code, turns auto-approve on / off, approves / rejects (optional reason), hides / removes. |
 | Super admin | Embarko staff | Features apps on the gallery. Nothing else. |
 
 ## Tables
@@ -53,6 +54,7 @@ token); the console form does the same.
 | slug | Unique, immutable, `^[a-z0-9]+(-[a-z0-9]+)*$`, 3–40 chars, not reserved (`app`, `apps`, `public`, `event`, …). |
 | title, intro, companyId, createdBy | Fixed after create. |
 | submitCode | 8 chars, no 0/O/1/I, unique, generated on create. Given on submit, skips approval. |
+| autoApprove | Boolean, default false. On: every submission is `approved` at once, code or not. Off: `pending` unless the code matches or the app is the organiser's own. Set on create, changed any time with `PATCH .../collections/:id`. Turning it on leaves already-pending listings for review. Returned on every event shape (owner, `/pages`, public). |
 | customHtml | Optional organiser HTML shown on the event page above its apps (rules, schedule, sponsors). At most 50,000 characters. Set on create. The API can also change it afterwards (`PATCH .../collections/:id`), but the console offers no edit, so in practice it is fixed like the rest. Not sanitised: see [Custom HTML](#custom-html). |
 
 ### `ShowcaseEventListing` — one app on one event
@@ -75,15 +77,17 @@ Events have `type: "event"`.
 ## Flow
 
 ```
-organiser: POST .../collections {slug, title, intro, customHtml?}
+organiser: POST .../collections {slug, title, intro, customHtml?, autoApprove?}
            → live, empty; submitCode in the reply and on the console page
            → shares the code (or the "add your app" prompt, which carries it)
+           → PATCH .../collections/:id {autoApprove} from the manage page
            → (API only, no console UI) PATCH .../collections/:id {customHtml}
 
 agent:     PUT /apps/<name>/showcase {details, collectionSlug?, code?}
            → AppDetails created, or MERGED (only sent fields change)
            ├─ no collectionSlug ─────────────────────────► isPublic → live
            └─ event
+                ├─ autoApprove on ───────────────────────────► approved → live
                 ├─ code matches / app's company == organiser ► approved → live
                 └─ no or wrong code ─────────────────────► pending (not public)
 
@@ -192,10 +196,10 @@ All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 other
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/collections` `{slug, title, intro?, customHtml?}` | Create event; reply has `submitCode` and `customHtml`. 409 `SHOWCASE_SLUG_TAKEN`. |
+| POST | `/collections` `{slug, title, intro?, customHtml?, autoApprove?}` | Create event; reply has `submitCode`, `autoApprove` and `customHtml`. 409 `SHOWCASE_SLUG_TAKEN`. |
 | GET | `/collections` | Public stand-in first, then own events with `submitCode`, `counts: {total, publicCount, pending}`. No `customHtml`. |
 | GET | `/collections/:id` | Plus `customHtml` and `projects[]` with `status`, `rejectionReason` (every status for an event). |
-| PATCH | `/collections/:id` `{customHtml}` | No console UI calls this. Set or clear (`""` / null) an event's HTML; field required. Title, slug and intro are ignored: they stay fixed. 200 with the event. 409 `SHOWCASE_PUBLIC_PAGE` for the public stand-in, 404 for another company's event. |
+| PATCH | `/collections/:id` `{customHtml?, autoApprove?}` | At least one field (400 otherwise). The manage page sends `autoApprove`; nothing in the console sends `customHtml` (set or clear with `""` / null). Title, slug and intro are ignored: they stay fixed. 200 with the event. 409 `SHOWCASE_PUBLIC_PAGE` for the public stand-in, 404 for another company's event. |
 | DELETE | `/collections/:id` | Events only (409 `SHOWCASE_PUBLIC_PAGE`), while empty (409 `SHOWCASE_COLLECTION_NOT_EMPTY`). |
 | PATCH | `/collections/:id/projects/:listingId` `{approve}` / `{reject, reason?}` / `{isPrivate}` / `{remove}` | Event: review a pending listing (409 `SHOWCASE_LISTING_NOT_PENDING` otherwise), hide/unhide (200), remove (204). Public page: hide/remove unpublishes own app, unhide republishes; review 409 `SHOWCASE_PUBLIC_PAGE`. |
 | GET | `/pages` | Where an app can go: public stand-in, then every event. |
@@ -214,7 +218,7 @@ All under `/companies/:companyId/showcase/…`, scoped by `companyId` (404 other
 | PATCH | `/admin/showcase/projects/:id` `{featured}` | The only admin lever. No admin approve. |
 
 Audit: `showcase.event.create/update/delete` (update = custom HTML set
-with its length, or cleared), `showcase.public.add/remove`,
+with its length, or cleared, and/or `autoApprove on/off`), `showcase.public.add/remove`,
 `showcase.listing.create/update/withdraw/approve/reject/hide/show/remove`.
 
 ## Config
@@ -239,7 +243,7 @@ with its length, or cleared), `showcase.public.add/remove`,
   create event. `/app/showcase/new`: name, address, description, and a
   folded "Custom HTML" section with a live preview
   (`components/console/showcase/CustomHtmlField.tsx`). `/app/showcase/<id>`:
-  submit code (copyable), "Requests" with Approve / Reject (optional
+  the auto-approve switch, submit code (copyable; left out of the prompt while auto-approve is on), "Requests" with Approve / Reject (optional
   reason), then listed apps with hide/show/remove. The manage page neither
   shows nor edits the event's HTML: it appears only on the public page.
   The create form's preview sits on the public page's light surface, since
@@ -247,14 +251,17 @@ with its length, or cleared), `showcase.public.add/remove`,
 - Public `/showcase/<event>` passes `collection.customHtml` to `ListPage`,
   which renders it with the shared `components/CustomHtml.tsx`; the app
   page uses the same component. `/app/showcase/submit`: gallery or event (optional code
-  field) → app → details. Owner's app page shows status and reason.
+  field, hidden when the event auto-approves) → app → details. Owner's app page shows status and reason.
 - `app/lib/showcasePrompt.ts` carries the code when the organiser shares
-  the prompt and tells the agent to report "awaiting approval".
+  the prompt and tells the agent to report "awaiting approval". The create
+  form and the invite card both use `components/console/showcase/AutoApproveField.tsx`.
 - Admin `/admin/showcase`: events, apps with status, feature toggle.
 - Agent docs: `content/docs/api.md` (#showcase), `content/docs/docs.md`.
 
 ## Migrations
 
+- `20261021090000_showcase_event_auto_approve`: adds `ShowcaseEvent.autoApprove`
+  (boolean, default false), so existing events keep needing approval. Additive.
 - `20261006090000_showcase_event_custom_html`: adds nullable
   `ShowcaseEvent.customHtml`. Additive, no backfill.
 - `20261001090000_drop_app_details_name`: drops `AppDetails.name`; the name is `Project.name`.
@@ -264,8 +271,8 @@ with its length, or cleared), `showcase.public.add/remove`,
 
 ## Deliberately not done
 
-- No admin edit / approve / hide; no notifications; no code rotation; no
-  per-event "approval off" switch.
+- No admin edit / approve / hide; no notifications; no code rotation.
+  Turning auto-approve on does not approve listings already pending.
 - No server-side HTML sanitising: the sandboxed frame is the safety
   boundary (see [Custom HTML](#custom-html)). Event HTML has no agent
   endpoint and no admin edit.
