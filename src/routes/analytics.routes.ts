@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
+import { accessAllows } from "../lib/permissions";
 import { loadProjectContext } from "../middleware/projectContext";
 import { fetchAppAnalytics, type AnalyticsRange } from "../services/appAnalytics";
 
@@ -26,6 +28,7 @@ analyticsRouter.get(
   "/companies/:companyId/projects/:projectId/analytics",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const range = parseRange(req.query.range);
     const analytics = await fetchAppAnalytics(req.project!.slug, range);
@@ -46,9 +49,14 @@ analyticsRouter.get(
 analyticsRouter.get(
   "/companies/:companyId/analytics",
   loadCompanyContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const range = parseRange(req.query.range);
-    const projects = await prisma.project.findMany({ where: { companyId: req.company!.id } });
+    // Only the apps the caller can see — the rollup must not add in traffic
+    // from apps that answer 404 to them one by one.
+    const projects = (await prisma.project.findMany({ where: { companyId: req.company!.id } })).filter((p) =>
+      accessAllows(req.access!, "app.view", p)
+    );
 
     const perProject = await Promise.all(
       projects.map(async (project) => ({

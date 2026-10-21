@@ -3,6 +3,9 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
+import { canManageAllTokens, permissionDeniedBody } from "../lib/permissions";
+import type { Request } from "express";
 import { logAudit } from "../services/audit";
 import {
   DEFAULT_DEPLOY_TOKEN_KIND,
@@ -10,13 +13,24 @@ import {
   generateDeployToken,
   type DeployTokenSource,
 } from "../lib/deployTokens";
-import { can } from "../lib/permissions";
 
 // Everything in this router is a logged-in person acting in the UI.
 const SOURCE: DeployTokenSource = "dashboard";
 
 export const tokensRouter = Router();
 tokensRouter.use(requireProxyToken);
+
+// Owners and Admins see and manage every token in the workspace; a
+// Developer (who has tokens.manage to connect their own AI agents) only the
+// ones they made. A token acts with its creator's permissions (see
+// middleware/requirePermission.ts), so someone else's token is someone
+// else's access — not something a Developer should be able to revoke, or
+// rotate into a copy of their own.
+function tokenScope(req: Request) {
+  return canManageAllTokens(req.access!)
+    ? { companyId: req.company!.id }
+    : { companyId: req.company!.id, createdBy: req.userId! };
+}
 
 // A rotated token stays valid for this long after its replacement is
 // issued, so an in-flight CI run doesn't break the instant a token
@@ -71,24 +85,25 @@ function tokenView(t: TokenRow) {
   };
 }
 
-// Who may manage tokens here. Membership is already established by
-// loadCompanyContext; can() is the hook roles will tighten.
-async function refuseUnlessTokensManage(userId: string, companyId: string) {
-  return (await can(userId, companyId, "tokens.manage"))
-    ? null
-    : { error: "You don't have permission to manage deploy tokens in this workspace.", code: "no_access" };
-}
-
 // Scope is the token's kind — see createTokenSchema above and
 // docs/CLAUDE.md "Open questions" #1. The raw token is returned exactly
 // once, here, and never again.
 tokensRouter.post(
   "/companies/:companyId/tokens",
   loadCompanyContext,
+  requirePermission("tokens.manage"),
   async (req, res) => {
     const { label, kind } = createTokenSchema.parse(req.body);
-    const denied = await refuseUnlessTokensManage(req.userId!, req.company!.id);
-    if (denied) return res.status(403).json(denied);
+    // A workspace token acts as the whole workspace (services/tokenAccess.ts)
+    // and outlives its maker, so only someone who already reaches every app
+    // and token here may make one — otherwise a Developer limited to some
+    // apps could mint their way to all of them.
+    if (kind === "workspace" && !canManageAllTokens(req.access!)) {
+      return res.status(403).json({
+        ...permissionDeniedBody("tokens.manage", req.access!),
+        error: "Only a workspace Owner or Admin can make a token for the whole workspace. Make a personal token instead.",
+      });
+    }
     const { token, prefix, tokenHash } = generateDeployToken();
 
     const record = await prisma.deployToken.create({
@@ -112,9 +127,10 @@ tokensRouter.post(
 tokensRouter.get(
   "/companies/:companyId/tokens",
   loadCompanyContext,
+  requirePermission("tokens.manage"),
   async (req, res) => {
     const tokens = await prisma.deployToken.findMany({
-      where: { companyId: req.company!.id },
+      where: tokenScope(req),
       select: TOKEN_FIELDS,
     });
     res.json(tokens.map(tokenView));
@@ -124,15 +140,14 @@ tokensRouter.get(
 tokensRouter.delete(
   "/companies/:companyId/tokens/:tokenId",
   loadCompanyContext,
+  requirePermission("tokens.manage"),
   async (req, res) => {
     // Scoped to this company — a bare-id update would let a member of ANY
     // company revoke another company's token just by knowing its id.
     const existing = await prisma.deployToken.findFirst({
-      where: { id: req.params.tokenId, companyId: req.company!.id },
+      where: { id: req.params.tokenId, ...tokenScope(req) },
     });
     if (!existing) return res.status(404).json({ error: "Token not found" });
-    const denied = await refuseUnlessTokensManage(req.userId!, req.company!.id);
-    if (denied) return res.status(403).json(denied);
 
     const token = await prisma.deployToken.update({
       where: { id: existing.id },
@@ -155,13 +170,12 @@ tokensRouter.delete(
 tokensRouter.post(
   "/companies/:companyId/tokens/:tokenId/rotate",
   loadCompanyContext,
+  requirePermission("tokens.manage"),
   async (req, res) => {
     const old = await prisma.deployToken.findFirst({
-      where: { id: req.params.tokenId, companyId: req.company!.id },
+      where: { id: req.params.tokenId, ...tokenScope(req) },
     });
     if (!old) return res.status(404).json({ error: "Token not found" });
-    const denied = await refuseUnlessTokensManage(req.userId!, req.company!.id);
-    if (denied) return res.status(403).json(denied);
 
     const { token, prefix, tokenHash } = generateDeployToken();
 

@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { checkAppPermission, requirePermission } from "../middleware/requirePermission";
+import { accessAllows } from "../lib/permissions";
 import { logAudit } from "../services/audit";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import {
@@ -50,6 +52,16 @@ function audit(req: Request, action: string, details: string, projectId?: string
   return logAudit({ actorUserId: req.userId, companyId: req.company!.id, projectId, action, details });
 }
 
+// workspace.manage, for the one route whose permission depends on which
+// page it's addressed to (the listing PATCH below).
+async function requireWorkspaceManage(req: Request, res: Response): Promise<boolean> {
+  let allowed = false;
+  await requirePermission("workspace.manage")(req, res, () => {
+    allowed = true;
+  });
+  return allowed;
+}
+
 // This company's public apps, in the shape of a page's listings.
 async function publicPage(companyId: string) {
   const apps = await prisma.appDetails.findMany({ where: { companyId, isPublic: true }, orderBy: { createdAt: "desc" }, include: WITH_PROJECT });
@@ -68,7 +80,7 @@ const createEventSchema = z.object({
 });
 
 // POST .../collections — create an event page. Live at once, open to every company's apps.
-showcaseRouter.post("/companies/:companyId/showcase/collections", loadCompanyContext, async (req, res) => {
+showcaseRouter.post("/companies/:companyId/showcase/collections", loadCompanyContext, requirePermission("workspace.manage"), async (req, res) => {
   const body = createEventSchema.parse(req.body);
   try {
     const event = await createEvent({
@@ -90,7 +102,7 @@ showcaseRouter.post("/companies/:companyId/showcase/collections", loadCompanyCon
 });
 
 // GET .../collections — the public gallery entry first, then this company's events.
-showcaseRouter.get("/companies/:companyId/showcase/collections", loadCompanyContext, async (req, res) => {
+showcaseRouter.get("/companies/:companyId/showcase/collections", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   const [{ page }, events] = await Promise.all([
     publicPage(req.company!.id),
     prisma.showcaseEvent.findMany({ where: { companyId: req.company!.id }, orderBy: { createdAt: "desc" } }),
@@ -100,10 +112,11 @@ showcaseRouter.get("/companies/:companyId/showcase/collections", loadCompanyCont
 });
 
 // GET .../collections/:collectionId — plus everything listed under it, hidden or not.
-showcaseRouter.get("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, async (req, res) => {
+showcaseRouter.get("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   if (req.params.collectionId === PUBLIC_PAGE_ID) {
     const { page, apps } = await publicPage(req.company!.id);
-    return res.json({ ...page, projects: apps.map((a) => toOwnerListing(a, publicPlacement(a))) });
+    const visible = apps.filter((a) => accessAllows(req.access!, "app.view", a.project));
+    return res.json({ ...page, projects: visible.map((a) => toOwnerListing(a, publicPlacement(a))) });
   }
 
   const event = await ownedEventOr404(req, res);
@@ -127,7 +140,7 @@ const updateEventSchema = z
 // and whether submissions are approved at once. Name, address and intro stay
 // fixed. "" or null clears the HTML. Turning autoApprove on leaves listings
 // already pending for review.
-showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, async (req, res) => {
+showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, requirePermission("workspace.manage"), async (req, res) => {
   if (req.params.collectionId === PUBLIC_PAGE_ID) {
     return res.status(409).json({ error: "The public gallery has no page content to edit", code: "SHOWCASE_PUBLIC_PAGE" });
   }
@@ -148,7 +161,7 @@ showcaseRouter.patch("/companies/:companyId/showcase/collections/:collectionId",
 });
 
 // DELETE .../collections/:collectionId — events only, and only while empty.
-showcaseRouter.delete("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, async (req, res) => {
+showcaseRouter.delete("/companies/:companyId/showcase/collections/:collectionId", loadCompanyContext, requirePermission("workspace.manage"), async (req, res) => {
   if (req.params.collectionId === PUBLIC_PAGE_ID) {
     return res.status(409).json({ error: "The public gallery can't be deleted", code: "SHOWCASE_PUBLIC_PAGE" });
   }
@@ -183,6 +196,7 @@ const updateListingSchema = z.union([
 showcaseRouter.patch(
   "/companies/:companyId/showcase/collections/:collectionId/projects/:listingId",
   loadCompanyContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const body = updateListingSchema.parse(req.body);
 
@@ -190,8 +204,11 @@ showcaseRouter.patch(
       if ("approve" in body || "reject" in body) {
         return res.status(409).json({ error: "The public gallery has no approval step", code: "SHOWCASE_PUBLIC_PAGE" });
       }
-      const app = await prisma.appDetails.findFirst({ where: { id: req.params.listingId, companyId: req.company!.id } });
+      const app = await prisma.appDetails.findFirst({ where: { id: req.params.listingId, companyId: req.company!.id }, include: WITH_PROJECT });
       if (!app) return res.status(404).json({ error: "Listing not found" });
+      // On the public gallery the "organiser" is the app's own workspace,
+      // so this is a change to one app: that app's settings permission.
+      if (!(await checkAppPermission(req, res, app.project, "app.settings"))) return;
       const isPublic = "remove" in body ? false : !body.isPrivate;
       const updated = await prisma.appDetails.update({ where: { id: app.id }, data: { isPublic }, include: WITH_PROJECT });
       await audit(req, isPublic ? "showcase.public.add" : "showcase.public.remove", updated.project.slug, app.projectId);
@@ -199,6 +216,9 @@ showcaseRouter.patch(
       return res.json(toOwnerListing(updated, publicPlacement(updated)));
     }
 
+    // On an event page this is the organiser reviewing someone's listing —
+    // a decision for the workspace that runs the event, not for one app.
+    if (!(await requireWorkspaceManage(req, res))) return;
     const event = await ownedEventOr404(req, res);
     if (!event) return;
     const existing = await prisma.showcaseEventListing.findFirst({
@@ -242,7 +262,7 @@ showcaseRouter.patch(
 
 // GET .../pages — every page this company may list an app on: the public
 // gallery first, then every event, newest first. Feeds the submit form.
-showcaseRouter.get("/companies/:companyId/showcase/pages", loadCompanyContext, async (req, res) => {
+showcaseRouter.get("/companies/:companyId/showcase/pages", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   const [publicCount, events] = await Promise.all([
     prisma.appDetails.count({ where: { isPublic: true } }),
     prisma.showcaseEvent.findMany({ orderBy: { createdAt: "desc" } }),
@@ -260,7 +280,7 @@ const COLLECTION_UNKNOWN = { error: "That showcase page doesn't exist", code: "S
 // gallery (no collectionSlug) or on the named event. The app is named by
 // projectId or appSlug (slug, hostname or URL). Live at once. The app's
 // details are written once and refreshed on every submit.
-showcaseRouter.post("/companies/:companyId/showcase/submissions", loadCompanyContext, async (req, res) => {
+showcaseRouter.post("/companies/:companyId/showcase/submissions", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   const body = showcaseSubmissionSchema.parse(req.body);
 
   const target = await resolveTarget(body.collectionSlug);
@@ -268,6 +288,7 @@ showcaseRouter.post("/companies/:companyId/showcase/submissions", loadCompanyCon
 
   const project = await findCompanyProject(req.company!.id, body);
   if (!project) return res.status(404).json({ error: "Project not found" });
+  if (!(await checkAppPermission(req, res, project, "app.settings"))) return;
 
   const app = await upsertAppDetails(project, req.company!.id, req.userId!, body, target);
   const placed = await placeApp(app, target, req.userId!, body.code);
@@ -289,25 +310,27 @@ const listSubmissionsSchema = z.object({ projectId: z.string().trim().min(1).opt
 
 // GET .../submissions?projectId= — every place this company's apps are
 // shown; optionally just one app's (its Showcase page in the console).
-showcaseRouter.get("/companies/:companyId/showcase/submissions", loadCompanyContext, async (req, res) => {
+showcaseRouter.get("/companies/:companyId/showcase/submissions", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   const { projectId } = listSubmissionsSchema.parse(req.query);
   const apps = await prisma.appDetails.findMany({
     where: { companyId: req.company!.id, ...(projectId && { projectId }) },
     orderBy: { createdAt: "desc" },
     include: { ...WITH_PROJECT, listings: { include: { event: true } } },
   });
-  res.json(apps.flatMap((a) => placementsOf(a).map((p) => toOwnerListing(a, p))));
+  const visible = apps.filter((a) => accessAllows(req.access!, "app.view", a.project));
+  res.json(visible.flatMap((a) => placementsOf(a).map((p) => toOwnerListing(a, p))));
 });
 
 // DELETE .../submissions/:listingId — withdraw. The id is either one of this
 // company's AppDetails (its public placement) or one of its event listings.
-showcaseRouter.delete("/companies/:companyId/showcase/submissions/:listingId", loadCompanyContext, async (req, res) => {
+showcaseRouter.delete("/companies/:companyId/showcase/submissions/:listingId", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
   const id = req.params.listingId;
   const companyId = req.company!.id;
 
   const app = await prisma.appDetails.findFirst({ where: { id, companyId }, include: WITH_PROJECT });
   if (app) {
     if (!app.isPublic) return res.status(404).json({ error: "Listing not found" });
+    if (!(await checkAppPermission(req, res, app.project, "app.settings"))) return;
     await prisma.appDetails.update({ where: { id: app.id }, data: { isPublic: false } });
     await audit(req, "showcase.public.remove", app.project.slug, app.projectId);
     return res.status(204).end();
@@ -318,6 +341,7 @@ showcaseRouter.delete("/companies/:companyId/showcase/submissions/:listingId", l
     include: { app: { include: WITH_PROJECT }, event: { select: { slug: true } } },
   });
   if (!listing) return res.status(404).json({ error: "Listing not found" });
+  if (!(await checkAppPermission(req, res, listing.app.project, "app.settings"))) return;
 
   await prisma.showcaseEventListing.delete({ where: { id: listing.id } });
   await audit(req, "showcase.listing.withdraw", `${listing.app.project.slug} <- /showcase/${listing.event.slug}`, listing.app.projectId);

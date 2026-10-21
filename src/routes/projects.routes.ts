@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
+import { accessAllows } from "../lib/permissions";
 import { loadProjectContext } from "../middleware/projectContext";
 import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { logAudit } from "../services/audit";
@@ -32,6 +34,7 @@ const createProjectSchema = z.object({ name: z.string().min(1) });
 projectsRouter.post(
   "/companies/:companyId/projects",
   loadCompanyContext,
+  requirePermission("app.create"),
   async (req, res) => {
     const { name } = createProjectSchema.parse(req.body);
     const slug = slugify(name);
@@ -93,6 +96,7 @@ const claimOrphanSchema = z.object({
 projectsRouter.post(
   "/companies/:companyId/orphans/claim",
   loadCompanyContext,
+  requirePermission("app.create"),
   async (req, res) => {
     const { appName, code } = claimOrphanSchema.parse(req.body);
 
@@ -177,8 +181,14 @@ projectsRouter.post(
   }
 );
 
-projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (req, res) => {
-  const projects = await prisma.project.findMany({ where: { companyId: req.company!.id } });
+// Only the apps the caller can see: a developer or viewer limited to
+// "selected" apps gets those, a Billing member none — the rest answer 404
+// one by one (requirePermission), so the list must not name them either.
+projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
+  const access = req.access!;
+  const projects = (await prisma.project.findMany({ where: { companyId: req.company!.id } })).filter((p) =>
+    accessAllows(access, "app.view", p)
+  );
 
   // status: same shared helper as get-one below (projectStatus.ts),
   // batched as one extra DB query regardless of project count.
@@ -216,6 +226,7 @@ projectsRouter.get(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const [health, status, schedules] = await Promise.all([
       fetchAppHealth(req.project!.slug),
@@ -233,6 +244,7 @@ projectsRouter.patch(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     const { name } = renameProjectSchema.parse(req.body);
     const project = await prisma.project.update({
@@ -274,6 +286,7 @@ projectsRouter.patch(
   "/companies/:companyId/projects/:projectId/slug",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     const { slug } = changeSlugSchema.parse(req.body);
     const project = req.project!;
@@ -316,6 +329,7 @@ projectsRouter.get(
   "/companies/:companyId/projects/:projectId/slug",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     res.json(await resolveSlugChangeStatus(req.project!));
   }
@@ -374,6 +388,7 @@ projectsRouter.patch(
   loadCompanyContext,
   loadProjectContext,
   refuseForStaticApp("memory"),
+  requirePermission("app.settings"),
   async (req, res) => {
     const { memoryMb } = updateMemorySchema.parse(req.body);
 
@@ -407,6 +422,7 @@ projectsRouter.delete(
   "/companies/:companyId/projects/:projectId",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.delete"),
   async (req, res) => {
     await tearDownApp(req.project!.slug);
     await prisma.project.delete({ where: { id: req.project!.id } });

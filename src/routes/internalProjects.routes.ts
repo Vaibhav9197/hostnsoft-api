@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { resolveDeployTarget, claimOrphanProject } from "../services/projectClaim";
+import { resolveDeployTarget, claimOrphanProject, peekDeployTarget } from "../services/projectClaim";
 import {
   accessActorOfDeploy,
   actorPersonId,
+  authorizeDeploy,
   deployCreatedBy,
   deployCredentialFields,
   resolveDeployActor,
@@ -114,6 +115,17 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   // upload UI is an ordinary project of that company, with no record of
   // how it was first deployed. An anonymous caller can't rename an app,
   // so its appId (if any) has nothing to add and is ignored.
+  // Roles, for a dashboard upload: deploying to an existing app needs
+  // app.deploy on it; anything that would add an app needs app.create.
+  // Checked before resolveDeployTarget, which is what would create or adopt
+  // it. Deploy tokens are checked inside resolveDeployTarget instead (see
+  // services/tokenAccess.ts), since a user token may reach other workspaces.
+  if (resolved.actor.kind === "proxyAuth") {
+    const target = await peekDeployTarget(resolved.actor.companyId, slug, appId);
+    const denied = await authorizeDeploy(resolved.actor, target);
+    if (denied) return res.status(denied.status).json(denied.body);
+  }
+
   const access = accessActorOfDeploy(resolved.actor);
   const claim = resolved.actor.companyId && access
     ? await resolveDeployTarget(resolved.actor.companyId, slug, appId, deployCreatedBy(resolved.actor), access)

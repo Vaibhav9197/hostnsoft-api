@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { rollbackToDeployment } from "../services/redeploy";
@@ -24,6 +25,7 @@ deploymentsRouter.get(
   "/companies/:companyId/projects/:projectId/deployments",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const deployments = await prisma.deployment.findMany({
       where: { projectId: req.project!.id },
@@ -41,6 +43,7 @@ deploymentsRouter.get(
   "/companies/:companyId/projects/:projectId/deployments/:deploymentId",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const deployment = await prisma.deployment.findFirst({
       where: { id: req.params.deploymentId, projectId: req.project!.id },
@@ -76,6 +79,7 @@ deploymentsRouter.post(
   "/companies/:companyId/projects/:projectId/deployments/:deploymentId/rollback",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.deploy"),
   async (req, res) => {
     const project = req.project!;
 

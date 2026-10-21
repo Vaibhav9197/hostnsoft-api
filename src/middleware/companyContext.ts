@@ -3,8 +3,9 @@ import { getCompanyById, isCompanyMember } from "../lib/msg91";
 
 // Authorizes the caller for :companyId (a proxy company id) by asking proxy
 // for membership. Must run after requireProxyToken, which sets req.userId.
-// Membership is the only check — proxy has no per-user role, so any member
-// may do anything here.
+// This is only the "are they in at all" half: what a member may do there is
+// middleware/requirePermission.ts, which every route puts after this (and
+// after loadProjectContext where there is one).
 //
 // Non-members get 404, not 403, so the company's existence isn't confirmed
 // to outsiders. A proxy outage throws instead, surfacing as 503.
@@ -27,5 +28,6 @@ export async function loadCompanyContext(
   }
 
   req.company = { id: companyId };
+  req.membershipChecked = true;
   next();
 }

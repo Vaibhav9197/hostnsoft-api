@@ -267,7 +267,10 @@ const firstSubmitSchema = z.object({
 
 // An app's details with the project it belongs to — the slug lives there.
 export type AppWithProject = AppDetails & { project: Pick<Project, "slug" | "name"> };
-export const WITH_PROJECT = { project: { select: { slug: true, name: true } } } as const;
+// id + createdBy are for the role check on the owner side (an app the caller
+// can't see is filtered out, see routes/showcase.routes.ts); every response
+// builder below picks its fields explicitly, so neither leaks into a reply.
+export const WITH_PROJECT = { project: { select: { id: true, slug: true, name: true, createdBy: true } } } as const;
 
 // screenshotUrls wins; a lone screenshotUrl means [url], "" means clear.
 function screenshotUrlsJson(input: AppDetailsInput): string | undefined {

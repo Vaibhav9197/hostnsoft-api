@@ -61,23 +61,93 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                                       │   docs/schedules.md, added 2026-10-17)
                                       └─ current resource allocation (memory; cpu once enforced)
  AuditLog (actorUserId, companyId, projectId — all plain strings)
+ WorkspaceMember (companyId, userId, role, appScope, canCreate, canDelete)   ← roles, added 2026-10-21
+ AppGrant (projectId → Project, userId, level manage|view)                  ← per-app access
+ PendingInvite (companyId, email, role, …, grants JSON)                      ← role waiting for an invitee
 ```
 
-**Authorization is membership-only.** Proxy exposes no readable per-user role
-(verified against four working proxy integrations and MSG91's docs on
-2026-09-04 — the decoded JWT carries `user`/`company` only, the membership API
-returns a count, invites take an email only). So this API has no roles either:
-any member of a company may do anything in it — manage deploy tokens, projects,
-env vars. The earlier `company_admin | project_admin | viewer` model, which
-this doc had flagged as "first pass, confirm before building", was removed.
+**Authorization (changed 2026-10-21): proxy membership, then a local role.**
+Proxy exposes no readable per-user role (verified against four working proxy
+integrations and MSG91's docs on 2026-09-04 — the decoded JWT carries
+`user`/`company` only, the membership API returns a count, invites take an
+email only), so roles are local tables keyed by proxy ids — exactly what open
+question 6 said would be needed. Two checks, in this order, on every request:
+
+1. **Is the caller in the workspace?** Proxy (`isCompanyMember`), uncached.
+   Removing someone on proxy cuts them off immediately whatever rows exist
+   here; a stale `WorkspaceMember` row is inert.
+2. **What may they do there?** `src/lib/permissions.ts`. Roles: `owner`
+   (everything incl. billing and Owners/Admins), `admin` (everything but
+   `billing.manage`; can't change Owners/Admins), `developer` (apps they reach;
+   `canCreate` default true, `canDelete` default false but always for apps they
+   created — `Project.createdBy`), `viewer` (`app.view`/`app.logs` only; env
+   var values hidden), `billing` (`billing.manage` only). Developer/Viewer have
+   `appScope` `all` or `selected` (+ `AppGrant` rows, `manage`|`view`). Eleven
+   permissions: `workspace.manage members.manage billing.manage tokens.manage
+   app.create app.delete app.deploy app.settings app.view app.logs app.move`
+   (`app.move` is for moving apps between workspaces; Owner/Admin).
+
+Enforcement is one middleware, `requirePermission(perm)`
+(`src/middleware/requirePermission.ts`), after `loadCompanyContext`/
+`loadProjectContext` on every dashboard route and after `requireDeployToken`/
+`loadAppBySlug` on every agent route; the full route → permission map is in
+the API reference's "Members & roles" section. An app the caller can't see is
+`404` (same rule as across workspaces); anything else is
+`403 {code: "permission_denied", permission, role}`. Lists (projects, company
+analytics, Showcase submissions) are filtered to visible apps.
+
+**Agents and deploys.** Depends on the token's kind (see "Tokens" below):
+- A **user** token acts as its person: on agent routes
+  (`requirePermission`, with `req.company` set by `loadAppBySlug` to the app's
+  own workspace) and on deploys (`services/tokenAccess.ts`, via `can()`), with
+  that person's role in the app's workspace. It stops working there the moment
+  they lose access (`403 no_access`). Apps it creates record its person as
+  `Project.createdBy`, which "a Developer may delete apps they created" keys on.
+- A **workspace** token acts as the workspace: full access to its own
+  workspace's apps, not narrowed by its maker's role, and it keeps working after
+  they leave — what CI needs. Only an Owner or Admin may create one. Tokens with
+  `createdBy: "system:…"` behave the same.
+- A **dashboard upload** is checked against the signed-in person's role before
+  the build (`services/deployActor.ts authorizeDeploy`: `app.deploy` on an
+  existing app, `app.create` for a new one or an adopted orphan), and again on
+  the row-creating `/internal/deployments/record`.
+
+**Backward compatibility, lazy not migrated.** A member with no
+`WorkspaceMember` row gets one the first time their access is worked out
+(`permissions.ts writeDefaultRole`), decided once: **Admin** if this API saw
+them act in the workspace (an app, a token, an audit row) before the roles
+migration was applied — read from `_prisma_migrations.finished_at`, so no env
+var — otherwise **Developer** on all apps, which is what someone added straight
+through the proxy embed (skipping our invite) gets. The members page applies
+the same rule to everyone it lists. Each workspace's first
+Owner is written the first time its roles are resolved
+(`permissions.ts ensureOwner`): proxy's `company.created_by` if still a member
+(field unverified on this account), else the earliest local actor (project,
+token, audit row) still a member, else the first member to arrive. `POST
+/companies` writes the creator's Owner row up front. The migration does no
+backfill because creator and membership are proxy facts SQL can't read.
+`PendingInvite` is applied (and deleted) the first time the invitee's
+permissions are resolved in that workspace, matched by email — not at login,
+since login only knows proxy's *current* company.
+
+**Members.** Adding/removing people and the invite email stay in the proxy
+embed. This API: `GET /companies/:companyId/members` (proxy list merged with
+roles — `listCompanyMembers` uses admin `getDetails?company_id=` without
+`user_id`, **unverified**, every row re-checked with `isCompanyMember` and the
+whole list discarded if any row fails; then `complete: false` and only known
+members are listed), `GET/PATCH …/members/:userId`, `PUT …/members/:userId/apps`,
+`POST/DELETE …/invites`, `GET /me/permissions?companyId=`. Guards
+(`services/workspaceRoles.ts`): only Owners make/change/un-make Owners and
+Admins; the last Owner who is still a member can't be demoted; if every Owner
+has left proxy, an Admin may make someone Owner. Every change is audited
+(`member.*`).
 
 A user can belong to multiple companies; which one a request targets is always
 the `:companyId` in the URL, checked against proxy membership per request.
 
 **Every authorization decision goes through `can(userId, companyId,
-permission, projectId?)` in `src/lib/permissions.ts`** (added 2026-10-21).
-Today it is the membership check above — every permission answers the same —
-and it is the one place roles will plug in. It needs only the user id:
+permission, projectId?)` in `src/lib/permissions.ts`** (added 2026-10-21):
+membership, then the role, as above. It needs only the user id:
 `isCompanyMember` asks proxy with the server's admin key
 (`/{ref}/getDetails?company_id&user_id`), never the person's own
 `proxy_auth_token`. That is what makes a user-kind deploy token workable — it
@@ -291,43 +361,45 @@ once a person has completed the same MSG91 login they'd do anyway.
 All endpoints below require a valid `proxy_auth_token` header
 (`requireProxyToken`). Every
 `/companies/:companyId/...` route then runs `loadCompanyContext`, which asks
-proxy whether the caller is a member of that company (cached ~60s, positives
-only) and 404s otherwise. "any member" in the Permission column means exactly
-that — there are no roles (see Data model).
+proxy whether the caller is a member of that company (uncached) and 404s
+otherwise; `requirePermission` then checks the role. The Permission column
+names the permission (see "Authorization" above); "any member" means no
+permission beyond membership.
 
 ### Companies
 
-Creating, renaming and deleting companies, and all member management
-(invite, remove), happen through the **proxy embed on the dashboard** — none of
-it has an endpoint here (removed 2026-09-04).
+Creating, renaming and deleting companies, and adding/removing members
+(invite email, removal), happen through the **proxy embed on the dashboard**.
+Roles are this API's — see "Authorization" above and the members endpoints
+there.
 
 | Endpoint | Permission | Notes |
 |---|---|---|
 | `GET /companies` | any authenticated user + `proxy_auth_token` header | Lists companies the current user belongs to, straight from proxy (user-key call). |
 | `GET /companies/:companyId` | any member | Company details from proxy — id, name — plus local project count. |
-| `PATCH /companies/:companyId` `{name?, email?, meta?, timezone?, timeZoneName?}` | any member | Partial update, forwarded to proxy `PUT /c/updateCompany`. Proxy acts on the PAT's *current* company, requires `name` + `email` every call, and replaces `meta` wholesale — so the route switches the PAT to `:companyId` if needed, fills omitted fields from the current record (email falls back to the caller's), and merges `meta` key-wise. A changed name is also pushed to the Lago and Stripe customers, best effort. Proxy 422 surfaces as `400 PROXY_INVALID_INPUT` with proxy's message. |
+| `PATCH /companies/:companyId` `{name?, email?, meta?, timezone?, timeZoneName?}` | `workspace.manage` | Partial update, forwarded to proxy `PUT /c/updateCompany`. Proxy acts on the PAT's *current* company, requires `name` + `email` every call, and replaces `meta` wholesale — so the route switches the PAT to `:companyId` if needed, fills omitted fields from the current record (email falls back to the caller's), and merges `meta` key-wise. A changed name is also pushed to the Lago and Stripe customers, best effort. Proxy 422 surfaces as `400 PROXY_INVALID_INPUT` with proxy's message. |
 | `POST /auth/switch-company` `{companyId}` | any member + `proxy_auth_token` header | Moves proxy's current company for this user so the embed matches the dashboard. Nothing local changes. Audited as `company.switch`. |
 
 ### Projects
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/projects` `{name}` | any member | Generates a `slug` from `name` (changeable later, see the slug endpoint) (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.embarko.app`). |
-| `GET /companies/:companyId/projects` | any member | Lists projects in the company. |
-| `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
-| `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |
-| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename` (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). That takes minutes, and nothing in front of this service will hold a request that long — the dashboard's BFF proxy aborts at 10s — so a live move answers **`202 {moving, from, to, statusUrl}`** and continues behind the response; poll **`GET /companies/:companyId/projects/:projectId/slug`** for the outcome — always `200 {state: in_progress|succeeded|failed|unknown, currentSlug, appUrl, ...}`, the same resolver the agent surface polls. In-progress state is in-memory only, same reasoning as `hostnsoft-deploy`'s `deploy-status.js` — see `services/renameStatus.ts`, including what it costs if this service is ever run multi-instance — but a *finished* move is also recoverable from the audit log, so `succeeded` survives a restart and the 30-minute in-memory expiry. `unknown` means no record of a move, never "no such app"; every state carries `currentSlug` so a caller never has to infer where the app actually is. A second PATCH while one is running is `409 rename_in_progress`. The new slug is written here only after the migration succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. The **database-only path is not rate-limited**, since it orders no certificate; that is why the two paths audit under different actions (below). Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect. Since 2026-10-21 the old name is kept as a `SlugAlias` row for the app: nobody else can claim it, and a deploy or agent call under it reaches the renamed app (`services/projectClaim.ts` `resolveDeployTarget`, `slugChangeFlow.ts` `findRenamedApp`). Deploys can also send the app's stable id (`X-App-Id`, or `appId` in embarko.json), which wins over the name. **Also available to agents** at `POST /apps/:appName/slug-change` (see the agent control plane below); this was dashboard-only until 2026-09-21, on the grounds that a company-wide deploy token meant one agent could strand every other agent and CI job holding the old name. That reasoning did not survive examination — it describes the slug, not the caller, and a person clicking rename here strands them just as completely. What made it safe on both surfaces was making stranding non-terminal: a caller arriving on a name that has moved now gets `404 app_renamed` carrying the new name and a retry URL, rather than `app_not_found`. Audited as `project.slug_change` for the database-only path and `project.slug_change_live` for the migration, with `(agent:<token label>)` appended to the detail when an agent did it. The split is what keeps the cooldown honest: it reads **only** the live action, so renaming a never-deployed app and then deploying it does not lock its address for a week over a move that spent nothing. Readers that only care *that* it moved (the status resolver, the `app_renamed` lookup) match both. Neither is filtered by actor, so the cooldown is shared across the dashboard and agent surfaces and one cannot be used to reset the other. The orchestration is `services/slugChangeFlow.ts`, shared by both routes; `services/projectSlugChange.ts` keeps the policy and mechanics. |
+| `POST /companies/:companyId/projects` `{name}` | `app.create` | Generates a `slug` from `name` (changeable later, see the slug endpoint) (lowercase + dashes, matching `hostnsoft-deploy`'s app-name validation) — check it's unique platform-wide before creating, since `hostnsoft-deploy` routes by subdomain (`<slug>.embarko.app`). |
+| `GET /companies/:companyId/projects` | `app.view` | Lists the projects in the company the caller can see. |
+| `GET /companies/:companyId/projects/:projectId` | `app.view` | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
+| `PATCH /companies/:companyId/projects/:projectId` `{name}` | `app.settings` | Renames the **display name only** — never touches `slug`. |
+| `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | `app.settings` (GET status: `app.view`) | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename` (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). That takes minutes, and nothing in front of this service will hold a request that long — the dashboard's BFF proxy aborts at 10s — so a live move answers **`202 {moving, from, to, statusUrl}`** and continues behind the response; poll **`GET /companies/:companyId/projects/:projectId/slug`** for the outcome — always `200 {state: in_progress|succeeded|failed|unknown, currentSlug, appUrl, ...}`, the same resolver the agent surface polls. In-progress state is in-memory only, same reasoning as `hostnsoft-deploy`'s `deploy-status.js` — see `services/renameStatus.ts`, including what it costs if this service is ever run multi-instance — but a *finished* move is also recoverable from the audit log, so `succeeded` survives a restart and the 30-minute in-memory expiry. `unknown` means no record of a move, never "no such app"; every state carries `currentSlug` so a caller never has to infer where the app actually is. A second PATCH while one is running is `409 rename_in_progress`. The new slug is written here only after the migration succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. The **database-only path is not rate-limited**, since it orders no certificate; that is why the two paths audit under different actions (below). Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect. Since 2026-10-21 the old name is kept as a `SlugAlias` row for the app: nobody else can claim it, and a deploy or agent call under it reaches the renamed app (`services/projectClaim.ts` `resolveDeployTarget`, `slugChangeFlow.ts` `findRenamedApp`). Deploys can also send the app's stable id (`X-App-Id`, or `appId` in embarko.json), which wins over the name. **Also available to agents** at `POST /apps/:appName/slug-change` (see the agent control plane below); this was dashboard-only until 2026-09-21, on the grounds that a company-wide deploy token meant one agent could strand every other agent and CI job holding the old name. That reasoning did not survive examination — it describes the slug, not the caller, and a person clicking rename here strands them just as completely. What made it safe on both surfaces was making stranding non-terminal: a caller arriving on a name that has moved now gets `404 app_renamed` carrying the new name and a retry URL, rather than `app_not_found`. Audited as `project.slug_change` for the database-only path and `project.slug_change_live` for the migration, with `(agent:<token label>)` appended to the detail when an agent did it. The split is what keeps the cooldown honest: it reads **only** the live action, so renaming a never-deployed app and then deploying it does not lock its address for a week over a move that spent nothing. Readers that only care *that* it moved (the status resolver, the `app_renamed` lookup) match both. Neither is filtered by actor, so the cooldown is shared across the dashboard and agent surfaces and one cannot be used to reset the other. The orchestration is `services/slugChangeFlow.ts`, shared by both routes; `services/projectSlugChange.ts` keeps the policy and mechanics. |
 | `POST /companies/:companyId/projects/:projectId/move` `{targetCompanyId}` | `app.move` here + `app.create` in the target | **Added 2026-10-21.** Moves the app to another workspace the caller is in. Ownership only — same slug, URL, id, running version; no redeploy. `Project.companyId` and `AppDetails.companyId` change; everything keyed by projectId follows; `DeployToken`, `AuditLog`, `FeatureRequest`, `ShowcaseEvent` and `Company` stay with their workspace (table-by-table reasoning in `services/projectMove.ts`). Refused while a rename or a deploy (`Deployment.status = in_progress`) is running. Plan limits: none are enforced on app creation today, so `services/planLimits.ts` is a no-op hook both paths should call once one exists. Audited `project.move` in **both** workspaces with `{from, to, fromName, toName, slug}` — the old-workspace row is how its tokens are told `409 app_moved` instead of a copy being made (`services/tokenAccess.ts`). The free-plan footer is re-pushed (no rebuild) when the two plans differ. hostnsoft-deploy keys nothing by workspace, so it needs no call. Codes: `400 same_workspace`, `403 no_access`, `409 rename_in_progress`/`deploy_in_progress`/`plan_limit_reached`/`move_conflict`. |
-| `DELETE /companies/:companyId/projects/:projectId` | any member | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
+| `DELETE /companies/:companyId/projects/:projectId` | `app.delete` | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
 
 ### Tokens (company-scoped deploy tokens)
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/tokens` `{label, kind?}` | `tokens.manage` (any member) | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. `kind` is `"user"` (default — "Just me" in the dashboard) or `"workspace"` ("Whole workspace"). Response: the list fields below plus `token`. |
-| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, tokenPrefix, prefix, createdAt, lastUsedAt, revokedAt, source, kind, createdBy}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange; `kind` is what it may reach, see below) — **never** the secret itself, not even truncated/partial, past this one-time creation response. Create, rotate and list return the same fields. A user token is listed in its default workspace, and that workspace's members can revoke it. |
-| `DELETE /companies/:companyId/tokens/:tokenId` | any member | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
-| `POST /companies/:companyId/tokens/:tokenId/rotate` | any member | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
+| `POST /companies/:companyId/tokens` `{label, kind?}` | `tokens.manage`; `kind: "workspace"` needs Owner or Admin | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. A workspace token reaches every app here and outlives its maker, so a Developer may only make `"user"` tokens. `kind` is `"user"` (default — "Just me" in the dashboard) or `"workspace"` ("Whole workspace"). Response: the list fields below plus `token`. |
+| `GET /companies/:companyId/tokens` | `tokens.manage` (Developers: own tokens only) | Lists tokens — `{id, label, tokenPrefix, prefix, createdAt, lastUsedAt, revokedAt, source, kind, createdBy}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange; `kind` is what it may reach, see below) — **never** the secret itself, not even truncated/partial, past this one-time creation response. Create, rotate and list return the same fields. A user token is listed in its default workspace, and that workspace's members can revoke it. |
+| `DELETE /companies/:companyId/tokens/:tokenId` | `tokens.manage` (Developers: own tokens only) | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
+| `POST /companies/:companyId/tokens/:tokenId/rotate` | `tokens.manage` (Developers: own tokens only) | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
 | `POST /connector/token` `{token}` | none (public) — `token` is a live `proxy_auth_token`, not a header | "The token endpoint" (Auth flow #3 above): exchanges a `proxy_auth_token` for a new Deploy Token scoped to the identity's current company. `source: "connector"`. Response: `{accessToken, tokenId, label, companyId, companyName, createdAt}`. `409 {error: "no_company"}` if the identity has no current company yet. |
 | `POST /connector/token/validate` `{token}` | none (public) — `token` is a Deploy Token | "The token-validation API" (Auth flow #3 above): `{valid: true, companyId, companyName, tokenId, label, lastUsedAt}` or `{valid: false}`. Separate from the internal `/internal/deploy-tokens/validate` used by `hostnsoft-deploy` — this one is meant for the open internet and resolves a human-readable `companyName`. |
 
@@ -388,7 +460,9 @@ Per project, viewable by any role with access to that project:
 - **Logs** — application logs (source: Nomad/Docker logs for the
   allocation — decide streaming vs. paginated fetch)
 
-Mutable, by any company member:
+Mutable, by members with `app.settings` on the app (Owner, Admin, a Developer
+with manage access); a Viewer sees which env vars are set but not their values
+(`value: null, valueHidden: true`):
 - **Env vars** — CRUD on a project's environment variables. These need to
   actually reach the running app — likely means this service writes them
   into the Nomad job spec's `env` block and triggers a redeploy, or some
@@ -555,10 +629,11 @@ deploy execution capability in one place.
   dashboard authenticates every request with its MSG91 `proxy_auth_token`.
   The agent never holds a login session at all — it authenticates purely
   via a company deploy token where applicable.
-- ~~A company must always have at least one `company_admin`.~~ **Moot since
-  2026-09-04** — there are no roles, and membership is managed on proxy via
-  the dashboard embed, so "locked out of its own management" can't happen on
-  this side. Whether proxy protects its own last owner is proxy's concern.
+- **A workspace must always have at least one Owner who is still a member**
+  (back since roles, 2026-10-21): demoting the last one is `409 last_owner`.
+  Proxy can still remove every Owner from the workspace; then an Admin may
+  promote someone (`services/workspaceRoles.ts`). Whether proxy protects its
+  own last member is proxy's concern.
 
 ## Open questions to resolve before/while building (don't guess silently)
 
@@ -583,11 +658,18 @@ deploy execution capability in one place.
    at all.** Dashboard login uses MSG91's hosted proxy-auth widget
    (`proxy.msg91.com`) — see "Auth flow" #1 above, `docs/msg91-proxy-auth.md`,
    and `src/routes/auth.routes.ts`'s `POST /auth/msg91/exchange`.
-6. ~~**`project_admin` scope**~~ — **moot 2026-09-04**: roles were removed
-   entirely (proxy has none to read; see Data model). Any member can manage
-   any project in the company. If per-project or per-role access is ever
-   wanted, it would need a new local grant table keyed by proxy ids — don't
-   build it speculatively.
+6. ~~**`project_admin` scope**~~ — **resolved 2026-10-21**: built as the
+   local grant tables this note anticipated (`WorkspaceMember`, `AppGrant`,
+   `PendingInvite`, keyed by proxy ids) — see "Authorization". Still open
+   around it: (a) proxy's `getDetails?company_id=` member listing and
+   `company.created_by` are unverified on this account (both fail safe);
+   (b) the invite email is still sent from the embed — proxy's `/c/addUser`
+   (user-key, current company, email only per earlier research) could let
+   `POST …/invites` send it, once its request shape is confirmed;
+   (c) — done: hostnsoft-deploy's status/logs send `appName` (and the
+   permission) to both validate endpoints and honour `appAccess`; (d) the proxy embed's own
+   add/remove controls follow proxy's rules, not these roles (the dashboard
+   only hides the embed from people without `members.manage`).
 7. **`hostnsoft-deploy` needs a "stop/decommission an app" endpoint** —
    it currently only supports deploying, never removing. `DELETE
    /companies/:companyId/projects/:projectId` in this API has nothing to call for

@@ -31,6 +31,7 @@ import { platformAppUrl } from "../services/showcase";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
 import { logAudit } from "../services/audit";
 import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
+import { requirePermission } from "../middleware/requirePermission";
 import { applyCurrentConfig, rollbackToDeployment, type RedeployOutcome } from "../services/redeploy";
 import { agentShowcaseSubmissionSchema, placeApp, resolveTarget, submitNext, toOwnerListing, upsertAppDetails } from "../services/showcase";
 import { classifyDomain, isValidDomainSyntax, type DomainType } from "../lib/customDomain";
@@ -65,6 +66,12 @@ export const agentAppsRouter = Router();
 // it they'd read req.params.appName as undefined and every lookup would
 // 404 — the sub-router pattern makes that guarantee explicit rather than
 // relying on how Express populates params for a path-mounted .use().
+//
+// Every route below also names the permission it needs. A deploy token acts
+// with its creator's role and app access (middleware/requirePermission.ts),
+// so an agent can do exactly what the person who made its token can — an
+// app they can't see is app_not_found, anything else they can't do is 403
+// permission_denied, which the agent guide tells the agent to relay.
 const appScoped = Router({ mergeParams: true });
 appScoped.use(requireDeployToken, loadAppBySlug);
 
@@ -80,7 +87,7 @@ appScoped.use(requireDeployToken, loadAppBySlug);
 // Registered before the mount below because Express matches in order,
 // and because loadAppBySlug — which this must not use — is applied to
 // everything under it.
-agentAppsRouter.get("/slug-changes/:projectId", requireDeployToken, loadAppById, async (req, res) => {
+agentAppsRouter.get("/slug-changes/:projectId", requireDeployToken, loadAppById, requirePermission("app.view"), async (req, res) => {
   res.json(await resolveSlugChangeStatus(req.project!));
 });
 
@@ -102,7 +109,7 @@ function agentAttribution(req: Request, triggeredBy: string): DeployAttribution 
 
 // The app itself — its stable id, its URL, and what's currently live.
 // An agent that only ever knew the name now has an id it can hold onto.
-appScoped.get("/", async (req, res) => {
+appScoped.get("/", requirePermission("app.view"), async (req, res) => {
   const project = req.project!;
   const current = project.currentDeploymentId
     ? await prisma.deployment.findUnique({ where: { id: project.currentDeploymentId } })
@@ -129,7 +136,7 @@ const renameAppSchema = z.object({ name: z.string().min(1) });
 
 // Display name only — the slug (and so the live URL) never changes after
 // creation, same as projects.routes.ts's rename.
-appScoped.patch("/", async (req, res) => {
+appScoped.patch("/", requirePermission("app.settings"), async (req, res) => {
   const { name } = renameAppSchema.parse(req.body);
   const project = await prisma.project.update({ where: { id: req.project!.id }, data: { name } });
 
@@ -151,7 +158,7 @@ appScoped.patch("/", async (req, res) => {
 // for one acting on a misread instruction.
 const deleteAppSchema = z.object({ confirmAppName: z.string().min(1) });
 
-appScoped.delete("/", async (req, res) => {
+appScoped.delete("/", requirePermission("app.delete"), async (req, res) => {
   const { confirmAppName } = deleteAppSchema.parse(req.body ?? {});
   const project = req.project!;
 
@@ -185,7 +192,7 @@ appScoped.delete("/", async (req, res) => {
 // know WHICH vars are set in order to reason about configuration; it
 // never needs to read one back in order to change it. The dashboard,
 // where a person is looking at their own screen, still shows values.
-appScoped.get("/env-vars", async (req, res) => {
+appScoped.get("/env-vars", requirePermission("app.view"), async (req, res) => {
   const envVars = await prisma.envVar.findMany({
     where: { projectId: req.project!.id },
     select: { key: true, updatedAt: true },
@@ -267,7 +274,7 @@ function sendRedeployFailure(res: Response, outcome: Extract<RedeployOutcome, { 
 // can't boot, and an agent has no source to re-upload in that situation.
 // Default false so an agent writing several variables can batch them and
 // pay one restart.
-appScoped.put("/env-vars", refuseForStaticApp("env_vars"), async (req, res) => {
+appScoped.put("/env-vars", requirePermission("app.settings"), refuseForStaticApp("env_vars"), async (req, res) => {
   const { vars, apply } = upsertEnvVarsSchema.parse(req.body);
   const projectId = req.project!.id;
   const actor = req.userId!;
@@ -328,7 +335,7 @@ appScoped.put("/env-vars", refuseForStaticApp("env_vars"), async (req, res) => {
 // Apply configuration already saved — the same re-push, without changing
 // anything first. This is what follows a DELETE, or several separate
 // writes an agent wants to land in one restart.
-appScoped.post("/env-vars/apply", refuseForStaticApp("env_vars"), async (req, res) => {
+appScoped.post("/env-vars/apply", requirePermission("app.settings"), refuseForStaticApp("env_vars"), async (req, res) => {
   const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
   if (!outcome.ok) return sendRedeployFailure(res, outcome);
 
@@ -362,7 +369,7 @@ const updateEnvVarSchema = z.object({
   apply: z.boolean().optional().default(false),
 });
 
-appScoped.put("/env-vars/:key", refuseForStaticApp("env_vars"), async (req, res) => {
+appScoped.put("/env-vars/:key", requirePermission("app.settings"), refuseForStaticApp("env_vars"), async (req, res) => {
   const key = req.params.key;
   // The key arrives as a path segment here rather than through the body
   // schema, so it needs the same check: hostnsoft-deploy embeds it as a
@@ -425,7 +432,7 @@ appScoped.put("/env-vars/:key", refuseForStaticApp("env_vars"), async (req, res)
   });
 });
 
-appScoped.delete("/env-vars/:key", async (req, res) => {
+appScoped.delete("/env-vars/:key", requirePermission("app.settings"), async (req, res) => {
   const projectId = req.project!.id;
   const existing = await prisma.envVar.findUnique({
     where: { projectId_key: { projectId, key: req.params.key } },
@@ -470,7 +477,7 @@ async function findSchedule(req: Request, res: Response) {
   return schedule;
 }
 
-appScoped.get("/schedules", async (req, res) => {
+appScoped.get("/schedules", requirePermission("app.view"), async (req, res) => {
   const schedules = await prisma.schedule.findMany({
     where: { projectId: req.project!.id },
     orderBy: { createdAt: "asc" },
@@ -482,7 +489,7 @@ appScoped.get("/schedules", async (req, res) => {
   });
 });
 
-appScoped.post("/schedules", refuseForStaticApp("schedules"), async (req, res) => {
+appScoped.post("/schedules", requirePermission("app.settings"), refuseForStaticApp("schedules"), async (req, res) => {
   const body = createScheduleSchema.parse(req.body);
   const project = req.project!;
 
@@ -540,7 +547,7 @@ appScoped.post("/schedules", refuseForStaticApp("schedules"), async (req, res) =
 // Run every schedule of the app once now — the one check an agent makes
 // after a deploy that declared schedules. Same per-schedule rule as below:
 // one already running is reported, not started twice.
-appScoped.post("/schedules/run", refuseForStaticApp("schedules"), async (req, res) => {
+appScoped.post("/schedules/run", requirePermission("app.settings"), refuseForStaticApp("schedules"), async (req, res) => {
   const project = req.project!;
   const schedules = await prisma.schedule.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
   if (schedules.length === 0) {
@@ -576,14 +583,14 @@ appScoped.post("/schedules/run", refuseForStaticApp("schedules"), async (req, re
   res.status(202).json({ runs });
 });
 
-appScoped.get("/schedules/:scheduleId", async (req, res) => {
+appScoped.get("/schedules/:scheduleId", requirePermission("app.view"), async (req, res) => {
   const schedule = await findSchedule(req, res);
   if (schedule) res.json(toScheduleResponse(schedule, req.project!.slug));
 });
 
 // A merge: fields absent from the body are left alone. nextRunAt is
 // recomputed whenever timing or enabled changes.
-appScoped.patch("/schedules/:scheduleId", refuseForStaticApp("schedules"), async (req, res) => {
+appScoped.patch("/schedules/:scheduleId", requirePermission("app.settings"), refuseForStaticApp("schedules"), async (req, res) => {
   const body = updateScheduleSchema.parse(req.body ?? {});
   const existing = await findSchedule(req, res);
   if (!existing) return;
@@ -628,7 +635,7 @@ appScoped.patch("/schedules/:scheduleId", refuseForStaticApp("schedules"), async
   res.json(toScheduleResponse(schedule, req.project!.slug));
 });
 
-appScoped.delete("/schedules/:scheduleId", async (req, res) => {
+appScoped.delete("/schedules/:scheduleId", requirePermission("app.settings"), async (req, res) => {
   const schedule = await findSchedule(req, res);
   if (!schedule) return;
 
@@ -649,7 +656,7 @@ appScoped.delete("/schedules/:scheduleId", async (req, res) => {
 // works without waiting for the next occurrence. Works on a paused
 // schedule too. 202: the call can take minutes (wake-up included), so the
 // result is polled at statusUrl.
-appScoped.post("/schedules/:scheduleId/run", refuseForStaticApp("schedules"), async (req, res) => {
+appScoped.post("/schedules/:scheduleId/run", requirePermission("app.settings"), refuseForStaticApp("schedules"), async (req, res) => {
   const schedule = await findSchedule(req, res);
   if (!schedule) return;
 
@@ -677,14 +684,14 @@ appScoped.post("/schedules/:scheduleId/run", refuseForStaticApp("schedules"), as
 });
 
 // ?limit, ?page, ?outcome=ok|failed|skipped|running, ?trigger=schedule|manual
-appScoped.get("/schedules/:scheduleId/runs", async (req, res) => {
+appScoped.get("/schedules/:scheduleId/runs", requirePermission("app.view"), async (req, res) => {
   const query = runsQuerySchema.parse(req.query);
   const schedule = await findSchedule(req, res);
   if (!schedule) return;
   res.json(await listRuns(schedule.id, query));
 });
 
-appScoped.get("/schedules/:scheduleId/runs/:runId", async (req, res) => {
+appScoped.get("/schedules/:scheduleId/runs/:runId", requirePermission("app.view"), async (req, res) => {
   const run = await prisma.scheduleRun.findFirst({
     where: { id: req.params.runId, scheduleId: req.params.scheduleId, schedule: { projectId: req.project!.id } },
   });
@@ -707,7 +714,7 @@ appScoped.get("/schedules/:scheduleId/runs/:runId", async (req, res) => {
 // the call fails app_renamed instead of renaming the wrong thing.
 const slugChangeSchema = z.object({ newName: z.string().trim().min(1).max(63) });
 
-appScoped.post("/slug-change", async (req, res) => {
+appScoped.post("/slug-change", requirePermission("app.settings"), async (req, res) => {
   const project = req.project!;
   const { newName } = slugChangeSchema.parse(req.body ?? {});
 
@@ -780,7 +787,7 @@ appScoped.post("/slug-change", async (req, res) => {
 });
 
 // Deployment history — what a rollback needs in order to pick a target.
-appScoped.get("/deployments", async (req, res) => {
+appScoped.get("/deployments", requirePermission("app.view"), async (req, res) => {
   const project = req.project!;
   const deployments = await prisma.deployment.findMany({
     where: { projectId: project.id },
@@ -807,7 +814,7 @@ appScoped.get("/deployments", async (req, res) => {
 });
 
 // One deployment — what the rollback response's statusUrl points at.
-appScoped.get("/deployments/:deploymentId", async (req, res) => {
+appScoped.get("/deployments/:deploymentId", requirePermission("app.view"), async (req, res) => {
   const project = req.project!;
   const deployment = await prisma.deployment.findFirst({
     where: { id: req.params.deploymentId, projectId: project.id },
@@ -839,7 +846,7 @@ appScoped.get("/deployments/:deploymentId", async (req, res) => {
 // picking an invalid target.
 const rollbackSchema = z.object({ deploymentId: z.string().min(1).optional() });
 
-appScoped.post("/rollback", async (req, res) => {
+appScoped.post("/rollback", requirePermission("app.deploy"), async (req, res) => {
   const project = req.project!;
   const { deploymentId } = rollbackSchema.parse(req.body ?? {});
 
@@ -901,12 +908,12 @@ function dnsInstructionsFor(domain: string, type: DomainType) {
 
 const registerDomainSchema = z.object({ domain: z.string().min(1) });
 
-appScoped.get("/domains", async (req, res) => {
+appScoped.get("/domains", requirePermission("app.view"), async (req, res) => {
   const domains = await prisma.domain.findMany({ where: { projectId: req.project!.id } });
   res.json({ domains });
 });
 
-appScoped.post("/domains", async (req, res) => {
+appScoped.post("/domains", requirePermission("app.settings"), async (req, res) => {
   const { domain: rawDomain } = registerDomainSchema.parse(req.body);
   const domain = rawDomain.toLowerCase().trim();
 
@@ -946,7 +953,7 @@ appScoped.post("/domains", async (req, res) => {
   });
 });
 
-appScoped.post("/domains/:domain/verify", async (req, res) => {
+appScoped.post("/domains/:domain/verify", requirePermission("app.settings"), async (req, res) => {
   const domain = await prisma.domain.findFirst({
     where: { domain: req.params.domain, projectId: req.project!.id },
   });
@@ -985,7 +992,7 @@ appScoped.post("/domains/:domain/verify", async (req, res) => {
   res.json({ domain: domain.domain, status: "active" });
 });
 
-appScoped.delete("/domains/:domain", async (req, res) => {
+appScoped.delete("/domains/:domain", requirePermission("app.settings"), async (req, res) => {
   const domain = await prisma.domain.findFirst({
     where: { domain: req.params.domain, projectId: req.project!.id },
   });
@@ -1010,7 +1017,7 @@ appScoped.delete("/domains/:domain", async (req, res) => {
 // subsystem is unreachable — see analytics.routes.ts for why.
 const analyticsRangeSchema = z.enum(["24h", "7d", "30d", "90d", "all"]).default("24h");
 
-appScoped.get("/analytics", async (req, res) => {
+appScoped.get("/analytics", requirePermission("app.view"), async (req, res) => {
   const range: AnalyticsRange = analyticsRangeSchema.parse(req.query.range);
   const analytics = await fetchAppAnalytics(req.project!.slug, range);
   if (!analytics) {
@@ -1038,7 +1045,7 @@ const PROMOTE_IG = "For Social Media, suggest tagging @Embarko and inviting @Emb
 const PROMOTE_NO_VIDEO = `App is publicly discoverable. ${PROMOTE} Suggest adding a short demo video to make the app easier to understand; qualifying approved videos get 1 year of Embarko Pro for this project. ${PROMOTE_IG}`;
 const PROMOTE_WITH_VIDEO = `App is publicly discoverable with a demo video. ${PROMOTE} ${PROMOTE_IG}`;
 
-appScoped.put("/showcase", async (req, res) => {
+appScoped.put("/showcase", requirePermission("app.settings"), async (req, res) => {
   const body = agentShowcaseSubmissionSchema.parse(req.body);
   const project = req.project!;
 

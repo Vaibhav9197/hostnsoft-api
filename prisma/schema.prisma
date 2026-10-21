@@ -126,8 +126,83 @@ model Project {
   schedules   Schedule[]
   appDetails  AppDetails?
   slugAliases SlugAlias[]
+  appGrants   AppGrant[]
 
   @@index([companyId])
+}
+
+// ------------------------------------------------------------------ Roles
+// See docs/CLAUDE.md "Authorization" and src/lib/permissions.ts. Proxy still
+// owns WHO is in a workspace (membership is checked there on every request,
+// and removing someone there cuts them off whatever these rows say); these
+// tables only say WHAT a member may do. Keyed by proxy ids, no foreign keys,
+// same as everything else here.
+
+// A member's role in one workspace. No row means "joined before roles
+// existed, or through the proxy embed without going through our invite" —
+// treated as Admin, which is what every member effectively was before this
+// table (see permissions.ts DEFAULT_ROLE). Exactly one row per
+// (workspace, person); the last Owner can't be removed or demoted
+// (services/workspaceRoles.ts).
+model WorkspaceMember {
+  id        String   @id @default(cuid())
+  companyId String
+  userId    String
+  // "owner" | "admin" | "developer" | "viewer" | "billing" (ROLES in
+  // permissions.ts; a string, not an enum — SQLite).
+  role      String
+  // Only read for developer/viewer: "all" apps in the workspace, or only
+  // the ones listed in AppGrant.
+  appScope  String   @default("all")
+  // Developer flags. canCreate: may deploy brand-new apps. canDelete: may
+  // delete apps they can manage — an app they created themselves they may
+  // always delete, whatever this says.
+  canCreate Boolean  @default(true)
+  canDelete Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, userId])
+  @@index([companyId, role])
+}
+
+// One app a developer/viewer with appScope "selected" may reach, and how
+// far: "manage" (deploy, change settings) or "view" (status, logs,
+// history). Ignored for any other role or scope. Goes with the app.
+model AppGrant {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  level     String // "manage" | "view"
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// A role chosen for someone before they are a member. The invite email
+// itself is proxy's (the members embed sends it); this only remembers what
+// they should be allowed to do. Applied — turned into a WorkspaceMember
+// (+ AppGrants) and deleted — the first time their permissions are worked
+// out as a member of companyId (permissions.ts resolveAccess), matched by
+// email. One per (workspace, email): inviting again replaces it.
+model PendingInvite {
+  id        String   @id @default(cuid())
+  companyId String
+  email     String // lowercased
+  role      String
+  appScope  String   @default("all")
+  canCreate Boolean  @default(true)
+  canDelete Boolean  @default(false)
+  // JSON-encoded [{projectId, level}] — SQLite has no array column.
+  // Projects deleted in the meantime are skipped when applied.
+  grants    String   @default("[]")
+  invitedBy String
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, email])
 }
 
 // A name an app used to have — one row per previous slug, written on every

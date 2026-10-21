@@ -274,10 +274,12 @@ function decodeJwtPayload(jwt: string): Msg91JwtPayload | null {
 const companyCache = new TtlCache<ProxyCompany | null>("company", IDENTITY_TTL_MS);
 const userCache = new TtlCache<ProxyUser | null>("user", IDENTITY_TTL_MS);
 
-// The authorization primitive for every /companies/:companyId route. Proxy
-// reports membership as a count and exposes no per-user role, which is why
-// this API has no roles either. Not cached — always asks proxy fresh, so a
-// removed member loses access immediately.
+// The membership half of authorization for every /companies/:companyId
+// route. Proxy reports membership as a count and exposes no per-user role,
+// so roles are ours (lib/permissions.ts) — but they only ever narrow what a
+// member may do; this check still decides whether they're in at all. Not
+// cached — always asks proxy fresh, so a removed member loses access
+// immediately.
 export async function isCompanyMember(userId: string, companyId: string): Promise<boolean> {
   if (!userId || !companyId) return false;
 
@@ -295,6 +297,78 @@ export async function isCompanyMember(userId: string, companyId: string): Promis
     return false;
   }
   return count >= 1;
+}
+
+// Everyone in a workspace, for the members page (routes/members.routes.ts),
+// which shows each person's local role next to proxy's own list. Null means
+// "couldn't get a trustworthy list" — callers then show only the people they
+// already know about, never an error.
+//
+// UNVERIFIED against this account: it's the same admin-key getDetails the
+// membership check above uses, minus user_id, on the assumption that proxy
+// then returns every user in that company (paged like getCompanies). If proxy
+// instead ignored company_id and paged through the whole account, the list
+// would show strangers. So every row is re-checked with isCompanyMember, and
+// a single row that fails the check discards the whole answer (logged, so
+// the mapping gets fixed) — at worst this costs one membership call per
+// member on a page few people open, and it can't ever show someone who isn't
+// in the workspace. Capped so a misbehaving filter can't fan out into
+// thousands of calls.
+const MEMBER_LIST_CAP = 200;
+
+export async function listCompanyMembers(companyId: string): Promise<ProxyUser[] | null> {
+  const pageSize = 100;
+  const rows: ProxyUser[] = [];
+  try {
+    for (let pageNo = 1; rows.length < MEMBER_LIST_CAP; pageNo++) {
+      const params = new URLSearchParams({
+        company_id: companyId,
+        pageNo: String(pageNo),
+        itemsPerPage: String(pageSize),
+      });
+      const body = await adminRequest<RawUser>(`/getDetails?${params}`);
+      const page = body.data?.data;
+      if (body.hasError || !Array.isArray(page)) {
+        logger.warn(`[msg91] getDetails by company gave no list: keys=${Object.keys(body.data ?? {}).join(",")}`);
+        return null;
+      }
+      rows.push(...page.map(toUser).filter((u): u is ProxyUser => u !== null));
+      const total = Number(body.data?.totalEntityCount);
+      if (page.length < pageSize || (Number.isFinite(total) && rows.length >= total)) break;
+    }
+  } catch (err) {
+    // An outage here only costs the members page its full list.
+    logger.warn(`[msg91] listCompanyMembers failed: ${(err as Error)?.message}`);
+    return null;
+  }
+  if (rows.length >= MEMBER_LIST_CAP) {
+    logger.warn(`[msg91] listCompanyMembers hit the ${MEMBER_LIST_CAP} cap for ${companyId}; not trusting it`);
+    return null;
+  }
+
+  const unique = [...new Map(rows.map((u) => [u.id, u])).values()];
+  const concurrency = 5;
+  for (let i = 0; i < unique.length; i += concurrency) {
+    const batch = unique.slice(i, i + concurrency);
+    const flags = await Promise.all(batch.map((u) => isCompanyMember(u.id, companyId).catch(() => false)));
+    if (flags.some((ok) => !ok)) {
+      logger.warn(`[msg91] getDetails by company returned non-members for ${companyId}; ignoring the list`);
+      return null;
+    }
+  }
+  return unique;
+}
+
+// Who made the workspace, when proxy says. Used once per workspace, to pick
+// its first Owner (permissions.ts ensureOwner). `created_by` is the field
+// every sibling app on this proxy derives "admin" from, but it is
+// unverified here — so it's only a hint, and anything unexpected is null.
+export async function getCompanyCreatorId(companyId: string): Promise<string | null> {
+  const company = await getCompanyById(companyId);
+  const raw = company?.created_by ?? company?.createdBy;
+  if (typeof raw === "string" && raw) return raw;
+  if (typeof raw === "number") return String(raw);
+  return null;
 }
 
 export function getCompanyById(companyId: string): Promise<ProxyCompany | null> {

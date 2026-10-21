@@ -1,6 +1,7 @@
 import type { DeployToken, Project } from "@prisma/client";
 import type { Msg91Identity } from "../lib/msg91";
 import type { TokenActor } from "../services/deployTokenAuth";
+import type { Access } from "../lib/permissions";
 
 declare global {
   namespace Express {
@@ -25,6 +26,14 @@ declare global {
       // default workspace (where new apps go), not necessarily the app's.
       // Set alongside deployToken; see services/tokenAccess.ts.
       actor?: TokenActor;
+      // True once loadCompanyContext has confirmed proxy membership for
+      // req.company this request, so the permission check after it doesn't
+      // ask proxy a second time (lib/permissions.ts resolveAccess).
+      membershipChecked?: boolean;
+      // The caller's role and app access in req.company, worked out once
+      // per request by middleware/requirePermission.ts. Undefined until a
+      // route asks; null when they turned out not to be a member.
+      access?: Access | null;
     }
   }
 }

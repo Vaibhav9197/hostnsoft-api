@@ -2,9 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { getCompanyById, listMyCompanies, createCompany, updateCompany, switchCompany } from "../lib/msg91";
 import { ensureBillingForCompany, syncBillingCustomerName } from "../services/billingCustomer";
+import { logAudit } from "../services/audit";
 
 export const companiesRouter = Router();
 
@@ -54,6 +56,21 @@ companiesRouter.post("/companies", requireProxyToken, async (req, res) => {
   const input = createCompanySchema.parse(req.body);
   const company = await createCompany(req.proxyAuthToken!, input);
 
+  // Whoever creates a workspace owns it. Written now, while we know for
+  // certain who that is, rather than left to ensureOwner's guesswork
+  // (lib/permissions.ts) the first time the workspace is used.
+  await prisma.workspaceMember.upsert({
+    where: { companyId_userId: { companyId: company.id, userId: req.userId! } },
+    update: { role: "owner" },
+    create: { companyId: company.id, userId: req.userId!, role: "owner" },
+  });
+  await logAudit({
+    actorUserId: req.userId,
+    companyId: company.id,
+    action: "member.role_change",
+    details: `${req.userId}: (none) -> owner — created the workspace`,
+  });
+
   // Lago requires an email; the company's own is optional in proxy, so the
   // creator's is the fallback — they're the one who'll get invoices anyway.
   const billing = await ensureBillingForCompany(company.id, {
@@ -92,7 +109,7 @@ const updateCompanySchema = z.object({
 // merged key-wise (proxy itself replaces it wholesale, and requires name +
 // email on every call). Proxy updates the PAT's *current* company, so the
 // token is switched to :companyId first when it's pointing elsewhere.
-companiesRouter.patch("/companies/:companyId", requireProxyToken, loadCompanyContext, async (req, res) => {
+companiesRouter.patch("/companies/:companyId", requireProxyToken, loadCompanyContext, requirePermission("workspace.manage"), async (req, res) => {
   const patch = updateCompanySchema.parse(req.body);
   const companyId = req.company!.id;
 

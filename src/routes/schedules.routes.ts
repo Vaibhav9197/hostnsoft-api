@@ -9,6 +9,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
 import { loadProjectContext } from "../middleware/projectContext";
 import { LAST_RUN, listRuns, runsQuerySchema, toScheduleResponse } from "../services/schedules";
 import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
@@ -20,6 +21,7 @@ schedulesRouter.get(
   "/companies/:companyId/projects/:projectId/schedules",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const schedules = await prisma.schedule.findMany({
       where: { projectId: req.project!.id },
@@ -38,6 +40,7 @@ schedulesRouter.get(
   "/companies/:companyId/projects/:projectId/schedules/:scheduleId/runs",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const query = runsQuerySchema.parse(req.query);
     const schedule = await prisma.schedule.findFirst({

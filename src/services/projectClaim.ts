@@ -248,6 +248,28 @@ export async function resolveDeployTarget(
   return claimProjectForCompany(companyId, slug, createdBy);
 }
 
+/**
+ * Which of the company's own apps a deploy would land on, WITHOUT creating
+ * or adopting anything — the same lookups as resolveDeployTarget's
+ * non-creating branches, in the same order. The claim endpoint asks this
+ * first so it can check the right permission before anything is written:
+ * app.deploy on the app it finds, or app.create when it finds none (a
+ * brand-new name, or an orphan being adopted — both make the workspace a
+ * new app). Null also covers names that will be refused anyway (another
+ * workspace's, reserved, a dead id); those still get their own error from
+ * resolveDeployTarget, after an app.create check that a member who can't
+ * add apps fails first.
+ */
+export async function peekDeployTarget(companyId: string, slug: string, appId: string | undefined): Promise<Project | null> {
+  if (appId) {
+    const project = await prisma.project.findUnique({ where: { id: appId } });
+    return project && !project.isOrphan && project.companyId === companyId ? project : null;
+  }
+  const own = await prisma.project.findFirst({ where: { slug, companyId } });
+  if (own) return own;
+  return (await findRenamedApp(companyId, slug))?.project ?? null;
+}
+
 // Shared by the pre-deploy claim endpoint (internalProjects.routes.ts,
 // called by hostnsoft-deploy BEFORE it spends any build/Nomad resources)
 // and the post-deploy record endpoint (internalDeployments.routes.ts,
@@ -262,10 +284,12 @@ export async function resolveDeployTarget(
 // throughout this codebase (company creation in msg91Login.ts, deploy
 // version allocation in internalDeployments.routes.ts).
 //
-// createdBy is the proxy userId when a real person deployed through the
-// dashboard's upload UI (its proxy_auth_token names them — see
-// services/deployActor.ts), and falls back to "hostnsoft-deploy" for a
-// deploy token, which identifies a company but nobody in particular.
+// createdBy is the person behind the deploy: the signed-in user for the
+// dashboard's upload UI, or the deploy token's creator (services/
+// deployActor.ts actorPersonId) — since roles, that's who a Developer's
+// "may always delete apps they created" and "selected apps include the ones
+// they made" key on (lib/permissions.ts). "hostnsoft-deploy" remains only
+// for callers that name nobody, and on apps created before this.
 export async function claimProjectForCompany(
   companyId: string,
   slug: string,
@@ -304,7 +328,9 @@ export async function claimProjectForCompany(
     // Only while its 24 hours are still running — see unexpiredOrphanWhere.
     const moved = await prisma.project.updateMany({
       where: { id: project.id, ...unexpiredOrphanWhere() },
-      data: { companyId, isOrphan: false, orphanExpiresAt: null, claimCodeHash: null },
+      // createdBy too: an orphan has none, and the person adopting it is
+      // the one who made it this workspace's app.
+      data: { companyId, isOrphan: false, orphanExpiresAt: null, claimCodeHash: null, ...(createdBy ? { createdBy } : {}) },
     });
     if (moved.count === 0) {
       // Either it expired, or someone else took it over (the claim link,

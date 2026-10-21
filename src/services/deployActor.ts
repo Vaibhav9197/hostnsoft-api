@@ -1,4 +1,6 @@
 import type { Request } from "express";
+import type { Project } from "@prisma/client";
+import { accessAllows, permissionDeniedBody, resolveAccess } from "../lib/permissions";
 import { z } from "zod";
 import { ProxyError, isCompanyMember, verifyProxyAuthToken } from "../lib/msg91";
 import { hasInternalSecret } from "../middleware/requireInternalSecret";
@@ -186,4 +188,37 @@ export function accessActorOfDeploy(actor: DeployActor): AccessActor | null {
 export function deployCreatedBy(actor: DeployActor): string | null {
   if (actor.kind === "deployToken") return actor.token.kind === "user" ? actor.token.userId : null;
   return actor.userId;
+}
+
+// Roles on the deploy path (lib/permissions.ts). `target` is the app the
+// deploy would land on, or null when it would add one to the workspace (see
+// projectClaim.ts peekDeployTarget). Null back means go ahead; otherwise the
+// status + body to answer with, which hostnsoft-deploy relays to the agent.
+//
+// Dashboard uploads only: the signed-in person's role decides. Deploy tokens
+// are decided in resolveDeployTarget (services/tokenAccess.ts): a workspace
+// token acts as its workspace, so it keeps working after the person who
+// made it leaves (CI); a user token acts as its person through can(), so it
+// stops when they lose access.
+//
+// An app the person can't see gets the same permission_denied as one they
+// can see but not deploy, not the usual 404: the deploy would otherwise go on
+// to answer "already in use by a different workspace" or, worse, look like a
+// new name — and the name is already public, it's the app's address.
+export async function authorizeDeploy(
+  actor: DeployActor,
+  target: Pick<Project, "id" | "createdBy"> | null
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (actor.kind !== "proxyAuth") return null;
+
+  // Membership was just verified by resolveDeployActor, so this can only be
+  // null if they left in between — the same answer as a non-member.
+  const access = await resolveAccess(actor.userId, actor.companyId, { membershipChecked: true });
+  if (!access) return { status: 403, body: { error: "You're not a member of this workspace.", code: "not_a_company_member" } };
+
+  const permission = target ? "app.deploy" : "app.create";
+  if (!accessAllows(access, permission, target ?? undefined)) {
+    return { status: 403, body: permissionDeniedBody(permission, access) };
+  }
+  return null;
 }

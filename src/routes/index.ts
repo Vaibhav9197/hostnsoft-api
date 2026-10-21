@@ -14,6 +14,7 @@ import { connectorAuthRouter } from "./connectorAuth.routes";
 import { agentAppsRouter } from "./agentApps.routes";
 import { authRouter } from "./auth.routes";
 import { companiesRouter } from "./companies.routes";
+import { membersRouter } from "./members.routes";
 import { tokensRouter } from "./tokens.routes";
 import { projectsRouter } from "./projects.routes";
 import { schedulesRouter } from "./schedules.routes";
@@ -56,6 +57,7 @@ router.use(agentAppsRouter);
 
 router.use(authRouter);
 router.use(companiesRouter);
+router.use(membersRouter);
 router.use(tokensRouter);
 router.use(projectsRouter);
 router.use(deploymentsRouter);

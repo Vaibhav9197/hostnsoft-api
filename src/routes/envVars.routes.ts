@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
+import { accessAllows } from "../lib/permissions";
 import { loadProjectContext } from "../middleware/projectContext";
 import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
 import { logAudit } from "../services/audit";
@@ -14,11 +16,17 @@ envVarsRouter.get(
   "/companies/:companyId/projects/:projectId/env-vars",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const envVars = await prisma.envVar.findMany({
       where: { projectId: req.project!.id },
     });
-    res.json(envVars);
+    // Values are secrets (env vars are this platform's secret store), so
+    // only someone who may change them may read them. Everyone else who can
+    // see the app sees which variables are set — the same fields, with
+    // `value: null` and `valueHidden: true`, so the list keeps one shape.
+    const showValues = accessAllows(req.access!, "app.settings", req.project!);
+    res.json(envVars.map((v) => (showValues ? { ...v, valueHidden: false } : { ...v, value: null, valueHidden: true })));
   }
 );
 
@@ -47,6 +55,7 @@ envVarsRouter.put(
   loadCompanyContext,
   loadProjectContext,
   refuseForStaticApp("env_vars"),
+  requirePermission("app.settings"),
   async (req, res) => {
     const { vars } = upsertEnvVarsSchema.parse(req.body);
     const projectId = req.project!.id;
@@ -68,7 +77,8 @@ envVarsRouter.put(
       action: "env_var.upsert",
       details: vars.map((v) => v.key).join(", "),
     });
-    res.json(results);
+    // Same fields as the GET; only someone allowed to see values gets here.
+    res.json(results.map((v) => ({ ...v, valueHidden: false })));
   }
 );
 
@@ -76,6 +86,7 @@ envVarsRouter.delete(
   "/companies/:companyId/projects/:projectId/env-vars/:key",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     await prisma.envVar.delete({
       where: { projectId_key: { projectId: req.project!.id, key: req.params.key } },

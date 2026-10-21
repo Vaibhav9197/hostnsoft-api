@@ -54,10 +54,11 @@ src/
 
 Request pipeline for a company-scoped route:
 `requireAuth` → `loadCompanyContext` (asks MSG91 proxy whether the caller is a
-member of `:companyId`; cached ~60s, positives only; 404 if not). There are
-no roles — any member may do anything in the company. Any route that *also*
-has a `:projectId` param needs `loadProjectContext` too (after
-`loadCompanyContext`) — see the security note below.
+member of `:companyId`; uncached; 404 if not) → `loadProjectContext` on any
+route with a `:projectId` (see the security note below) → `requirePermission`
+(the caller's role and app access, `src/lib/permissions.ts`; 403
+`permission_denied`, or 404 for an app they can't see). Every route names the
+permission it needs — see docs/CLAUDE.md "Authorization".
 
 ## Auth flow implemented here
 
@@ -180,9 +181,9 @@ implemented, per the project brief's "don't guess silently":
 - **Live health / logs** — `GET .../projects/:id` returns `health:
   "unknown"`; there's no log retrieval endpoint yet (open question #4:
   pull from Nomad/Docker on demand vs. a centralized log sink).
-- **Per-role / per-project access** — none. Proxy exposes no readable roles,
-  so any company member can manage every project, env var and deploy token
-  in it. A finer model would need a new local grant table keyed by proxy ids.
+- **Per-role / per-project access** — built 2026-10-21 as local tables keyed
+  by proxy ids (`WorkspaceMember`, `AppGrant`, `PendingInvite`); see
+  docs/CLAUDE.md "Authorization" for what is still unverified on proxy.
 - **Orphaned rows on proxy-side company delete** — nothing tells this API
   when a company is deleted on proxy; its `Project`/`DeployToken` rows stay,
   and existing deploy tokens keep working. Needs a webhook or reconciliation.

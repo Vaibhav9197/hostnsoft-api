@@ -2,12 +2,19 @@ import { Router } from "express";
 import { z } from "zod";
 import { verifyProxyAuthToken, isCompanyMember, ProxyError } from "../lib/msg91";
 import { requireInternalSecret } from "../middleware/requireInternalSecret";
+import { canReadApp } from "../services/appReadAccess";
 
 export const internalProxyAuthRouter = Router();
 
 const verifySchema = z.object({
   proxyAuthToken: z.string().min(1),
   companyId: z.string().min(1),
+  // Optional, added with roles: the app being read. When sent, the reply
+  // also says whether this person may read that app (app.logs — the same
+  // level as status), so a member limited to "selected" apps can't read
+  // the others' status/logs through hostnsoft-deploy. Omitted = the old
+  // membership-only answer, so an older hostnsoft-deploy keeps working.
+  appName: z.string().min(1).optional(),
 });
 
 // Called by hostnsoft-deploy (server-to-server) so GET /apps/:appName/status,
@@ -30,7 +37,7 @@ internalProxyAuthRouter.post(
   "/internal/proxy-auth/verify-membership",
   requireInternalSecret,
   async (req, res) => {
-    const { proxyAuthToken, companyId } = verifySchema.parse(req.body);
+    const { proxyAuthToken, companyId, appName } = verifySchema.parse(req.body);
 
     let identity;
     try {
@@ -50,6 +57,7 @@ internalProxyAuthRouter.post(
     }
 
     const isMember = await isCompanyMember(identity.id, companyId);
-    res.json({ valid: true, isMember });
+    if (!appName) return res.json({ valid: true, isMember });
+    res.json({ valid: true, isMember, appAccess: isMember && (await canReadApp(identity.id, companyId, appName)) });
   }
 );

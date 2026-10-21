@@ -8,6 +8,7 @@ import { claimProjectForCompany } from "../services/projectClaim";
 import {
   accessActorOfDeploy,
   actorPersonId,
+  authorizeDeploy,
   deployCreatedBy,
   deployCredentialFields,
   resolveDeployActor,
@@ -123,6 +124,15 @@ internalDeploymentsRouter.post("/internal/deployments/record", async (req, res) 
   ) {
     project = crossWorkspace;
   } else if (actor.companyId) {
+    // Roles for a dashboard upload (authorizeDeploy answers null for a token,
+    // which the block above and the claim already decided). The claim
+    // endpoint checked this before the build; repeated for the row-creating
+    // call only, as a backstop for a caller that skipped the claim.
+    if (!body.deploymentId) {
+      const existing = await prisma.project.findFirst({ where: { slug: body.projectSlug, companyId: actor.companyId } });
+      const denied = await authorizeDeploy(actor, existing);
+      if (denied) return res.status(denied.status).json(denied.body);
+    }
     const claim = await claimProjectForCompany(actor.companyId, body.projectSlug, deployCreatedBy(actor));
     if (claim.rejected) {
       return res.status(409).json({ error: claim.rejected.reason, code: claim.rejected.code });

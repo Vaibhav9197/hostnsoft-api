@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
 import { loadProjectContext } from "../middleware/projectContext";
 import { logAudit } from "../services/audit";
 import { isUniqueConstraintViolation } from "../lib/prismaErrors";
@@ -30,6 +31,7 @@ domainsRouter.post(
   "/companies/:companyId/projects/:projectId/domains",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     const { domain: rawDomain } = registerSchema.parse(req.body);
     const domain = rawDomain.toLowerCase().trim();
@@ -87,6 +89,7 @@ domainsRouter.get(
   "/companies/:companyId/projects/:projectId/domains",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.view"),
   async (req, res) => {
     const domains = await prisma.domain.findMany({ where: { projectId: req.project!.id } });
     res.json(domains);
@@ -100,6 +103,7 @@ domainsRouter.post(
   "/companies/:companyId/projects/:projectId/domains/:domain/verify",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     const domain = await prisma.domain.findFirst({
       where: { domain: req.params.domain, projectId: req.project!.id },
@@ -144,6 +148,7 @@ domainsRouter.delete(
   "/companies/:companyId/projects/:projectId/domains/:domain",
   loadCompanyContext,
   loadProjectContext,
+  requirePermission("app.settings"),
   async (req, res) => {
     const domain = await prisma.domain.findFirst({
       where: { domain: req.params.domain, projectId: req.project!.id },

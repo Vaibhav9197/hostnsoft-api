@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
+import { requirePermission } from "../middleware/requirePermission";
 import { logAudit } from "../services/audit";
 import { billingErrors, FREE_PLAN_CODE, isPublicPlan } from "../lib/billingUtility";
 import {
@@ -55,6 +56,7 @@ billingRouter.use(requireProxyToken);
 billingRouter.post(
   "/companies/:companyId/billing/customer",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const input = createCustomerSchema.parse(req.body);
     const companyId = req.company!.id;
@@ -79,6 +81,7 @@ billingRouter.post(
 billingRouter.get(
   "/companies/:companyId/billing/customer",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const customer = await getLagoCustomer(req.company!.id);
     if (!customer) throw billingErrors.noCustomer();
@@ -94,6 +97,7 @@ billingRouter.get(
 billingRouter.get(
   "/companies/:companyId/billing/payment-methods",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const customer = await getLagoCustomer(req.company!.id);
     if (!customer) throw billingErrors.noCustomer();
@@ -110,6 +114,7 @@ billingRouter.get(
 billingRouter.delete(
   "/companies/:companyId/billing/payment-methods/:paymentMethodId",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const companyId = req.company!.id;
     const customer = await getLagoCustomer(companyId);
@@ -137,6 +142,7 @@ billingRouter.delete(
 billingRouter.get(
   "/companies/:companyId/billing/checkout-url",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     res.json({ checkoutUrl: await getLagoCheckoutUrl(req.company!.id) });
   }
@@ -150,6 +156,10 @@ billingRouter.get(
 // details are deliberately not included; GET .../billing/customer has them.
 // An empty list means billing isn't set up yet (or the free-plan step of
 // customer creation failed) — no separate customer lookup for that.
+// Deliberately open to every member, unlike the rest of this router
+// (billing.manage): it says which plan the workspace is on, which the
+// dashboard shows everyone (plan badge, limits) and is no secret inside the
+// workspace. Cards, invoices and changing the plan stay with billing.manage.
 billingRouter.get("/companies/:companyId/billing", loadCompanyContext, async (req, res) => {
   const subscriptions = await listSubscriptions(req.company!.id);
 
@@ -187,6 +197,7 @@ async function requirePaymentMethod(companyId: string): Promise<void> {
 billingRouter.put(
   "/companies/:companyId/billing/subscription",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const { plan_code, coupon_code } = changePlanSchema.parse(req.body);
     const companyId = req.company!.id;
@@ -259,6 +270,7 @@ billingRouter.put(
 billingRouter.delete(
   "/companies/:companyId/billing/subscription",
   loadCompanyContext,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const companyId = req.company!.id;
 
@@ -309,7 +321,7 @@ function trimAppliedCoupon(a: LagoAppliedCoupon) {
   };
 }
 
-billingRouter.get("/companies/:companyId/billing/coupons", loadCompanyContext, async (req, res) => {
+billingRouter.get("/companies/:companyId/billing/coupons", loadCompanyContext, requirePermission("billing.manage"), async (req, res) => {
   const applied = await listAppliedCoupons(req.company!.id);
   res.json({ coupons: applied.map(trimAppliedCoupon) });
 });
@@ -318,6 +330,7 @@ billingRouter.get(
   "/companies/:companyId/billing/coupons/:code",
   loadCompanyContext,
   ...couponLimiters,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const code = couponCodeSchema.parse(req.params.code);
     const { plan_code } = checkCouponQuerySchema.parse(req.query);
@@ -332,6 +345,7 @@ billingRouter.post(
   "/companies/:companyId/billing/coupons",
   loadCompanyContext,
   ...couponLimiters,
+  requirePermission("billing.manage"),
   async (req, res) => {
     const { coupon_code } = applyCouponSchema.parse(req.body);
     const companyId = req.company!.id;
