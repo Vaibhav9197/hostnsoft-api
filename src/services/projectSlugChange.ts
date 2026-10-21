@@ -167,12 +167,11 @@ export async function cooldownRemainingMs(projectId: string): Promise<number> {
  * The `details` of a slug-change audit row, written and read in one
  * place.
  *
- * Parsing structure out of a log field is grubby; a dedicated table was
- * rejected because the audit row is already the authoritative record of a
- * change, so a table would duplicate it. That holds only while nothing
- * outside this pair knows the format — both consumers (the cooldown, and
- * the lookups in slugChangeFlow.ts) go through them. Revisit the table if
- * a third consumer needs more than the two names.
+ * The audit row stays the record of when a change happened (the
+ * cooldown). Which app an old name now belongs to is SlugAlias's job —
+ * the deploy claim needed that, including across several renames, which
+ * a scan of these rows can't answer. The lookups in slugChangeFlow.ts
+ * still read these rows for renames made before SlugAlias existed.
  */
 const SLUG_CHANGE_DETAIL_SEPARATOR = " -> ";
 
@@ -193,6 +192,23 @@ export function parseSlugChangeDetails(details: string | null): { from: string; 
   const to = withoutNote.slice(at + SLUG_CHANGE_DETAIL_SEPARATOR.length).trim();
   if (!from || !to) return null;
   return { from, to };
+}
+
+/**
+ * Remember the name the app just left, so callers still using it reach
+ * the app (schema.prisma SlugAlias), and drop the row for the name it now
+ * has, if it is moving back to an old one. Upsert: a name can only belong
+ * to one app, and prepareSlugChange already refused another app's.
+ */
+async function recordSlugAlias(projectId: string, previousSlug: string, nextSlug: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.slugAlias.deleteMany({ where: { slug: nextSlug, projectId } }),
+    prisma.slugAlias.upsert({
+      where: { slug: previousSlug },
+      create: { slug: previousSlug, projectId },
+      update: { projectId },
+    }),
+  ]);
 }
 
 /**
@@ -260,6 +276,13 @@ export async function prepareSlugChange(project: Project, requestedSlug: string)
     return { ok: false, code: reserved.code as SlugChangeFailure, reason: reserved.reason };
   }
 
+  // Another app's old name stays that app's — see schema.prisma SlugAlias.
+  // This app's own old names are free to go back to.
+  const alias = await prisma.slugAlias.findUnique({ where: { slug } });
+  if (alias && alias.projectId !== project.id) {
+    return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
+  }
+
   const live = await isLive(project);
   if (live === "unknown") {
     return {
@@ -298,6 +321,7 @@ export async function applyDatabaseOnlySlugChange(project: Project, slug: string
       return { ok: false, code: "app_name_taken", reason: takenReason(slug) };
     }
 
+    await recordSlugAlias(project.id, previousSlug, slug);
     await repointShowcaseListings(project.id, previousSlug, slug);
 
     // Best-effort cleanup of anything a FAILED build left behind under
@@ -420,6 +444,7 @@ export async function runSlugMigration(project: Project, slug: string): Promise<
   // which replays exactly that string and checks it with `docker image
   // inspect` first — would fail with image_unavailable on all of them.
   await retagDeploymentHistory(project.id, previousSlug, slug);
+  await recordSlugAlias(project.id, previousSlug, slug);
   await repointShowcaseListings(project.id, previousSlug, slug);
 
   return { ok: true, project: updated, previousSlug, unchanged: false };
