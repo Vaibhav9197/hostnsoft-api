@@ -257,6 +257,14 @@ export async function findRenamedApp(
   companyId: string,
   oldSlug: string
 ): Promise<{ from: string; to: string; project: Project } | null> {
+  // Every completed rename since SlugAlias existed, however many renames
+  // ago — the in-memory and audit lookups below cover a rename still
+  // finishing, and older ones.
+  const alias = await prisma.slugAlias.findUnique({ where: { slug: oldSlug }, include: { project: true } });
+  if (alias && alias.project.companyId === companyId) {
+    return { from: oldSlug, to: alias.project.slug, project: alias.project };
+  }
+
   const remembered = findRenameFrom(companyId, oldSlug);
   if (remembered && remembered.state !== "failed") {
     const project = await prisma.project.findFirst({ where: { slug: remembered.to, companyId } });

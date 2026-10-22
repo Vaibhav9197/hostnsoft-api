@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { claimProjectForCompany, claimOrphanProject } from "../services/projectClaim";
+import { resolveDeployTarget, claimOrphanProject } from "../services/projectClaim";
 import { actorPersonId, deployCredentialFields, resolveDeployActor } from "../services/deployActor";
 import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
@@ -23,6 +23,11 @@ export const internalProjectsRouter = Router();
 const claimSchema = z.object({
   ...deployCredentialFields,
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  // Optional: the app's stable id, from X-App-Id (the deployer keeps it in
+  // embarko.json after the first deploy). When present it decides the app
+  // and `slug` is only what the deployer believes it is called — see
+  // services/projectClaim.ts resolveDeployTarget.
+  appId: z.string().trim().min(1).max(64).regex(/^[a-z0-9]+$/).optional(),
   // Optional — see schema.prisma's Project.appType. hostnsoft-deploy has
   // already validated the X-App-Type header it came from; re-checked here
   // so nothing longer or stranger can reach the column another way.
@@ -48,7 +53,7 @@ const claimSchema = z.object({
 // usage. No requireProxyToken — the credential in the body is the
 // credential, same trust shape as the other /internal/* endpoints.
 internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
-  const { slug, appType, schedules: rawSchedules, ...credentials } = claimSchema.parse(req.body);
+  const { slug, appId, appType, schedules: rawSchedules, ...credentials } = claimSchema.parse(req.body);
 
   // Checked before the credential: a malformed list is the caller's mistake
   // whoever they are, and costs nothing to report.
@@ -84,6 +89,7 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     });
     if (
       (existing && isRenameInProgress(existing.id)) ||
+      (appId && isRenameInProgress(appId)) ||
       isRenameTargeting(resolved.actor.companyId, slug)
     ) {
       return res.status(409).json({
@@ -100,15 +106,16 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   // credential proved the company (a deploy token or a dashboard PAT)
   // makes no difference from here on — a project claimed through the
   // upload UI is an ordinary project of that company, with no record of
-  // how it was first deployed.
+  // how it was first deployed. An anonymous caller can't rename an app,
+  // so its appId (if any) has nothing to add and is ignored.
   const claim = resolved.actor.companyId
-    ? await claimProjectForCompany(resolved.actor.companyId, slug, resolved.actor.userId)
+    ? await resolveDeployTarget(resolved.actor.companyId, slug, appId, resolved.actor.userId)
     : await claimOrphanProject(slug);
 
   // Reserved before taken: a name that's both should say it's reserved,
   // since that's the one the caller can't resolve by trying again later.
   if (claim.rejected) {
-    return res.status(409).json({
+    return res.status(claim.rejected.status ?? 409).json({
       error: claim.rejected.reason,
       code: claim.rejected.code,
     });
@@ -186,7 +193,13 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
 
   res.json({
     projectId: project.id,
+    // The app's CURRENT name, which hostnsoft-deploy builds and routes
+    // under — not necessarily the slug it sent (see resolveDeployTarget).
     slug: project.slug,
+    // "created" only when this claim made the project (a fresh orphan
+    // included), so the deploy reply can say a new app was made.
+    action: claim.created || claim.claimCode ? "created" : "updated",
+    notices: claim.notices ?? [],
     isFreePlan,
     memoryMb: project.memoryMb,
     customDomains: activeDomains.map((d) => d.domain),

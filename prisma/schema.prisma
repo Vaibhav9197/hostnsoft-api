@@ -35,9 +35,11 @@ model DeployToken {
   @@index([companyId])
 }
 
-// One Project == one deployed app on hostnsoft-deploy. slug is immutable —
-// it's the subdomain hostnsoft-deploy routes by (<slug>.embarko.app)
-// and the X-App-Name it expects; name is just a display label.
+// One Project == one deployed app on hostnsoft-deploy. slug is the
+// subdomain hostnsoft-deploy routes by (<slug>.embarko.app) and the
+// X-App-Name it expects; it can change (services/projectSlugChange.ts), so
+// anything that must keep finding the app holds `id` instead. name is just
+// a display label.
 // companyId/createdBy are null only for orphan (anonymous) projects — see
 // docs/Anonymous-deploy-req.md — until a real deploy token claims them.
 model Project {
@@ -106,8 +108,26 @@ model Project {
   domains     Domain[]
   schedules   Schedule[]
   appDetails  AppDetails?
+  slugAliases SlugAlias[]
 
   @@index([companyId])
+}
+
+// A name an app used to have — one row per previous slug, written on every
+// successful address change (services/projectSlugChange.ts). A deploy or
+// agent call that still uses the old name reaches the renamed app instead
+// of creating a new one (services/projectClaim.ts resolveDeployTarget,
+// slugChangeFlow.ts findRenamedApp). Keyed by slug, so an old name stays
+// reserved for its app: nobody else can claim it, and renaming back to it
+// removes the row.
+model SlugAlias {
+  slug      String   @id
+  projectId String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
 }
 
 // A timed HTTP call into the app — see docs/schedules.md. The platform
