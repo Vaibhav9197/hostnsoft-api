@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
-import { requirePermission } from "../middleware/requirePermission";
+import { accessFor, requirePermission } from "../middleware/requirePermission";
 import { accessAllows } from "../lib/permissions";
 import { loadProjectContext } from "../middleware/projectContext";
 import { refuseForStaticApp } from "../middleware/refuseForStaticApp";
@@ -181,11 +181,14 @@ projectsRouter.post(
   }
 );
 
-// Only the apps the caller can see: a developer or viewer limited to
-// "selected" apps gets those, a Billing member none — the rest answer 404
+// Only the apps the caller can see: every app for a Member (they can view
+// them all), none for a Billing member — the rest answer 404
 // one by one (requirePermission), so the list must not name them either.
-projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, requirePermission("app.view"), async (req, res) => {
-  const access = req.access!;
+// Not gated on app.view itself: a member who sees no apps gets an empty
+// list, the same as an empty workspace, not an error page.
+projectsRouter.get("/companies/:companyId/projects", loadCompanyContext, async (req, res) => {
+  const access = await accessFor(req);
+  if (!access) return res.status(404).json({ error: "Workspace not found" });
   const projects = (await prisma.project.findMany({ where: { companyId: req.company!.id } })).filter((p) =>
     accessAllows(access, "app.view", p)
   );

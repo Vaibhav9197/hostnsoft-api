@@ -20,13 +20,13 @@ import { prisma } from "../lib/prisma";
 import { getUserByEmail, getUserById, isCompanyMember, listCompanyMembers } from "../lib/msg91";
 import {
   DEFAULT_ROLE,
-  ensureOwner,
+  startSetUp,
   parseInviteGrants,
   resolveAccess,
   ensureMemberRow,
   type Access,
-  type AppLevel,
-  type AppScope,
+  MEMBER_DEFAULT_LEVEL,
+  type AccessLevel,
   type InviteGrant,
   type Role,
 } from "../lib/permissions";
@@ -34,9 +34,6 @@ import { logAudit } from "./audit";
 
 export type RoleChange = {
   role: Role;
-  appScope?: AppScope;
-  canCreate?: boolean;
-  canDelete?: boolean;
 };
 
 // One member as every endpoint returns them — list, get-one, and the reply
@@ -48,11 +45,11 @@ export interface MemberView {
   role: Role;
   // false: no role was ever set, DEFAULT_ROLE applies.
   roleIsSet: boolean;
-  appScope: AppScope;
-  canCreate: boolean;
-  canDelete: boolean;
-  // Only meaningful with appScope "selected" (developer/viewer).
-  apps: { projectId: string; level: AppLevel }[];
+  // A Member's access to apps not listed in `apps` (null for other roles:
+  // Owner and Admin have full access to every app, Billing to none).
+  defaultAccess: AccessLevel | null;
+  // A Member's access to particular apps, above defaultAccess.
+  apps: { projectId: string; level: AccessLevel }[];
   isYou: boolean;
 }
 
@@ -79,22 +76,20 @@ async function mayManageOwnerish(actor: Access): Promise<boolean> {
   return actor.role === "admin" && (await liveOwnerIds(actor.companyId)).length === 0;
 }
 
-function describe(r: { role: string; appScope: string; canCreate: boolean; canDelete: boolean }): string {
-  if (r.role !== "developer" && r.role !== "viewer") return r.role;
-  const flags = r.role === "developer" ? `, create ${r.canCreate ? "yes" : "no"}, delete ${r.canDelete ? "yes" : "no"}` : "";
-  return `${r.role} (apps: ${r.appScope}${flags})`;
+function describe(r: { role: string }): string {
+  return r.role;
 }
 
-async function grantsByUser(companyId: string): Promise<Map<string, { projectId: string; level: AppLevel }[]>> {
+async function grantsByUser(companyId: string): Promise<Map<string, { projectId: string; level: AccessLevel }[]>> {
   const rows = await prisma.appGrant.findMany({
     where: { project: { companyId } },
     select: { userId: true, projectId: true, level: true },
     orderBy: { createdAt: "asc" },
   });
-  const out = new Map<string, { projectId: string; level: AppLevel }[]>();
+  const out = new Map<string, { projectId: string; level: AccessLevel }[]>();
   for (const g of rows) {
     const list = out.get(g.userId) ?? [];
-    list.push({ projectId: g.projectId, level: g.level === "manage" ? "manage" : "view" });
+    list.push({ projectId: g.projectId, level: g.level as AccessLevel });
     out.set(g.userId, list);
   }
   return out;
@@ -106,7 +101,7 @@ function toView(
   userId: string,
   person: { name?: string | null; email?: string | null } | null,
   row: Row | undefined,
-  apps: { projectId: string; level: AppLevel }[],
+  apps: { projectId: string; level: AccessLevel }[],
   callerId: string
 ): MemberView {
   return {
@@ -115,16 +110,18 @@ function toView(
     email: person?.email || null,
     role: (row?.role as Role | undefined) ?? DEFAULT_ROLE,
     roleIsSet: !!row,
-    appScope: row?.appScope === "selected" ? "selected" : "all",
-    canCreate: row?.canCreate ?? true,
-    canDelete: row?.canDelete ?? (row ? false : true),
-    apps,
+    defaultAccess: row?.role === "member" ? MEMBER_DEFAULT_LEVEL : null,
+    // Grants only count for a Member; anyone else's are left over from an
+    // earlier role and do nothing.
+    apps: row?.role === "member" ? apps : [],
     isYou: userId === callerId,
   };
 }
 
 export async function listMembers(companyId: string, callerId: string) {
-  await ensureOwner(companyId, callerId);
+  // Its first look at this workspace may be the members page: finish the
+  // roles setup first, so the roles shown are the ones people will have.
+  await startSetUp(companyId);
   const [proxyMembers, rows, grants, invites] = await Promise.all([
     listCompanyMembers(companyId),
     prisma.workspaceMember.findMany({ where: { companyId }, orderBy: { createdAt: "asc" } }),
@@ -135,7 +132,9 @@ export async function listMembers(companyId: string, callerId: string) {
   // Confirmed members nobody has given a role yet get their default now, so
   // the page shows the role they will actually have (permissions.ts).
   for (const u of proxyMembers ?? []) {
-    if (!rowByUser.has(u.id)) rowByUser.set(u.id, await ensureMemberRow(u.id, companyId, u.email));
+    if (rowByUser.has(u.id)) continue;
+    const row = await ensureMemberRow(u.id, companyId, u.email);
+    if (row) rowByUser.set(u.id, row);
   }
 
   let members: MemberView[];
@@ -179,7 +178,7 @@ export async function changeMember(
   if (!(await isCompanyMember(targetUserId, companyId))) {
     return { ok: false, err: { status: 404, code: "member_not_found", error: "That person isn't a member of this workspace." } };
   }
-  await ensureOwner(companyId, actor.userId);
+  await startSetUp(companyId);
 
   // Their access as it is now, through the same resolver a request uses —
   // so an invite waiting for them is applied first rather than clobbered.
@@ -208,17 +207,19 @@ export async function changeMember(
   }
 
   const before = await prisma.workspaceMember.findUnique({ where: { companyId_userId: { companyId, userId: targetUserId } } });
-  const data = {
-    role: change.role,
-    appScope: change.appScope ?? (before?.appScope as AppScope | undefined) ?? "all",
-    canCreate: change.canCreate ?? before?.canCreate ?? true,
-    canDelete: change.canDelete ?? before?.canDelete ?? false,
-  };
-  await prisma.workspaceMember.upsert({
-    where: { companyId_userId: { companyId, userId: targetUserId } },
-    update: data,
-    create: { companyId, userId: targetUserId, ...data },
-  });
+  const data = { role: change.role };
+  // Per-app access only means something for a Member; leaving that role
+  // clears it, so it can't quietly come back if they're made a Member again.
+  await prisma.$transaction([
+    prisma.workspaceMember.upsert({
+      where: { companyId_userId: { companyId, userId: targetUserId } },
+      update: data,
+      create: { companyId, userId: targetUserId, ...data },
+    }),
+    ...(change.role === "member"
+      ? []
+      : [prisma.appGrant.deleteMany({ where: { userId: targetUserId, project: { companyId } } })]),
+  ]);
 
   await logAudit({
     actorUserId: actor.userId,
@@ -282,9 +283,6 @@ function toInviteView(i: Awaited<ReturnType<typeof prisma.pendingInvite.findMany
     id: i.id,
     email: i.email,
     role: i.role as Role,
-    appScope: (i.appScope === "selected" ? "selected" : "all") as AppScope,
-    canCreate: i.canCreate,
-    canDelete: i.canDelete,
     apps: parseInviteGrants(i.grants),
     invitedBy: i.invitedBy,
     createdAt: i.createdAt,
@@ -328,10 +326,7 @@ export async function createInvite(actor: Access, input: InviteInput) {
 
   const data = {
     role: input.role,
-    appScope: input.appScope ?? "all",
-    canCreate: input.canCreate ?? true,
-    canDelete: input.canDelete ?? false,
-    grants: JSON.stringify(grants),
+    grants: JSON.stringify(input.role === "member" ? grants : []),
     invitedBy: actor.userId,
   };
   const invite = await prisma.pendingInvite.upsert({
@@ -353,7 +348,12 @@ export async function deleteInvite(actor: Access, inviteId: string) {
   const invite = await prisma.pendingInvite.findFirst({ where: { id: inviteId, companyId: actor.companyId } });
   if (!invite) return { ok: false as const, status: 404 as const };
   if (OWNERISH.has(invite.role as Role) && !(await mayManageOwnerish(actor))) {
-    return { ok: false as const, status: 403 as const };
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: "owner_required",
+      error: "Only an Owner can cancel an Owner or Admin invite.",
+    };
   }
   await prisma.pendingInvite.delete({ where: { id: invite.id } });
   await logAudit({

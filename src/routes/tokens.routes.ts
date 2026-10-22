@@ -21,10 +21,10 @@ export const tokensRouter = Router();
 tokensRouter.use(requireProxyToken);
 
 // Owners and Admins see and manage every token in the workspace; a
-// Developer (who has tokens.manage to connect their own AI agents) only the
-// ones they made. A token acts with its creator's permissions (see
+// Member (who has tokens.manage to connect their own AI) only the ones they
+// made. A token acts with its creator's permissions (see
 // middleware/requirePermission.ts), so someone else's token is someone
-// else's access — not something a Developer should be able to revoke, or
+// else's access — not something a Member should be able to revoke, or
 // rotate into a copy of their own.
 function tokenScope(req: Request) {
   return canManageAllTokens(req.access!)
@@ -96,8 +96,8 @@ tokensRouter.post(
     const { label, kind } = createTokenSchema.parse(req.body);
     // A workspace token acts as the whole workspace (services/tokenAccess.ts)
     // and outlives its maker, so only someone who already reaches every app
-    // and token here may make one — otherwise a Developer limited to some
-    // apps could mint their way to all of them.
+    // and token here may make one — otherwise a Member with full access to
+    // some apps could mint their way to all of them.
     if (kind === "workspace" && !canManageAllTokens(req.access!)) {
       return res.status(403).json({
         ...permissionDeniedBody("tokens.manage", req.access!),

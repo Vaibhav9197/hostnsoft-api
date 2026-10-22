@@ -317,9 +317,8 @@ export async function peekDeployTarget(companyId: string, slug: string, appId: s
 //
 // createdBy is the person behind the deploy: the signed-in user for the
 // dashboard's upload UI, or the deploy token's creator (services/
-// deployActor.ts actorPersonId) — since roles, that's who a Developer's
-// "may always delete apps they created" and "selected apps include the ones
-// they made" key on (lib/permissions.ts). "hostnsoft-deploy" remains only
+// deployActor.ts actorPersonId) — since roles, that's who gets full access
+// to what they made (lib/permissions.ts projectLevel). "hostnsoft-deploy" remains only
 // for callers that name nobody, and on apps created before this.
 export async function claimProjectForCompany(
   companyId: string,

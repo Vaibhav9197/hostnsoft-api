@@ -40,9 +40,7 @@ function workspaceTokenAccess(companyId: string, createdBy: string): Access {
     userId: createdBy,
     role: DEFAULT_ROLE,
     explicit: false,
-    appScope: "all",
-    canCreate: true,
-    canDelete: true,
+    defaultLevel: null,
     grants: new Map(),
   };
 }
@@ -103,7 +101,7 @@ export async function checkAppPermission(
     return false;
   }
   if (!accessAllows(access, permission, project)) {
-    res.status(403).json(permissionDeniedBody(permission, access));
+    res.status(403).json(permissionDeniedBody(permission, access, project));
     return false;
   }
   return true;
@@ -131,7 +129,7 @@ export function requirePermission(permission: Permission) {
       return notFound(req, res);
     }
     if (!accessAllows(access, permission, project)) {
-      return res.status(403).json(permissionDeniedBody(permission, access));
+      return res.status(403).json(permissionDeniedBody(permission, access, project));
     }
     next();
   };

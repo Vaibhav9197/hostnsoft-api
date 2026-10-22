@@ -7,6 +7,18 @@ import { requireProxyToken } from "../middleware/proxyToken";
 import { getCompanyById, listMyCompanies, createCompany, updateCompany, switchCompany } from "../lib/msg91";
 import { ensureBillingForCompany, syncBillingCustomerName } from "../services/billingCustomer";
 import { logAudit } from "../services/audit";
+import { accessAllows, resolveAccess } from "../lib/permissions";
+
+// The apps this person can see in the workspace — the same set
+// GET /companies/:companyId/projects lists, so the count never disagrees
+// with it or names apps a limited role can't see. Both callers already know
+// they're a member (proxy's own list, or loadCompanyContext).
+async function visibleProjectCount(userId: string, companyId: string): Promise<number> {
+  const access = await resolveAccess(userId, companyId, { membershipChecked: true });
+  if (!access) return 0;
+  const projects = await prisma.project.findMany({ where: { companyId }, select: { id: true, createdBy: true } });
+  return projects.filter((p) => accessAllows(access, "app.view", p)).length;
+}
 
 export const companiesRouter = Router();
 
@@ -27,10 +39,8 @@ companiesRouter.get("/companies", requireProxyToken, async (req, res) => {
   // consistent between list and get-one rather than only on the single
   // fetch. Cheap (a local DB count, not a proxy/network call), so no
   // reason to withhold it here the way health is withheld from the
-  // projects list.
-  const counts = await Promise.all(
-    companies.map((c) => prisma.project.count({ where: { companyId: c.id } }))
-  );
+  // projects list. Counts only the apps the caller can see.
+  const counts = await Promise.all(companies.map((c) => visibleProjectCount(req.userId!, c.id)));
 
   res.json(companies.map((c, i) => ({ ...c, projectCount: counts[i] })));
 });
@@ -57,12 +67,19 @@ companiesRouter.post("/companies", requireProxyToken, async (req, res) => {
   const company = await createCompany(req.proxyAuthToken!, input);
 
   // Whoever creates a workspace owns it. Written now, while we know for
-  // certain who that is, rather than left to ensureOwner's guesswork
-  // (lib/permissions.ts) the first time the workspace is used.
+  // certain who that is, rather than left to setUpWorkspaceRoles
+  // (lib/permissions.ts). They're its only member, so its setup is done:
+  // anyone added later without one of our invites starts as a Member.
   await prisma.workspaceMember.upsert({
     where: { companyId_userId: { companyId: company.id, userId: req.userId! } },
     update: { role: "owner" },
     create: { companyId: company.id, userId: req.userId!, role: "owner" },
+  });
+  const now = new Date();
+  await prisma.workspaceRoleSetup.upsert({
+    where: { companyId: company.id },
+    update: {},
+    create: { companyId: company.id, ownerDecidedAt: now, membersCapturedAt: now },
   });
   await logAudit({
     actorUserId: req.userId,
@@ -84,7 +101,7 @@ companiesRouter.post("/companies", requireProxyToken, async (req, res) => {
 companiesRouter.get("/companies/:companyId", requireProxyToken, loadCompanyContext, async (req, res) => {
   const [company, projectCount] = await Promise.all([
     getCompanyById(req.company!.id),
-    prisma.project.count({ where: { companyId: req.company!.id } }),
+    visibleProjectCount(req.userId!, req.company!.id),
   ]);
 
   // A member a moment ago, but the company no longer resolves — deleted on

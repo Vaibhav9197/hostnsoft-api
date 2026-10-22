@@ -93,6 +93,10 @@ async function admit(
   if (access.ok) {
     req.project = project;
     req.company = { id: project.companyId! };
+    // A user token's access just went through can(), which asked proxy
+    // whether its person is in this workspace — requirePermission needn't
+    // ask again on the same request.
+    if (req.actor!.kind === "user") req.membershipChecked = true;
     next();
     return true;
   }

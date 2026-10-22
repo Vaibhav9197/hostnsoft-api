@@ -61,9 +61,10 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                                       │   docs/schedules.md, added 2026-10-17)
                                       └─ current resource allocation (memory; cpu once enforced)
  AuditLog (actorUserId, companyId, projectId — all plain strings)
- WorkspaceMember (companyId, userId, role, appScope, canCreate, canDelete)   ← roles, added 2026-10-21
- AppGrant (projectId → Project, userId, level manage|view)                  ← per-app access
- PendingInvite (companyId, email, role, …, grants JSON)                      ← role waiting for an invitee
+ WorkspaceMember (companyId, userId, role owner|admin|member|billing)       ← roles, added 2026-10-21
+ AppGrant (projectId → Project, userId, level use|edit|full)                ← a Member's per-app access
+ PendingInvite (companyId, email, role, invitedBy, grants JSON)             ← role waiting for an invitee
+ WorkspaceRoleSetup (companyId, ownerDecidedAt, membersCapturedAt)          ← one-time roles setup per workspace
 ```
 
 **Authorization (changed 2026-10-21): proxy membership, then a local role.**
@@ -76,16 +77,28 @@ question 6 said would be needed. Two checks, in this order, on every request:
 1. **Is the caller in the workspace?** Proxy (`isCompanyMember`), uncached.
    Removing someone on proxy cuts them off immediately whatever rows exist
    here; a stale `WorkspaceMember` row is inert.
-2. **What may they do there?** `src/lib/permissions.ts`. Roles: `owner`
-   (everything incl. billing and Owners/Admins), `admin` (everything but
-   `billing.manage`; can't change Owners/Admins), `developer` (apps they reach;
-   `canCreate` default true, `canDelete` default false but always for apps they
-   created — `Project.createdBy`), `viewer` (`app.view`/`app.logs` only; env
-   var values hidden), `billing` (`billing.manage` only). Developer/Viewer have
-   `appScope` `all` or `selected` (+ `AppGrant` rows, `manage`|`view`). Eleven
-   permissions: `workspace.manage members.manage billing.manage tokens.manage
-   app.create app.delete app.deploy app.settings app.view app.logs app.move`
-   (`app.move` is for moving apps between workspaces; Owner/Admin).
+2. **What may they do there?** `src/lib/permissions.ts`. Workspace roles:
+   `owner` (everything, and the only one who can make/change/remove Owners and
+   Admins), `admin` (everything incl. `billing.manage`, full access to every
+   app; can't change Owners/Admins), `member` (`tokens.manage` for their own
+   tokens, `app.create` with
+   full access to apps they created — `Project.createdBy` — `use` on every
+   other app by default (`MEMBER_DEFAULT_LEVEL`), more per app via
+   `AppGrant`), `billing` (`billing.manage` only, no apps). Roles are named for
+   a workspace where non-engineers work on apps through their AI: what a Member
+   can do to an app is its access level, not a job title. Three access levels,
+   lowest first, each including the one below, told apart by what happens to
+   the live app: `use` "Can use" (`app.view` — use it, its Context and
+   history, comment; nothing changes), `edit` "Can edit" (+ `app.logs`,
+   `app.edit` — their AI makes changes as a preview for someone with full
+   access to approve; nothing changes on the live app until then), `full`
+   "Full access" (+ `app.deploy` — publishing: deploy, rollback, env-vars
+   apply — `app.settings`, `app.delete`, `app.move`). Previews aren't built
+   yet: `/me/permissions` reports `app.edit` but no route checks it, and a
+   "Can edit" person's AI is refused deploys (`permission_denied`) today.
+   Twelve permissions: `workspace.manage members.manage
+   billing.manage tokens.manage app.create app.delete app.deploy app.settings
+   app.view app.logs app.move app.edit`.
 
 Enforcement is one middleware, `requirePermission(perm)`
 (`src/middleware/requirePermission.ts`), after `loadCompanyContext`/
@@ -93,16 +106,23 @@ Enforcement is one middleware, `requirePermission(perm)`
 `loadAppBySlug` on every agent route; the full route → permission map is in
 the API reference's "Members & roles" section. An app the caller can't see is
 `404` (same rule as across workspaces); anything else is
-`403 {code: "permission_denied", permission, role}`. Lists (projects, company
+`403 {error, code: "permission_denied", permission, role, access?}` —
+`access` (their level on the app) when the refusal is about an app, and
+`error` written to be shown to the person as-is (`permissionDeniedBody`), e.g.
+`You don't have permission to publish this app (that needs full access to it) — your access to this app is "Can edit". A workspace Owner or Admin can change that.`
+with `access: "edit"`. Lists (projects, company
 analytics, Showcase submissions) are filtered to visible apps.
 
 **Agents and deploys.** Depends on the token's kind (see "Tokens" below):
 - A **user** token acts as its person: on agent routes
   (`requirePermission`, with `req.company` set by `loadAppBySlug` to the app's
   own workspace) and on deploys (`services/tokenAccess.ts`, via `can()`), with
-  that person's role in the app's workspace. It stops working there the moment
-  they lose access (`403 no_access`). Apps it creates record its person as
-  `Project.createdBy`, which "a Developer may delete apps they created" keys on.
+  that person's role and app access in the app's workspace. While they are
+  still a member but their access doesn't allow the call, it answers
+  `403 permission_denied` (naming their access); only once they are no longer
+  in the workspace does it answer `403 no_access`. Apps it creates record its
+  person as `Project.createdBy`, which "a Member has full access to apps they
+  created" keys on.
 - A **workspace** token acts as the workspace: full access to its own
   workspace's apps, not narrowed by its maker's role, and it keeps working after
   they leave — what CI needs. Only an Owner or Admin may create one. Tokens with
@@ -112,20 +132,24 @@ analytics, Showcase submissions) are filtered to visible apps.
   existing app, `app.create` for a new one or an adopted orphan), and again on
   the row-creating `/internal/deployments/record`.
 
-**Backward compatibility, lazy not migrated.** A member with no
-`WorkspaceMember` row gets one the first time their access is worked out
-(`permissions.ts writeDefaultRole`), decided once: **Admin** if this API saw
-them act in the workspace (an app, a token, an audit row) before the roles
-migration was applied — read from `_prisma_migrations.finished_at`, so no env
-var — otherwise **Developer** on all apps, which is what someone added straight
-through the proxy embed (skipping our invite) gets. The members page applies
-the same rule to everyone it lists. Each workspace's first
-Owner is written the first time its roles are resolved
-(`permissions.ts ensureOwner`): proxy's `company.created_by` if still a member
-(field unverified on this account), else the earliest local actor (project,
-token, audit row) still a member, else the first member to arrive. `POST
-/companies` writes the creator's Owner row up front. The migration does no
-backfill because creator and membership are proxy facts SQL can't read.
+**Backward compatibility: set up per workspace, not migrated.** Everyone in
+a workspace when roles arrive becomes an **Admin**, and its creator its
+**Owner** — nobody loses anything. SQL can't do that (creator and membership
+are proxy facts), so `permissions.ts setUpWorkspaceRoles` does it once per
+workspace, recorded in `WorkspaceRoleSetup`: (1) members — every member of
+`listCompanyMembers` written as Admin (`membersCapturedAt`); without a
+trustworthy list nothing is written and it is retried; (2) owner — proxy's
+`company.created_by` if still a member (field unverified on this account),
+else the earliest local actor (project, token, audit row) still a member,
+else nobody (an Admin may then name one; `ownerDecidedAt`). A proxy error
+stops a step and it is retried — never guessed past. It runs in the
+background on a workspace's first request (`startSetUp`, at most once per
+10 minutes per workspace per process), awaited by the members page, and in
+a sweep 20s after startup (`startRolesSetupSweep`). Until members are
+captured, a member with no row counts as Admin (computed, not written);
+after, a member with no row joined later without an invite and is written
+once as a **Member**. `POST /companies` writes the
+creator's Owner row and a completed setup row up front.
 `PendingInvite` is applied (and deleted) the first time the invitee's
 permissions are resolved in that workspace, matched by email — not at login,
 since login only knows proxy's *current* company.
@@ -136,9 +160,19 @@ roles — `listCompanyMembers` uses admin `getDetails?company_id=` without
 `user_id`, **unverified**, every row re-checked with `isCompanyMember` and the
 whole list discarded if any row fails; then `complete: false` and only known
 members are listed), `GET/PATCH …/members/:userId`, `PUT …/members/:userId/apps`,
-`POST/DELETE …/invites`, `GET /me/permissions?companyId=`. Guards
-(`services/workspaceRoles.ts`): only Owners make/change/un-make Owners and
-Admins; the last Owner who is still a member can't be demoted; if every Owner
+`POST/DELETE …/invites`, `GET /me/permissions?companyId=`. A member has one
+shape everywhere (list, get-one, PATCH and PUT replies):
+`{userId, name, email, role, roleIsSet, defaultAccess, apps: [{projectId,
+level}], isYou}` — `defaultAccess` is `"use"` for a Member and `null`
+otherwise, `apps` a Member's grants (`[]` for other roles). PATCH takes
+`{role}`; PUT `…/apps` takes `{grants: [{projectId, level}]}` and replaces
+the grants (both `members.manage`); `POST …/invites` takes `{email, role,
+grants?}` (grants kept for role `member` only). Guards
+(`services/workspaceRoles.ts`): inviting and cancelling invites need
+`members.manage` (Owner, Admin), like every other change here; only Owners
+make/change/un-make Owners and Admins (and change an Owner's/Admin's grants,
+or create/cancel Owner/Admin invites — `403 owner_required`); the last Owner who
+is still a member can't be demoted; if every Owner
 has left proxy, an Admin may make someone Owner. Every change is audited
 (`member.*`).
 
@@ -396,10 +430,10 @@ there.
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/tokens` `{label, kind?}` | `tokens.manage`; `kind: "workspace"` needs Owner or Admin | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. A workspace token reaches every app here and outlives its maker, so a Developer may only make `"user"` tokens. `kind` is `"user"` (default — "Just me" in the dashboard) or `"workspace"` ("Whole workspace"). Response: the list fields below plus `token`. |
-| `GET /companies/:companyId/tokens` | `tokens.manage` (Developers: own tokens only) | Lists tokens — `{id, label, tokenPrefix, prefix, createdAt, lastUsedAt, revokedAt, source, kind, createdBy}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange; `kind` is what it may reach, see below) — **never** the secret itself, not even truncated/partial, past this one-time creation response. Create, rotate and list return the same fields. A user token is listed in its default workspace, and that workspace's members can revoke it. |
-| `DELETE /companies/:companyId/tokens/:tokenId` | `tokens.manage` (Developers: own tokens only) | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
-| `POST /companies/:companyId/tokens/:tokenId/rotate` | `tokens.manage` (Developers: own tokens only) | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
+| `POST /companies/:companyId/tokens` `{label, kind?}` | `tokens.manage`; `kind: "workspace"` needs Owner or Admin | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. A workspace token reaches every app here and outlives its maker, so a Member may only make `"user"` tokens. `kind` is `"user"` (default — "Just me" in the dashboard) or `"workspace"` ("Whole workspace"). Response: the list fields below plus `token`. |
+| `GET /companies/:companyId/tokens` | `tokens.manage` (Members: own tokens only) | Lists tokens — `{id, label, tokenPrefix, prefix, createdAt, lastUsedAt, revokedAt, source, kind, createdBy}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange; `kind` is what it may reach, see below) — **never** the secret itself, not even truncated/partial, past this one-time creation response. Create, rotate and list return the same fields. A user token is listed in its default workspace, and that workspace's members can revoke it. |
+| `DELETE /companies/:companyId/tokens/:tokenId` | `tokens.manage` (Members: own tokens only) | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
+| `POST /companies/:companyId/tokens/:tokenId/rotate` | `tokens.manage` (Members: own tokens only) | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
 | `POST /connector/token` `{token}` | none (public) — `token` is a live `proxy_auth_token`, not a header | "The token endpoint" (Auth flow #3 above): exchanges a `proxy_auth_token` for a new Deploy Token scoped to the identity's current company. `source: "connector"`. Response: `{accessToken, tokenId, label, companyId, companyName, createdAt}`. `409 {error: "no_company"}` if the identity has no current company yet. |
 | `POST /connector/token/validate` `{token}` | none (public) — `token` is a Deploy Token | "The token-validation API" (Auth flow #3 above): `{valid: true, companyId, companyName, tokenId, label, lastUsedAt}` or `{valid: false}`. Separate from the internal `/internal/deploy-tokens/validate` used by `hostnsoft-deploy` — this one is meant for the open internet and resolves a human-readable `companyName`. |
 
@@ -458,11 +492,15 @@ Per project, viewable by any role with access to that project:
 - **Memory / CPU utilization** — current and probably historical
   resource usage
 - **Logs** — application logs (source: Nomad/Docker logs for the
-  allocation — decide streaming vs. paginated fetch)
+  allocation — decide streaming vs. paginated fetch). Need `app.logs`
+  (`app.logs` at `edit` — "Can edit" and up), not just `app.view`.
 
-Mutable, by members with `app.settings` on the app (Owner, Admin, a Developer
-with manage access); a Viewer sees which env vars are set but not their values
-(`value: null, valueHidden: true`):
+Mutable, by members with `app.settings` on the app (full access: Owner, Admin,
+a Member on apps they created or were given full access to). Env var values
+are visible only with `app.settings` too; anyone else who can see the app
+(`app.view` — a Member with use or edit access) gets the same
+rows with `value: null, valueHidden: true`, i.e. which keys are set (the
+agent `GET /apps/:appName/env-vars` never returns values, to anyone):
 - **Env vars** — CRUD on a project's environment variables. These need to
   actually reach the running app — likely means this service writes them
   into the Nomad job spec's `env` block and triggers a redeploy, or some
@@ -666,8 +704,11 @@ deploy execution capability in one place.
    (b) the invite email is still sent from the embed — proxy's `/c/addUser`
    (user-key, current company, email only per earlier research) could let
    `POST …/invites` send it, once its request shape is confirmed;
-   (c) — done: hostnsoft-deploy's status/logs send `appName` (and the
-   permission) to both validate endpoints and honour `appAccess`; (d) the proxy embed's own
+   (c) — done: hostnsoft-deploy's status/logs send `appName` and the
+   permission (`app.view` for status, `app.logs` for logs) to both validate
+   endpoints and honour `appAccess` (`verify-membership`'s `permission` is
+   optional, default `app.logs`; `deploy-tokens/validate`'s defaults to
+   `app.view`); (d) the proxy embed's own
    add/remove controls follow proxy's rules, not these roles (the dashboard
    only hides the embed from people without `members.manage`).
 7. **`hostnsoft-deploy` needs a "stop/decommission an app" endpoint** —

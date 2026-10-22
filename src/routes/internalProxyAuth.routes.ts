@@ -10,11 +10,14 @@ const verifySchema = z.object({
   proxyAuthToken: z.string().min(1),
   companyId: z.string().min(1),
   // Optional, added with roles: the app being read. When sent, the reply
-  // also says whether this person may read that app (app.logs — the same
-  // level as status), so a member limited to "selected" apps can't read
-  // the others' status/logs through hostnsoft-deploy. Omitted = the old
-  // membership-only answer, so an older hostnsoft-deploy keeps working.
+  // also says whether this person may read that app, so a member without
+  // the access can't read its status or logs through hostnsoft-deploy.
+  // Omitted = the old membership-only answer, so an older hostnsoft-deploy
+  // keeps working.
   appName: z.string().min(1).optional(),
+  // What the read is: app.view for status, app.logs for logs. Defaults to
+  // app.logs, the stricter one, for a hostnsoft-deploy that doesn't send it.
+  permission: z.enum(["app.view", "app.logs"]).default("app.logs"),
 });
 
 // Called by hostnsoft-deploy (server-to-server) so GET /apps/:appName/status,
@@ -37,7 +40,7 @@ internalProxyAuthRouter.post(
   "/internal/proxy-auth/verify-membership",
   requireInternalSecret,
   async (req, res) => {
-    const { proxyAuthToken, companyId, appName } = verifySchema.parse(req.body);
+    const { proxyAuthToken, companyId, appName, permission } = verifySchema.parse(req.body);
 
     let identity;
     try {
@@ -58,6 +61,6 @@ internalProxyAuthRouter.post(
 
     const isMember = await isCompanyMember(identity.id, companyId);
     if (!appName) return res.json({ valid: true, isMember });
-    res.json({ valid: true, isMember, appAccess: isMember && (await canReadApp(identity.id, companyId, appName)) });
+    res.json({ valid: true, isMember, appAccess: isMember && (await canReadApp(identity.id, companyId, appName, permission)) });
   }
 );

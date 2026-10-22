@@ -316,7 +316,18 @@ export async function isCompanyMember(userId: string, companyId: string): Promis
 // thousands of calls.
 const MEMBER_LIST_CAP = 200;
 
-export async function listCompanyMembers(companyId: string): Promise<ProxyUser[] | null> {
+// A verified list is kept briefly, so reopening the members page doesn't
+// repeat a membership call per member. Access never reads this list —
+// isCompanyMember above still decides every request — so a removal shows
+// here within a minute and takes effect at once.
+const MEMBER_LIST_TTL_MS = 60 * 1000;
+const memberListCache = new TtlCache<ProxyUser[] | null>("company-members", MEMBER_LIST_TTL_MS);
+
+export function listCompanyMembers(companyId: string): Promise<ProxyUser[] | null> {
+  return memberListCache.getOrLoad(companyId, () => loadCompanyMembers(companyId), (list) => (list ? MEMBER_LIST_TTL_MS : 0));
+}
+
+async function loadCompanyMembers(companyId: string): Promise<ProxyUser[] | null> {
   const pageSize = 100;
   const rows: ProxyUser[] = [];
   try {
@@ -360,7 +371,7 @@ export async function listCompanyMembers(companyId: string): Promise<ProxyUser[]
 }
 
 // Who made the workspace, when proxy says. Used once per workspace, to pick
-// its first Owner (permissions.ts ensureOwner). `created_by` is the field
+// its first Owner (permissions.ts setUpWorkspaceRoles). `created_by` is the field
 // every sibling app on this proxy derives "admin" from, but it is
 // unverified here — so it's only a hint, and anything unexpected is null.
 export async function getCompanyCreatorId(companyId: string): Promise<string | null> {

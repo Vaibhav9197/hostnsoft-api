@@ -525,7 +525,7 @@
 
   <main>
     <div class="page-head">
-      <div class="eyebrow" id="overview">API Reference · v0.4</div>
+      <div class="eyebrow" id="overview">API Reference · v0.6</div>
       <h1>Embarko API</h1>
       <p class="lede">
         The multi-tenant management API: companies, projects, deployments, environment
@@ -589,8 +589,8 @@
       </div>
 
       <div class="callout">
-        <div class="eyebrow">Roles (changed 2026-10-21)</div>
-        <p>Two checks on every workspace request. <strong>Membership</strong> is still MSG91's, asked fresh every time — removing someone there cuts them off at once. <strong>What a member may do</strong> is this API's: each member has a role (Owner, Admin, Developer, Viewer, Billing) and, for Developer/Viewer, access to all apps or chosen ones. A member with no role set is an Admin, which is what everyone was before roles. Refusals are <code>403 permission_denied</code> with <code>{permission, role}</code>; an app you can't see is a plain <code>404</code>. Use <a href="#ep-me-permissions">GET /me/permissions</a> to hide what the person can't do — the API enforces it either way. Full table: <a href="#roles">Roles &amp; permissions</a>.</p>
+        <div class="eyebrow">Roles (changed 2026-10-22)</div>
+        <p>Two checks on every workspace request. <strong>Membership</strong> is still MSG91's, asked fresh every time — removing someone there cuts them off at once. <strong>What a member may do</strong> is this API's: each member has a workspace role (Owner, Admin, Member, Billing) and, as a Member, an access level per app — <code>use</code> on every app by default, more where someone gave it, and full access to apps they created. Owners and Admins have full access to every app; Billing has none. A member with no role set yet is an Admin, which is what everyone was before roles. Refusals are <code>403 permission_denied</code> with <code>{permission, role}</code> (plus <code>access</code>, their level on that app, when it's about an app); an app you can't see is a plain <code>404</code>. Use <a href="#ep-me-permissions">GET /me/permissions</a> to hide what the person can't do — the API enforces it either way. Full table: <a href="#roles">Roles &amp; permissions</a>.</p>
       </div>
 
       <div class="callout">
@@ -629,8 +629,8 @@
           <tr><td class="code warn">400</td><td>Body failed validation (see shape above), a missing/malformed header, or a code-level reject (e.g. rollback target has no image).</td></tr>
           <tr><td class="code warn">401</td><td>Missing/invalid/expired <code>proxy_auth_token</code> — <code>code: "PROXY_TOKEN_MISSING"</code> (well, that one's actually 400 — see below) or <code>"PROXY_TOKEN_REJECTED"</code>.</td></tr>
           <tr><td class="code warn">402</td><td>Billing only — a paid plan was requested with no payment method on file (<code>BILLING_PAYMENT_METHOD_REQUIRED</code>).</td></tr>
-          <tr><td class="code warn">403</td><td>Your role doesn't allow this — <code>code: "permission_denied"</code>, with <code>permission</code> (e.g. <code>"app.deploy"</code>) and your <code>role</code>; the <code>error</code> text is written to show a person as-is. Also <code>owner_required</code> (only an Owner may change Owners/Admins) on the member endpoints; and <code>no_access</code> on the agent API and deploys, when a personal token's person can no longer reach the app's workspace. See <a href="#roles">Roles</a>.</td></tr>
-          <tr><td class="code warn">404</td><td>The company/project/token/domain/deployment doesn't exist, <em>or</em> you're not a member of that company — the API intentionally doesn't distinguish those two, so it never confirms a company's existence to a non-member. Same inside a workspace: an app your role doesn't let you see is a 404, not a 403.</td></tr>
+          <tr><td class="code warn">403</td><td>Your role doesn't allow this — <code>code: "permission_denied"</code>, with <code>permission</code> (e.g. <code>"app.deploy"</code>), your <code>role</code>, and <code>access</code> (your level on the app, when it's about one); the <code>error</code> text is written to show a person as-is. Also <code>owner_required</code> (only an Owner may change Owners/Admins) on the member endpoints; and <code>no_access</code> on the agent API and deploys, when a personal token's person can no longer reach the app's workspace. See <a href="#roles">Roles</a>.</td></tr>
+          <tr><td class="code warn">404</td><td>The company/project/token/domain/deployment doesn't exist, <em>or</em> you're not a member of that company — the API intentionally doesn't distinguish those two, so it never confirms a company's existence to a non-member. Same inside a workspace: an app you have no access to is a 404, not a 403.</td></tr>
           <tr><td class="code warn">409</td><td>Conflict — e.g. a project-name slug that's already taken, a domain already registered elsewhere, billing customer already exists, or already on the requested plan.</td></tr>
           <tr><td class="code warn">422</td><td>Understood the request, semantically can't do it — e.g. rolling back to a deployment that never succeeded, or a custom domain's DNS not yet pointing at the platform.</td></tr>
           <tr><td class="code warn">502 / 503</td><td>An upstream service (identity, billing, or the deploy pipeline) failed or was unreachable. Worth a retry; not something the caller did wrong.</td></tr>
@@ -775,7 +775,7 @@
 <span class="tok-punc">]</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note info">No role on each entry — a role is per workspace; read it with <a href="#ep-me-permissions">GET /me/permissions?companyId=</a>. <code>projectCount</code> is the workspace's total, not just the apps your role lets you see.</div>
+        <div class="endpoint-note info">No role on each entry — a role is per workspace; read it with <a href="#ep-me-permissions">GET /me/permissions?companyId=</a>. <code>projectCount</code> counts only the apps you can see — the same set <a href="#ep-projects-list">GET …/projects</a> lists (and the same on get-one).</div>
       </article>
 
       <article class="endpoint" id="ep-companies-create">
@@ -833,26 +833,29 @@
 
     <section class="resource" id="roles">
       <div class="resource-head"><h2>Members &amp; roles <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
-      <p class="resource-intro">What each member may do in a workspace. Who is in the workspace stays MSG91's (checked on every request); roles are this API's. Five roles: <strong>Owner</strong> (everything, incl. billing and the Owners/Admins), <strong>Admin</strong> (everything but billing and Owners), <strong>Developer</strong> (deploys and changes the apps they reach; <code>canCreate</code> default on, <code>canDelete</code> default off but always for apps they created), <strong>Viewer</strong> (status, logs, history, metrics; env var values hidden), <strong>Billing</strong> (billing only, no apps). Developer and Viewer reach <code>"all"</code> apps or <code>"selected"</code> ones, each <code>"manage"</code> or <code>"view"</code> (a Viewer is always view). A member with no role set is an Admin; each workspace's first Owner is its creator, or failing that its earliest member on record. A workspace always keeps one Owner who is still a member.</p>
-      <p class="resource-intro"><strong>Agents:</strong> a personal deploy token acts with its person's role in the app's workspace, on every agent call and every deploy, and answers <code>403 no_access</code> once they can't reach that workspace. A workspace token acts as the workspace (full access to its own apps, whoever made it, still working after they leave); only an Owner or Admin can create one. A dashboard upload is checked against the signed-in person's role. Every role change is audited (<code>member.role_change</code>, <code>member.app_access</code>, <code>member.invite</code>, <code>member.invite_applied</code>, <code>member.invite_cancel</code>).</p>
+      <p class="resource-intro">What each member may do in a workspace. Who is in the workspace stays MSG91's (checked on every request); roles are this API's. Four workspace roles: <strong>Owner</strong> (everything, and the only role that can make, change or remove Owners and Admins), <strong>Admin</strong> (everything, billing included, with full access to every app — but can't change Owners or Admins), <strong>Member</strong> (everyone else — what they can do to each app is their access level on it, not a job title: someone in finance or sales works on apps through their AI as much as an engineer does), <strong>Billing</strong> (billing only, no apps). A Member can make their own deploy tokens, add new apps (and has full access to every app they created), and can use every app in the workspace by default (<code>defaultAccess: "use"</code>); an Owner or Admin gives them more on particular apps.</p>
+      <p class="resource-intro"><strong>Access levels</strong> — three, lowest to highest, each including everything below it, told apart by what happens to the live app: <code>use</code> (&ldquo;Can use&rdquo;: use the app, its Context and history, comment — status, metrics, which env vars are set; nothing changes on the live app), <code>edit</code> (&ldquo;Can edit&rdquo;: + logs, and their AI makes changes as a preview for someone with full access to approve; nothing changes on the live app until then), <code>full</code> (&ldquo;Full access&rdquo;: + publishing — deploy, rollback, applying env vars — settings and env var values, domains, delete, move). Previews aren't built yet, so <code>app.edit</code> is reported by <a href="#ep-me-permissions">/me/permissions</a> but no route checks it, and a &ldquo;Can edit&rdquo; person's AI is refused deploys (<code>permission_denied</code>) today — only Full access can publish.</p>
+      <p class="resource-intro"><strong>Who gets what at setup:</strong> everyone in a workspace when its roles are set up becomes an Admin, and its creator its Owner (or, failing that, its earliest member on record); someone who joins later without an invite starts as a Member. Until a workspace is set up, a member with no role counts as an Admin. A workspace always keeps one Owner who is still a member.</p>
+      <p class="resource-intro"><strong>Agents:</strong> a personal deploy token acts with its person's role and app access in the app's workspace, on every agent call and every deploy, and answers <code>403 permission_denied</code> (the <code>error</code> names the action and their access to that app) when they're still a member but their access doesn't allow it, or <code>403 no_access</code> only once they're no longer in that workspace. A workspace token acts as the workspace (full access to its own apps, whoever made it, still working after they leave); only an Owner or Admin can create one. A dashboard upload is checked against the signed-in person's access. Every change is audited (<code>member.role_change</code>, <code>member.app_access</code>, <code>member.invite</code>, <code>member.invite_applied</code>, <code>member.invite_cancel</code>).</p>
 
       <table class="status-table">
         <thead><tr><th>Permission</th><th>Who has it</th><th>Required by</th></tr></thead>
         <tbody>
           <tr><td class="code">workspace.manage</td><td>Owner, Admin</td><td>PATCH /companies/:companyId; Showcase event pages (create, change, delete, review listings)</td></tr>
-          <tr><td class="code">members.manage</td><td>Owner, Admin (Admins can't touch Owners/Admins)</td><td>PATCH …/members/:userId, PUT …/members/:userId/apps, POST/DELETE …/invites</td></tr>
-          <tr><td class="code">billing.manage</td><td>Owner</td><td>every /billing route except GET …/billing (plan status, any member)</td></tr>
-          <tr><td class="code">tokens.manage</td><td>Owner, Admin; Developer (own tokens only)</td><td>all /tokens routes</td></tr>
-          <tr><td class="code">app.create</td><td>Owner, Admin; Developer if canCreate</td><td>POST …/projects, POST …/orphans/claim, a deploy that makes a new app</td></tr>
-          <tr><td class="code">app.delete</td><td>Owner, Admin; Developer on a manageable app if canDelete, or any app they created</td><td>DELETE …/projects/:projectId, agent DELETE /apps/:name</td></tr>
-          <tr><td class="code">app.deploy</td><td>Owner, Admin; Developer (manage level)</td><td>rollback (dashboard + agent), a deploy to an existing app</td></tr>
-          <tr><td class="code">app.settings</td><td>Owner, Admin; Developer (manage level)</td><td>rename, web address, memory, env var writes, domains, Showcase submissions, agent schedule writes/runs, agent env apply</td></tr>
-          <tr><td class="code">app.view</td><td>everyone but Billing, on apps they reach</td><td>project get/list (filtered), deployments, env var list (values hidden without app.settings), domains list, schedules, analytics, slug status, Showcase lists</td></tr>
-          <tr><td class="code">app.logs</td><td>same as app.view</td><td>status &amp; logs on the deploy endpoint (once the deploy service sends the app name — see below)</td></tr>
-          <tr><td class="code">app.move</td><td>Owner, Admin</td><td>reserved for moving apps between workspaces</td></tr>
+          <tr><td class="code">members.manage</td><td>Owner, Admin (only an Owner can change Owners/Admins)</td><td>PATCH …/members/:userId, PUT …/members/:userId/apps, POST …/invites, DELETE …/invites/:inviteId</td></tr>
+          <tr><td class="code">billing.manage</td><td>Owner, Admin, Billing</td><td>every /billing route except GET …/billing (plan status, any member)</td></tr>
+          <tr><td class="code">tokens.manage</td><td>Owner, Admin; Member (own tokens only, personal kind only)</td><td>all /tokens routes</td></tr>
+          <tr><td class="code">app.create</td><td>Owner, Admin, Member</td><td>POST …/projects, POST …/orphans/claim, a deploy that makes a new app, a move (in the target workspace)</td></tr>
+          <tr><td class="code">app.view</td><td>Can use and up — every Member on every app by default; Owner, Admin</td><td>project get/list (filtered), deployments list/get, env var list (values hidden without app.settings), domains list, schedules, analytics, slug status, Showcase lists, every agent GET, status on the deploy endpoint</td></tr>
+          <tr><td class="code">app.logs</td><td>Can edit and up</td><td>logs on the deploy endpoint</td></tr>
+          <tr><td class="code">app.edit</td><td>Can edit and up</td><td>nothing yet (previews not built) — reported by /me/permissions</td></tr>
+          <tr><td class="code">app.deploy</td><td>Full access (Owner, Admin, a Member on apps they created or were given full access to)</td><td>publishing: a deploy to an existing app, rollback (dashboard + agent), agent env-vars apply</td></tr>
+          <tr><td class="code">app.settings</td><td>Full access</td><td>rename, web address, memory, env var writes and values, domains add/verify/remove, Showcase submissions, agent PATCH /apps/:name, agent schedule writes/runs, agent env-vars apply</td></tr>
+          <tr><td class="code">app.delete</td><td>Full access</td><td>DELETE …/projects/:projectId, agent DELETE /apps/:name</td></tr>
+          <tr><td class="code">app.move</td><td>Full access</td><td>POST …/projects/:projectId/move (plus <code>app.create</code> in the target)</td></tr>
         </tbody>
       </table>
-      <div class="endpoint-note info">Refusal shape, every surface: <code>403 {"error": "You don't have permission to deploy this app — your role in this workspace is Viewer. A workspace Owner or Admin can change that.", "code": "permission_denied", "permission": "app.deploy", "role": "viewer"}</code>. Status &amp; logs on the deploy endpoint aren't role-checked yet: <code>/internal/deploy-tokens/validate</code> and <code>/internal/proxy-auth/verify-membership</code> accept an optional <code>appName</code> and then answer <code>appAccess</code>, which the deploy service has to start sending and honouring.</div>
+      <div class="endpoint-note info">Refusal shape, every surface: <code>403 {"error": "You don't have permission to publish this app (that needs full access to it) — your access to this app is \"Can edit\". A workspace Owner or Admin can change that.", "code": "permission_denied", "permission": "app.deploy", "role": "member", "access": "edit"}</code>. <code>access</code> is there only when the refusal is about an app; otherwise the <code>error</code> names the role instead. Status &amp; logs on the deploy endpoint are checked too: the deploy service sends <code>appName</code> and <code>permission</code> (<code>"app.view"</code> for status, <code>"app.logs"</code> for logs) to <code>/internal/deploy-tokens/validate</code> and <code>/internal/proxy-auth/verify-membership</code>, which answer <code>appAccess</code>.</div>
 
       <article class="endpoint" id="ep-members-list">
         <div class="endpoint-head">
@@ -860,29 +863,37 @@
           <span class="path">/companies/:companyId/members</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Everyone in the workspace with role and app access, plus roles waiting for invited people. Any member may read it. The member list comes from MSG91; when it can't be read reliably, <code>complete</code> is <code>false</code> and only people with a role here (plus you) are listed.</p>
+        <p class="endpoint-desc">Everyone in the workspace with role and app access, plus roles waiting for invited people. Any member may read it. The member list comes from MSG91; when it can't be read reliably, <code>complete</code> is <code>false</code> and only people with a role here (plus you) are listed. Per member: <code>defaultAccess</code> is a Member's level on apps not in <code>apps</code> (<code>"use"</code>; <code>null</code> for other roles), and <code>apps</code> is the access a Member was given on particular apps (<code>[]</code> for other roles — Owners and Admins have full access to every app, Billing none). Apps a Member created aren't listed; they always have full access to those.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"members"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
+      <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_1&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;Ravi&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;ravi@acme.dev&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;owner&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
+      <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+      <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[]</span><span class="tok-punc">,</span>
+      <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span>
+    <span class="tok-punc">}</span><span class="tok-punc">,</span>
+    <span class="tok-punc">{</span>
       <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;Asha&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-      <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-      <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+      <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
         <span class="tok-punc">{</span>
           <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-          <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span>
+          <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span>
         <span class="tok-punc">}</span><span class="tok-punc">,</span>
         <span class="tok-punc">{</span>
           <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-          <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+          <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
         <span class="tok-punc">}</span>
       <span class="tok-punc">]</span><span class="tok-punc">,</span>
       <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span>
@@ -893,13 +904,15 @@
     <span class="tok-punc">{</span>
       <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_inv1&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;viewer&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;all&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-      <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
-      <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[]</span><span class="tok-punc">,</span>
+      <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+        <span class="tok-punc">{</span>
+          <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
+          <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
+        <span class="tok-punc">}</span>
+      <span class="tok-punc">]</span><span class="tok-punc">,</span>
       <span class="tok-key">"invitedBy"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;2026-10-21T10:00:00.000Z&quot;</span>
+      <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;2026-10-22T10:00:00.000Z&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span>
 <span class="tok-punc">}</span></code></pre>
@@ -921,19 +934,17 @@
   <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;Asha&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span>
     <span class="tok-punc">}</span><span class="tok-punc">,</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span>
@@ -948,15 +959,12 @@
           <span class="path">/companies/:companyId/members/:userId</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
         </div>
-        <p class="endpoint-desc">Change a member's role, app scope and Developer flags. Omitted fields keep their value. Returns the member.</p>
+        <p class="endpoint-desc">Change a member's workspace role: <code>"owner"</code>, <code>"admin"</code>, <code>"member"</code> or <code>"billing"</code>. App access is set separately (<a href="#ep-members-apps">PUT …/apps</a>); grants a Member already had are kept but do nothing under another role. Returns the member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
           <div class="panel">
@@ -965,19 +973,17 @@
   <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;Asha&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span>
     <span class="tok-punc">}</span><span class="tok-punc">,</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span>
@@ -993,7 +999,7 @@
           <span class="path">/companies/:companyId/members/:userId/apps</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
         </div>
-        <p class="endpoint-desc">Replace the apps a member reaches when their scope is <code>&quot;selected&quot;</code>. Every project must be in this workspace (<code>400 unknown_app</code> otherwise; nothing is saved). Returns the member.</p>
+        <p class="endpoint-desc">Replace a Member's access to particular apps — the whole list, so send every app they should have more than <code>use</code> on; an app left out falls back to <code>use</code>. <code>level</code> is <code>"use"</code>, <code>"edit"</code> or <code>"full"</code>. Only counts while their role is Member. Every project must be in this workspace (<code>400 unknown_app</code> otherwise; nothing is saved). Changing an Owner's or Admin's grants needs an Owner (<code>403 owner_required</code>). Returns the member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1001,11 +1007,11 @@
   <span class="tok-key">"grants"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span>
     <span class="tok-punc">}</span><span class="tok-punc">,</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span>
 <span class="tok-punc">}</span></code></pre>
@@ -1016,19 +1022,17 @@
   <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"name"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;Asha&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span>
     <span class="tok-punc">}</span><span class="tok-punc">,</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span>
@@ -1041,20 +1045,19 @@
         <div class="endpoint-head">
           <span class="method post">POST</span>
           <span class="path">/companies/:companyId/invites</span>
-          <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
+          <span class="role-chip">proxy_auth_token</span> <span class="role-chip">members.manage</span>
         </div>
-        <p class="endpoint-desc">Records the role someone gets when they join. It does <strong>not</strong> send the invite email — the dashboard sends that from the MSG91 embed right after. The role is applied the first time that person makes a request in this workspace (matched by email). Inviting the same email again replaces the waiting role.</p>
+        <p class="endpoint-desc">Records the role (and, for a Member, app access) someone gets when they join. Owner and Admin only (<code>members.manage</code>). It does <strong>not</strong> send the invite email — the dashboard sends that from the MSG91 embed right after. Applied the first time that person makes a request in this workspace (matched by email); apps deleted in the meantime are skipped. Inviting the same email again replaces the waiting role. <code>grants</code> is optional and kept only when <code>role</code> is <code>"member"</code>; the reply's <code>apps</code> is what was kept.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;viewer&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"grants"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;view&quot;</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span>
 <span class="tok-punc">}</span></code></pre>
@@ -1064,26 +1067,28 @@
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_inv1&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;viewer&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;all&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
-  <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[]</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+    <span class="tok-punc">{</span>
+      <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span>
+    <span class="tok-punc">}</span>
+  <span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"invitedBy"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_1&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;2026-10-21T10:00:00.000Z&quot;</span>
+  <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;2026-10-22T10:00:00.000Z&quot;</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note"><code>409 already_member</code> — they're already in the workspace; change their role instead. <code>403 owner_required</code> — inviting an Owner or Admin needs an Owner. Someone who left and is invited back loses their old role.</div>
+        <div class="endpoint-note"><code>403 permission_denied</code> — the caller isn't an Owner or Admin. <code>409 already_member</code> — they're already in the workspace; change their role instead. <code>403 owner_required</code> — inviting an Owner or Admin needs an Owner. <code>400 unknown_app</code> — a granted app isn't in this workspace. Someone who left and is invited back loses their old role and app access.</div>
       </article>
 
       <article class="endpoint" id="ep-invites-delete">
         <div class="endpoint-head">
           <span class="method delete">DELETE</span>
           <span class="path">/companies/:companyId/invites/:inviteId</span>
-          <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
+          <span class="role-chip">proxy_auth_token</span> <span class="role-chip">members.manage</span>
         </div>
-        <p class="endpoint-desc">Forget a waiting role. <code>204</code>. Doesn't withdraw the MSG91 invite email.</p>
+        <p class="endpoint-desc">Forget a waiting role. <code>204</code>. Doesn't withdraw the MSG91 invite email. Needs <code>members.manage</code> (Owner, Admin). Cancelling an Owner or Admin invite still needs an Owner (<code>403 owner_required</code>). <code>404</code> if there's no such invite.</p>
       </article>
 
       <article class="endpoint" id="ep-me-permissions">
@@ -1092,35 +1097,55 @@
           <span class="path">/me/permissions?companyId=:companyId</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">What the signed-in person may do in one workspace, so a client can hide what they can't. <code>permissions</code> is workspace-level (&quot;could they do this to some app&quot;); <code>apps</code> lists every app they can see with what they can do to it. <code>404</code> if not a member.</p>
+        <p class="endpoint-desc">What the signed-in person may do in one workspace, so a client can hide what they can't. <code>permissions</code> is workspace-level (&quot;could they do this to some app&quot; — a Member always could, on an app they create); <code>apps</code> lists every app they can see with their <code>level</code> on it and what that lets them do. <code>defaultAccess</code> is a Member's level on apps nobody gave them more access to (<code>null</code> for other roles). <code>404</code> if not a member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"companyId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;co_4a1...&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;developer&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"appScope"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;selected&quot;</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canCreate"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"canDelete"</span><span class="tok-punc">:</span> <span class="tok-bool">false</span><span class="tok-punc">,</span>
+  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"permissions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-str">&quot;tokens.manage&quot;</span><span class="tok-punc">,</span>
     <span class="tok-str">&quot;app.create&quot;</span><span class="tok-punc">,</span>
+    <span class="tok-str">&quot;app.delete&quot;</span><span class="tok-punc">,</span>
     <span class="tok-str">&quot;app.deploy&quot;</span><span class="tok-punc">,</span>
     <span class="tok-str">&quot;app.settings&quot;</span><span class="tok-punc">,</span>
     <span class="tok-str">&quot;app.view&quot;</span><span class="tok-punc">,</span>
-    <span class="tok-str">&quot;app.logs&quot;</span>
+    <span class="tok-str">&quot;app.logs&quot;</span><span class="tok-punc">,</span>
+    <span class="tok-str">&quot;app.move&quot;</span><span class="tok-punc">,</span>
+    <span class="tok-str">&quot;app.edit&quot;</span>
   <span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
-      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;manage&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;full&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"permissions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+        <span class="tok-str">&quot;app.delete&quot;</span><span class="tok-punc">,</span>
         <span class="tok-str">&quot;app.deploy&quot;</span><span class="tok-punc">,</span>
         <span class="tok-str">&quot;app.settings&quot;</span><span class="tok-punc">,</span>
         <span class="tok-str">&quot;app.view&quot;</span><span class="tok-punc">,</span>
-        <span class="tok-str">&quot;app.logs&quot;</span>
+        <span class="tok-str">&quot;app.logs&quot;</span><span class="tok-punc">,</span>
+        <span class="tok-str">&quot;app.move&quot;</span><span class="tok-punc">,</span>
+        <span class="tok-str">&quot;app.edit&quot;</span>
+      <span class="tok-punc">]</span>
+    <span class="tok-punc">}</span><span class="tok-punc">,</span>
+    <span class="tok-punc">{</span>
+      <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;edit&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"permissions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+        <span class="tok-str">&quot;app.view&quot;</span><span class="tok-punc">,</span>
+        <span class="tok-str">&quot;app.logs&quot;</span><span class="tok-punc">,</span>
+        <span class="tok-str">&quot;app.edit&quot;</span>
+      <span class="tok-punc">]</span>
+    <span class="tok-punc">}</span><span class="tok-punc">,</span>
+    <span class="tok-punc">{</span>
+      <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app3&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"level"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"permissions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
+        <span class="tok-str">&quot;app.view&quot;</span>
       <span class="tok-punc">]</span>
     <span class="tok-punc">}</span>
   <span class="tok-punc">]</span>
@@ -1386,10 +1411,10 @@
           <span class="path">/companies/:companyId/projects/:projectId/env-vars</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">All env vars for the project. Values are in plaintext for anyone allowed to change the app's settings (<code>app.settings</code>); anyone else who can see the app (a Viewer, a view-only app grant) gets the same rows with <code>value: null</code> and <code>valueHidden: true</code>. Every row carries <code>valueHidden</code>, and <a href="#ep-envvars-put">PUT</a> returns the same shape.</p>
+        <p class="endpoint-desc">All env vars for the project. Values are in plaintext for anyone with full access to the app (<code>app.settings</code> — Owners, Admins, a Member on apps they created or were given full access to); anyone else who can see the app (a Member with use or edit access) gets the same rows with <code>value: null</code> and <code>valueHidden: true</code>. Every row carries <code>valueHidden</code>, and <a href="#ep-envvars-put">PUT</a> returns the same shape.</p>
         <div class="panels">
           <div class="panel">
-            <div class="panel-head"><span class="label">200 Response (Viewer)</span><button class="copy-btn" data-copy>Copy</button></div>
+            <div class="panel-head"><span class="label">200 Response (without full access)</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">[</span> <span class="tok-punc">{</span> <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">"cm..."</span><span class="tok-punc">,</span> <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">"cm..."</span><span class="tok-punc">,</span> <span class="tok-key">"key"</span><span class="tok-punc">:</span> <span class="tok-str">"API_URL"</span><span class="tok-punc">,</span> <span class="tok-key">"value"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span> <span class="tok-key">"valueHidden"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span> <span class="tok-key">"createdBy"</span><span class="tok-punc">:</span> <span class="tok-str">"u_1"</span><span class="tok-punc">,</span> <span class="tok-key">"updatedBy"</span><span class="tok-punc">:</span> <span class="tok-str">"u_1"</span><span class="tok-punc">,</span> <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"…"</span><span class="tok-punc">,</span> <span class="tok-key">"updatedAt"</span><span class="tok-punc">:</span> <span class="tok-str">"…"</span> <span class="tok-punc">}</span> <span class="tok-punc">]</span></code></pre>
           </div>
         </div>
@@ -1609,7 +1634,7 @@
           <span class="path">/companies/:companyId/tokens</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Metadata only — the raw token itself is never retrievable after creation, not even truncated, past the one-time create/rotate response above. Owners and Admins see every token in the workspace; a Developer sees (and can revoke or rotate) only the ones they made — someone else's token is a <code>404</code> to them. A token always acts with the role of the person who made it.</p>
+        <p class="endpoint-desc">Metadata only — the raw token itself is never retrievable after creation, not even truncated, past the one-time create/rotate response above. Owners and Admins see every token in the workspace; a Member sees (and can revoke or rotate) only the ones they made — someone else's token is a <code>404</code> to them. A personal (<code>"user"</code>) token always acts with the role and app access of the person who made it; a <code>"workspace"</code> token acts as the workspace.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1642,7 +1667,7 @@
           <span class="role-chip">proxy_auth_token</span>
         </div>
         <p class="endpoint-desc">Issues a replacement under the same label and the same <code>kind</code>. The old token gets a <strong>1-hour grace period</strong> before it actually stops working, so an in-flight CI run doesn't break the instant you rotate. The replacement's <code>createdBy</code> is whoever rotated it — so a rotated <code>"user"</code> token acts as the rotator, never as the original owner (a teammate rotating your personal token can't end up holding a token that acts as you).</p>
-        <div class="endpoint-note">Create, revoke and rotate also answer <code>403 no_access</code> when the caller lacks <code>tokens.manage</code> in this workspace (every member has it until roles land).</div>
+        <div class="endpoint-note">Create, revoke and rotate answer <code>403 permission_denied</code> when the caller lacks <code>tokens.manage</code> in this workspace (a Billing member). Creating a <code>"workspace"</code> token needs an Owner or Admin — a Member gets <code>403 permission_denied</code> and should make a personal token instead.</div>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">201 Response</span><button class="copy-btn" data-copy>Copy</button></div>

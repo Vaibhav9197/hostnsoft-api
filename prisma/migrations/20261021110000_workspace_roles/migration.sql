@@ -15,9 +15,6 @@ CREATE TABLE "WorkspaceMember" (
     "companyId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "role" TEXT NOT NULL,
-    "appScope" TEXT NOT NULL DEFAULT 'all',
-    "canCreate" BOOLEAN NOT NULL DEFAULT true,
-    "canDelete" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
@@ -38,9 +35,6 @@ CREATE TABLE "PendingInvite" (
     "companyId" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "role" TEXT NOT NULL,
-    "appScope" TEXT NOT NULL DEFAULT 'all',
-    "canCreate" BOOLEAN NOT NULL DEFAULT true,
-    "canDelete" BOOLEAN NOT NULL DEFAULT false,
     "grants" TEXT NOT NULL DEFAULT '[]',
     "invitedBy" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

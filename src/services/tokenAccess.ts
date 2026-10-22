@@ -29,7 +29,7 @@
  */
 import type { Project } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { can, type Permission } from "../lib/permissions";
+import { accessAllows, can, permissionDeniedBody, resolveAccess, type Permission } from "../lib/permissions";
 import { getCompanyById } from "../lib/msg91";
 import { logger } from "../lib/logger";
 import type { TokenActor } from "./deployTokenAuth";
@@ -56,7 +56,7 @@ export function accessActorOf(token: TokenActor): AccessActor {
 
 export type AccessRefusal = {
   status: 403 | 409;
-  code: "no_access" | "app_moved";
+  code: "no_access" | "app_moved" | "permission_denied";
   reason: string;
 };
 
@@ -238,8 +238,20 @@ export async function checkAppAccess(
     return { ok: false, refusal: null };
   }
 
-  if (actor.userId && (await can(actor.userId, project.companyId, permission, project.id))) {
-    return { ok: true, notice: opts.notice ? await movedNotice(actor, project) : null };
+  if (actor.userId) {
+    const access = await resolveAccess(actor.userId, project.companyId);
+    if (access && accessAllows(access, permission, project)) {
+      return { ok: true, notice: opts.notice ? await movedNotice(actor, project) : null };
+    }
+    // Still a member and can see the app, but their role doesn't allow
+    // this: say so, with the role, as the dashboard does — not no_access,
+    // which means they're no longer in the workspace.
+    if (access && accessAllows(access, "app.view", project)) {
+      return {
+        ok: false,
+        refusal: { status: 403, code: "permission_denied", reason: permissionDeniedBody(permission, access, project).error },
+      };
+    }
   }
   // A person who knows the app's current workspace (was in it, or still is
   // without this permission) is told exactly that; only someone who never

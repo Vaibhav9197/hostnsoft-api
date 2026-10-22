@@ -5,6 +5,7 @@ import { logger } from "./lib/logger";
 import { startDomainReverificationLoop } from "./services/domainReverification";
 import { startOrphanCleanupLoop } from "./services/orphanCleanup";
 import { startScheduleRunner } from "./services/scheduleRunner";
+import { startRolesSetupSweep } from "./lib/permissions";
 
 const port = Number(process.env.PORT ?? 4100);
 const app = createApp();
@@ -51,3 +52,4 @@ connectRedis()
 startDomainReverificationLoop();
 startOrphanCleanupLoop();
 startScheduleRunner();
+startRolesSetupSweep();

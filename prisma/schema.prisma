@@ -148,17 +148,11 @@ model WorkspaceMember {
   id        String   @id @default(cuid())
   companyId String
   userId    String
-  // "owner" | "admin" | "developer" | "viewer" | "billing" (ROLES in
-  // permissions.ts; a string, not an enum — SQLite).
+  // "owner" | "admin" | "member" | "billing" (ROLES in permissions.ts; a
+  // string, not an enum — SQLite). A Member's access to each project is
+  // AppGrant, else "use" (MEMBER_DEFAULT_LEVEL), and "full" on what they
+  // created.
   role      String
-  // Only read for developer/viewer: "all" apps in the workspace, or only
-  // the ones listed in AppGrant.
-  appScope  String   @default("all")
-  // Developer flags. canCreate: may deploy brand-new apps. canDelete: may
-  // delete apps they can manage — an app they created themselves they may
-  // always delete, whatever this says.
-  canCreate Boolean  @default(true)
-  canDelete Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -166,14 +160,15 @@ model WorkspaceMember {
   @@index([companyId, role])
 }
 
-// One app a developer/viewer with appScope "selected" may reach, and how
-// far: "manage" (deploy, change settings) or "view" (status, logs,
-// history). Ignored for any other role or scope. Goes with the app.
+// A Member's access to one project, above the default "use": "edit" (have
+// their AI make changes as a preview; logs) or "full" (approve and publish,
+// settings, delete, move) — ACCESS_LEVELS in permissions.ts. Ignored for
+// other roles. Goes with the project.
 model AppGrant {
   id        String   @id @default(cuid())
   projectId String
   userId    String
-  level     String // "manage" | "view"
+  level     String // "use" | "edit" | "full"
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -193,9 +188,6 @@ model PendingInvite {
   companyId String
   email     String // lowercased
   role      String
-  appScope  String   @default("all")
-  canCreate Boolean  @default(true)
-  canDelete Boolean  @default(false)
   // JSON-encoded [{projectId, level}] — SQLite has no array column.
   // Projects deleted in the meantime are skipped when applied.
   grants    String   @default("[]")
@@ -203,6 +195,23 @@ model PendingInvite {
   createdAt DateTime @default(now())
 
   @@unique([companyId, email])
+}
+
+// How far a workspace's roles have been set up (permissions.ts
+// setUpWorkspaceRoles). Roles arrived after workspaces did, and who is in
+// one and who made it are proxy facts SQL can't read, so each workspace is
+// set up once, by the API, the first time it can ask proxy cleanly.
+// ownerDecidedAt: its Owner was chosen (the creator, when proxy names one
+// who is still a member). membersCapturedAt: everyone in it then was written
+// as Admin — from then on a member with no row joined later, and starts as
+// a Member. Until it is set, a member with no row counts as an Admin, so
+// nobody already in a workspace ever loses anything.
+model WorkspaceRoleSetup {
+  companyId         String    @id
+  ownerDecidedAt    DateTime?
+  membersCapturedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }
 
 // A name an app used to have — one row per previous slug, written on every

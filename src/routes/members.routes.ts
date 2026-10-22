@@ -13,14 +13,7 @@ import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { accessFor, requirePermission } from "../middleware/requirePermission";
-import {
-  APP_LEVELS,
-  APP_SCOPES,
-  ROLES,
-  allowedPermissions,
-  appLevel,
-  resolveAccess,
-} from "../lib/permissions";
+import { ACCESS_LEVELS, ROLES, allowedPermissions, projectLevel, resolveAccess } from "../lib/permissions";
 import { isCompanyMember } from "../lib/msg91";
 import {
   changeMember,
@@ -56,9 +49,6 @@ membersRouter.get("/companies/:companyId/members/:userId", loadCompanyContext, a
 
 const roleChangeSchema = z.object({
   role: z.enum(ROLES),
-  appScope: z.enum(APP_SCOPES).optional(),
-  canCreate: z.boolean().optional(),
-  canDelete: z.boolean().optional(),
 });
 
 membersRouter.patch(
@@ -74,7 +64,7 @@ membersRouter.patch(
 );
 
 const grantsSchema = z.object({
-  grants: z.array(z.object({ projectId: z.string().min(1), level: z.enum(APP_LEVELS) })).max(500),
+  grants: z.array(z.object({ projectId: z.string().min(1), level: z.enum(ACCESS_LEVELS) })).max(500),
 });
 
 membersRouter.put(
@@ -120,7 +110,7 @@ membersRouter.delete(
     if (!result.ok) {
       return result.status === 404
         ? res.status(404).json({ error: "Invite not found" })
-        : res.status(403).json({ error: "Only an Owner can cancel an Owner or Admin invite.", code: "owner_required" });
+        : res.status(403).json({ error: result.error, code: result.code });
     }
     res.status(204).end();
   }
@@ -128,7 +118,9 @@ membersRouter.delete(
 
 // What the caller may do in one workspace, so the dashboard can hide or
 // disable what they can't — the API still enforces every one of these.
-// `apps` lists every app they can see, with what they can do to each.
+// `apps` lists every app they can see, with their access level and what it
+// lets them do. `defaultAccess` is a Member's level on apps nobody gave
+// them more access to (null for other roles).
 membersRouter.get("/me/permissions", async (req, res) => {
   const { companyId } = z.object({ companyId: z.string().min(1) }).parse(req.query);
   if (!(await isCompanyMember(req.userId!, companyId))) {
@@ -146,12 +138,10 @@ membersRouter.get("/me/permissions", async (req, res) => {
     userId: access.userId,
     role: access.role,
     roleIsSet: access.explicit,
-    appScope: access.appScope,
-    canCreate: access.canCreate,
-    canDelete: access.canDelete,
+    defaultAccess: access.defaultLevel,
     permissions: allowedPermissions(access),
     apps: projects.flatMap((p) => {
-      const level = appLevel(access, p);
+      const level = projectLevel(access, p);
       return level ? [{ projectId: p.id, level, permissions: allowedPermissions(access, p) }] : [];
     }),
   });
