@@ -5,6 +5,7 @@ import { ORPHAN_CLEANUP_INTERVAL_MS, ORPHAN_TTL_MS } from "../lib/orphanConfig";
 import { generateClaimCode } from "../lib/orphanClaim";
 import { checkSlug, type SlugRejection } from "../lib/reservedSlugs";
 import { findRenamedApp } from "./slugChangeFlow";
+import { checkAppAccess, createRefusal, type AccessActor, type AccessRefusal, type MovedNotice } from "./tokenAccess";
 
 // What the routes relay as an error — a reserved name (SlugRejection), an
 // expired orphan (expiredOrphanRejection below), or an app id that no
@@ -14,7 +15,12 @@ export type ClaimRejection = { reason: string; code: string; status?: number };
 // Something that changed outside this deploy that the deployer should
 // know, e.g. the app was renamed in the dashboard. Relayed in the deploy
 // reply's notices[].
-export type DeployNotice = { code: "app_renamed"; from: string; to: string; detail: string };
+// app_moved: the app is now in a different workspace (tokenAccess.ts
+// movedNotice) — from/to are workspace names, present only for a caller in
+// both.
+export type DeployNotice =
+  | { code: "app_renamed"; from: string; to: string; detail: string }
+  | MovedNotice;
 
 export type ClaimResult =
   // adopted: this claim just moved a previously anonymous (orphan) app
@@ -126,7 +132,7 @@ function appIdMismatch(slug: string, current: string): ClaimRejection {
 }
 
 /**
- * Which app a company's deploy goes to. The deployer sends the app name
+ * Which app a deploy goes to. The deployer sends the app name
  * (X-App-Name) and, after its first deploy, the app's id (X-App-Id, kept in
  * the app's embarko.json). The id wins: the name can be changed from the
  * dashboard without the deployer knowing, and before this a deploy under
@@ -140,13 +146,33 @@ function appIdMismatch(slug: string, current: string): ClaimRejection {
  *   app is never recreated by accident.
  * - no id: the app with that name, then the app that used to have it
  *   (findRenamedApp), and only then a new app.
+ *
+ * Which existing apps the caller may reach is tokenAccess.ts's decision
+ * (`actor`, added with user tokens 2026-10-21): a workspace token or a
+ * dashboard upload reaches its own workspace's apps, exactly as before; a
+ * user token reaches any app its person may deploy, in any workspace, and
+ * creates new apps in its default workspace (`companyId`) — only if its
+ * person may still create apps there. Leaving `actor` out means "workspace
+ * kind for companyId", which is every caller's behaviour before this.
+ *
+ * An app that moved to another workspace is never re-created under the
+ * caller's: a caller that used to reach it is refused with app_moved, and a
+ * stranger gets the same app_not_found / app_name_taken as always.
  */
 export async function resolveDeployTarget(
   companyId: string,
   slug: string,
   appId: string | undefined,
-  createdBy?: string | null
+  createdBy?: string | null,
+  actor?: AccessActor
 ): Promise<ClaimResult> {
+  const who: AccessActor = actor ?? { kind: "workspace", companyId, userId: createdBy ?? null };
+  const refuse = (r: AccessRefusal): ClaimResult => ({
+    project: null,
+    conflict: false,
+    rejected: { status: r.status, code: r.code, reason: r.reason },
+  });
+
   if (appId) {
     const project = await prisma.project.findUnique({ where: { id: appId } });
 
@@ -155,53 +181,99 @@ export async function resolveDeployTarget(
     if (project?.isOrphan) {
       // An orphan can't be renamed, so any other name is a copy.
       if (project.slug !== slug) return { project: null, conflict: false, rejected: appIdMismatch(slug, project.slug) };
+      const denied = await createRefusal(who);
+      if (denied) return refuse(denied);
       const claim = await claimProjectForCompany(companyId, project.slug, createdBy);
       if (claim.project && project.slug !== slug) claim.notices = [renamedNotice(slug, project.slug)];
       return claim;
     }
 
+    if (project) {
+      const access = await checkAppAccess(who, project, "app.deploy", { notice: true, appName: slug });
+      if (access.ok) {
+        // Checked only once the caller may reach the app, so a stranger's
+        // app is never confirmed by name.
+        if (project.slug !== slug && !(await isOldNameOf(project, slug))) {
+          return { project: null, conflict: false, rejected: appIdMismatch(slug, project.slug) };
+        }
+        const notices: DeployNotice[] = [];
+        if (project.slug !== slug) notices.push(renamedNotice(slug, project.slug));
+        if (access.notice) notices.push(access.notice);
+        return { project, conflict: false, rejected: null, notices: notices.length ? notices : undefined };
+      }
+      if (access.refusal) return refuse(access.refusal);
+    }
+
     // Another company's app answers the same as no app: an id is not
     // access control, but it must not confirm the app exists either.
-    if (!project || project.companyId !== companyId) {
-      const deleted = await prisma.auditLog.findFirst({
-        where: { projectId: appId, companyId, action: "project.delete" },
-        select: { id: true },
-      });
-      return {
-        project: null,
-        conflict: false,
-        rejected: deleted
-          ? {
-            status: 410,
-            code: "app_deleted",
-            reason:
-              `The app with id "${appId}" was deleted. Ask the user before deploying it again: ` +
-              `to create it as a new app, remove "appId" from embarko.json and deploy.`,
-          }
-          : {
-            status: 404,
-            code: "app_not_found",
-            reason:
-              `No app with id "${appId}" in this workspace. Check embarko.json's "appId" ` +
-              `belongs to this workspace, or remove it to deploy as a new app.`,
-          },
-      };
-    }
-
-    if (project.slug !== slug && !(await isOldNameOf(project, slug))) {
-      return { project: null, conflict: false, rejected: appIdMismatch(slug, project.slug) };
-    }
-
-    const notices = project.slug !== slug ? [renamedNotice(slug, project.slug)] : undefined;
-    return { project, conflict: false, rejected: null, notices };
+    const deleted = await prisma.auditLog.findFirst({
+      where: { projectId: appId, companyId, action: "project.delete" },
+      select: { id: true },
+    });
+    return {
+      project: null,
+      conflict: false,
+      rejected: deleted
+        ? {
+          status: 410,
+          code: "app_deleted",
+          reason:
+            `The app with id "${appId}" was deleted. Ask the user before deploying it again: ` +
+            `to create it as a new app, remove "appId" from embarko.json and deploy.`,
+        }
+        : {
+          status: 404,
+          code: "app_not_found",
+          reason:
+            `No app with id "${appId}" that this token can reach. Check embarko.json's "appId" ` +
+            `belongs to this token's workspace (or, for a personal token, to one its person is in), or remove it to deploy as a new app.`,
+        },
+    };
   }
 
-  const own = await prisma.project.findFirst({ where: { slug, companyId } });
-  if (own) return { project: own, conflict: false, rejected: null };
+  // By name. Names are unique platform-wide, current (Project.slug) and old
+  // (SlugAlias), so this finds the one app the name can mean, in whichever
+  // workspace — then asks whether this caller may deploy it.
+  const named = await prisma.project.findUnique({ where: { slug } });
+  if (named && !named.isOrphan) {
+    const access = await checkAppAccess(who, named, "app.deploy", { notice: true, appName: slug });
+    if (access.ok) {
+      return { project: named, conflict: false, rejected: null, notices: access.notice ? [access.notice] : undefined };
+    }
+    if (access.refusal) return refuse(access.refusal);
+    // Someone else's app: the claim below reports it as taken, as always.
+  }
 
-  const renamed = await findRenamedApp(companyId, slug);
-  if (renamed) {
-    return { project: renamed.project, conflict: false, rejected: null, notices: [renamedNotice(slug, renamed.to)] };
+  if (!named) {
+    const alias = await prisma.slugAlias.findUnique({ where: { slug }, include: { project: true } });
+    if (alias && !alias.project.isOrphan) {
+      const access = await checkAppAccess(who, alias.project, "app.deploy", { notice: true, appName: slug });
+      if (access.ok) {
+        const notices: DeployNotice[] = [renamedNotice(slug, alias.project.slug)];
+        if (access.notice) notices.push(access.notice);
+        return { project: alias.project, conflict: false, rejected: null, notices };
+      }
+      if (access.refusal) return refuse(access.refusal);
+    }
+
+    // A rename still finishing, or one older than SlugAlias — both only
+    // within the caller's own workspace (findRenamedApp is company-scoped).
+    const renamed = await findRenamedApp(companyId, slug);
+    if (renamed) {
+      const access = await checkAppAccess(who, renamed.project, "app.deploy", { notice: true, appName: slug });
+      if (access.ok) {
+        return { project: renamed.project, conflict: false, rejected: null, notices: [renamedNotice(slug, renamed.to)] };
+      }
+      if (access.refusal) return refuse(access.refusal);
+    }
+
+    // About to create (or adopt): the one step a user token needs app.create
+    // for. Checked only now, so deploying an existing app never needs it.
+    const denied = await createRefusal(who);
+    if (denied) return refuse(denied);
+  } else if (named.isOrphan) {
+    const denied = await createRefusal(who);
+    if (denied) return refuse(denied);
   }
 
   return claimProjectForCompany(companyId, slug, createdBy);

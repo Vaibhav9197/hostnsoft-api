@@ -2,7 +2,8 @@ import type { Request } from "express";
 import { z } from "zod";
 import { ProxyError, isCompanyMember, verifyProxyAuthToken } from "../lib/msg91";
 import { hasInternalSecret } from "../middleware/requireInternalSecret";
-import { findLiveDeployToken, unauthorizedDeployTokenBody } from "./deployTokenAuth";
+import { findLiveDeployToken, tokenActorOf, unauthorizedDeployTokenBody, type TokenActor } from "./deployTokenAuth";
+import type { AccessActor } from "./tokenAccess";
 
 // Who a deploy is being made on behalf of, resolved once and shared by
 // every internal (hostnsoft-deploy-facing) endpoint a deploy passes
@@ -30,7 +31,10 @@ import { findLiveDeployToken, unauthorizedDeployTokenBody } from "./deployTokenA
 export type DeployActor =
   // tokenCreatedBy: the proxy user who minted the token — the person behind
   // an agent's deploy, for anything that needs one (schedule alerts).
-  | { kind: "deployToken"; companyId: string; userId: null; triggeredBy: string; tokenCreatedBy: string }
+  // token: who the token acts as (deployTokenAuth.ts TokenActor) — for a
+  // user-kind token, companyId is only its DEFAULT workspace, and which
+  // existing apps it reaches is services/tokenAccess.ts's decision.
+  | { kind: "deployToken"; companyId: string; userId: null; triggeredBy: string; tokenCreatedBy: string; token: TokenActor }
   | { kind: "proxyAuth"; companyId: string; userId: string; triggeredBy: string }
   | { kind: "anonymous"; companyId: null; userId: null; triggeredBy: null };
 
@@ -74,6 +78,7 @@ export async function resolveDeployActor(
         userId: null,
         triggeredBy: record.label,
         tokenCreatedBy: record.createdBy,
+        token: tokenActorOf(record),
       },
     };
   }
@@ -160,5 +165,25 @@ export async function resolveDeployActor(
 // creator. Null only for an anonymous deploy.
 export function actorPersonId(actor: DeployActor): string | null {
   if (actor.kind === "deployToken") return actor.tokenCreatedBy;
+  return actor.userId;
+}
+
+// The deploy's caller as services/tokenAccess.ts sees it. A dashboard upload
+// is a person, but one who chose (and was verified for) a single workspace,
+// so it reaches that workspace only — same as before user tokens. Null for
+// an anonymous deploy, which has its own orphan path.
+export function accessActorOfDeploy(actor: DeployActor): AccessActor | null {
+  if (actor.kind === "deployToken") {
+    return { kind: actor.token.kind, companyId: actor.token.companyId, userId: actor.token.userId };
+  }
+  if (actor.kind === "proxyAuth") return { kind: "workspace", companyId: actor.companyId, userId: actor.userId };
+  return null;
+}
+
+// Who a new app made by this deploy is recorded as created by. A user token
+// is a person, so it is them; a workspace token names nobody in particular
+// (claimProjectForCompany's "hostnsoft-deploy" fallback), as before.
+export function deployCreatedBy(actor: DeployActor): string | null {
+  if (actor.kind === "deployToken") return actor.token.kind === "user" ? actor.token.userId : null;
   return actor.userId;
 }

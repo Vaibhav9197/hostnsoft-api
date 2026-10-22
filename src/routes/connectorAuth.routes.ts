@@ -1,7 +1,7 @@
 import { Router, type Request, urlencoded as expressUrlencoded } from "express";
 import { z } from "zod";
 import { verifyProxyAuthToken } from "../lib/msg91";
-import { findLiveDeployToken } from "../services/deployTokenAuth";
+import { findLiveDeployToken, tokenActorOf } from "../services/deployTokenAuth";
 import { mintConnectorToken } from "../services/connectorToken";
 import { redeemPendingLoginCode } from "../lib/connectorPendingLogin";
 import { createLimiter } from "../lib/rateLimit";
@@ -113,6 +113,9 @@ connectorAuthRouter.post(
       accessToken, // kept for existing/direct callers - shown once either way
       tokenId: record.id,
       label: record.label,
+      // A user token (services/connectorToken.ts): it reaches every workspace
+      // this person is in; companyId/companyName are where new apps go.
+      kind: record.kind,
       companyId: record.companyId,
       companyName: identity.company.name,
       createdAt: record.createdAt,
@@ -150,6 +153,8 @@ connectorAuthRouter.get(
       return res.status(401).json({ valid: false });
     }
 
-    res.status(200).json({ valid: true, companyId: record.companyId, tokenId: record.id });
+    // kind: "user" (reaches whatever its person can; companyId is only where
+    // new apps go) or "workspace" (companyId's apps only).
+    res.status(200).json({ valid: true, companyId: record.companyId, kind: tokenActorOf(record).kind, tokenId: record.id });
   }
 );

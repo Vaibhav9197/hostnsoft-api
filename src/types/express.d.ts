@@ -1,5 +1,6 @@
 import type { DeployToken, Project } from "@prisma/client";
 import type { Msg91Identity } from "../lib/msg91";
+import type { TokenActor } from "../services/deployTokenAuth";
 
 declare global {
   namespace Express {
@@ -19,6 +20,11 @@ declare global {
       // (src/middleware/deployTokenContext.ts). Present only on the agent
       // routes; the dashboard's own routes never set it.
       deployToken?: DeployToken;
+      // Who that token acts as — {kind: "user" | "workspace", userId,
+      // companyId, tokenId}; for kind "user", companyId is the token's
+      // default workspace (where new apps go), not necessarily the app's.
+      // Set alongside deployToken; see services/tokenAccess.ts.
+      actor?: TokenActor;
     }
   }
 }

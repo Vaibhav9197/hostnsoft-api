@@ -2,7 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { resolveDeployTarget, claimOrphanProject } from "../services/projectClaim";
-import { actorPersonId, deployCredentialFields, resolveDeployActor } from "../services/deployActor";
+import {
+  accessActorOfDeploy,
+  actorPersonId,
+  deployCreatedBy,
+  deployCredentialFields,
+  resolveDeployActor,
+} from "../services/deployActor";
 import { isRenameInProgress, isRenameTargeting } from "../services/renameStatus";
 import { buildOrphanMessage, buildTokenSteps, ORPHAN_LOGIN_URL } from "../lib/orphanMessage";
 import { isCompanyOnFreePlan } from "../lib/lago";
@@ -108,8 +114,9 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
   // upload UI is an ordinary project of that company, with no record of
   // how it was first deployed. An anonymous caller can't rename an app,
   // so its appId (if any) has nothing to add and is ignored.
-  const claim = resolved.actor.companyId
-    ? await resolveDeployTarget(resolved.actor.companyId, slug, appId, resolved.actor.userId)
+  const access = accessActorOfDeploy(resolved.actor);
+  const claim = resolved.actor.companyId && access
+    ? await resolveDeployTarget(resolved.actor.companyId, slug, appId, deployCreatedBy(resolved.actor), access)
     : await claimOrphanProject(slug);
 
   // Reserved before taken: a name that's both should say it's reserved,
@@ -125,6 +132,20 @@ internalProjectsRouter.post("/internal/projects/claim", async (req, res) => {
     return res.status(409).json({
       error: `App name "${slug}" is already in use by a different workspace`,
       code: "app_name_taken",
+    });
+  }
+
+  // The check above only looks in the caller's own workspace, which is
+  // every app a workspace token can reach — but a user token can land on an
+  // app in another workspace (services/tokenAccess.ts), and that app can be
+  // mid-rename too. Safe to ask only now: resolving an existing app writes
+  // nothing, and an app this claim just created or adopted can't be moving.
+  if (isRenameInProgress(claim.project.id)) {
+    return res.status(409).json({
+      error:
+        `The app "${claim.project.slug}" is having its web address changed right now. ` +
+        `Wait for that to finish, then deploy again — check the name first, it may have moved.`,
+      code: "rename_in_progress",
     });
   }
 

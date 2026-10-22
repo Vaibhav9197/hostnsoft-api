@@ -26,6 +26,31 @@ export async function findLiveDeployToken(token: string): Promise<DeployToken | 
   });
 }
 
+// Who a deploy token acts as, in the one shape every token-authenticated
+// path shares (req.actor on the agent routes, DeployActor.token on a
+// deploy). Other branches build on this exact shape — keep it stable.
+//   kind "workspace": acts as companyId; userId is only who minted it, for
+//     attribution, never for access.
+//   kind "user": acts as userId, wherever that person can reach; companyId
+//     is the token's default workspace — where a new app is created.
+export interface TokenActor {
+  kind: "user" | "workspace";
+  userId: string;
+  companyId: string;
+  tokenId: string;
+}
+
+export function tokenActorOf(record: DeployToken): TokenActor {
+  return {
+    // Anything but an explicit "user" is the old, narrower behaviour, so an
+    // unexpected value can only ever reach less, never more.
+    kind: record.kind === "user" ? "user" : "workspace",
+    userId: record.createdBy,
+    companyId: record.companyId,
+    tokenId: record.id,
+  };
+}
+
 // The 401 body every internal endpoint returns for a present-but-invalid
 // deploy token. `guidance` tells an agent how to obtain a working one —
 // hostnsoft-deploy relays it in its own 401 (follow-up in that repo).

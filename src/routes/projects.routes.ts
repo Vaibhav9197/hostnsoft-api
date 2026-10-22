@@ -17,6 +17,7 @@ import { claimCodeMatches } from "../lib/orphanClaim";
 import { unexpiredOrphanWhere } from "../services/projectClaim";
 import { logger } from "../lib/logger";
 import { scheduleSummaries, scheduleSummary } from "../services/schedules";
+import { MOVE_STATUS, moveProject } from "../services/projectMove";
 
 export const projectsRouter = Router();
 projectsRouter.use(requireProxyToken);
@@ -317,6 +318,52 @@ projectsRouter.get(
   loadProjectContext,
   async (req, res) => {
     res.json(await resolveSlugChangeStatus(req.project!));
+  }
+);
+
+const moveProjectSchema = z.object({ targetCompanyId: z.string().trim().min(1) });
+
+// Moves the app to another workspace the caller is in — ownership only: same
+// address, same appId, same running version, no redeploy. Everything that
+// follows (and what doesn't) is listed in services/projectMove.ts.
+//
+// The caller needs app.move here and app.create in the target, checked with
+// can(). loadCompanyContext already established they are a member here; the
+// target is checked inside the service, not by URL, since the app isn't
+// there yet.
+//
+// Afterwards this workspace's deploy tokens no longer reach the app and get
+// 409 app_moved when they try (never a copy); personal tokens of anyone who
+// can deploy in the target keep working, with a one-time app_moved notice.
+//
+// Codes: 400 same_workspace; 403 no_access; 409 rename_in_progress /
+// deploy_in_progress / plan_limit_reached / move_conflict.
+projectsRouter.post(
+  "/companies/:companyId/projects/:projectId/move",
+  loadCompanyContext,
+  loadProjectContext,
+  async (req, res) => {
+    const { targetCompanyId } = moveProjectSchema.parse(req.body);
+    const result = await moveProject({ project: req.project!, targetCompanyId, actorUserId: req.userId! });
+    if (!result.ok) {
+      return res.status(MOVE_STATUS[result.code]).json({ error: result.reason, code: result.code });
+    }
+
+    // The project in exactly GET-one's shape, so the dashboard can render it
+    // under its new workspace without a second fetch.
+    const [health, status, schedules] = await Promise.all([
+      fetchAppHealth(result.project.slug),
+      resolveProjectStatus(result.project.currentDeploymentId),
+      scheduleSummary(result.project.id),
+    ]);
+    res.json({
+      project: { ...result.project, status, health, schedules },
+      from: req.company!.id,
+      to: targetCompanyId,
+      // Whether the free-plan footer is being re-applied because the two
+      // workspaces are on different plans (no rebuild either way).
+      footerResync: result.footerResync,
+    });
   }
 );
 

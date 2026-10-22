@@ -44,7 +44,11 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                 │                     │
                 │ userId              │ companyId   (proxy ids, plain strings here)
                 ▼                     ▼
-                                    DeployToken (label, created_at, revoked_at, last_used_at)
+                                    DeployToken (label, kind, created_at, revoked_at, last_used_at)
+                                      kind "workspace": reaches companyId's apps only
+                                      kind "user": acts as createdBy, in any workspace
+                                        they can reach; companyId = default workspace
+                                        (where its new apps go) — added 2026-10-21
                                     Project — one deployed app on hostnsoft-deploy
                                       ├─ slug (the identifier hostnsoft-deploy uses;
                                       │   app-name convention: lowercase + dashes.
@@ -69,6 +73,17 @@ this doc had flagged as "first pass, confirm before building", was removed.
 
 A user can belong to multiple companies; which one a request targets is always
 the `:companyId` in the URL, checked against proxy membership per request.
+
+**Every authorization decision goes through `can(userId, companyId,
+permission, projectId?)` in `src/lib/permissions.ts`** (added 2026-10-21).
+Today it is the membership check above — every permission answers the same —
+and it is the one place roles will plug in. It needs only the user id:
+`isCompanyMember` asks proxy with the server's admin key
+(`/{ref}/getDetails?company_id&user_id`), never the person's own
+`proxy_auth_token`. That is what makes a user-kind deploy token workable — it
+carries only its creator's id, and is checked exactly like a dashboard session,
+live on every call (no cache), so removing someone from a workspace cuts off
+their tokens there on the next call.
 
 ## Auth flow (simplified — two separate, independent concerns)
 
@@ -302,14 +317,15 @@ it has an endpoint here (removed 2026-09-04).
 | `GET /companies/:companyId/projects/:projectId` | any member | Project summary — current health, latest deployment, current memory allocation. (Deeper views — full deployment history, logs, resource graphs — are separate endpoints per "Required capabilities" below, not detailed here yet.) |
 | `PATCH /companies/:companyId/projects/:projectId` `{name}` | any member | Renames the **display name only** — never touches `slug`. |
 | `PATCH /companies/:companyId/projects/:projectId/slug` `{slug}` | any member | Changes the app's **web address**. Takes the slug literally (no slugifying) and applies the full claim policy: charset, length, hyphen placement, and the reserved list — the latter with **no** grandfathering, unlike `services/projectClaim.ts`, since a rename is always a new claim. Two paths: an app that has never deployed is one UPDATE; a live one is a real migration delegated to `hostnsoft-deploy`'s `POST /internal/apps/:appName/rename` (stop job → move data dir → retag images → run new job → **wait for a fresh certificate** → purge old job → carry analytics over). That takes minutes, and nothing in front of this service will hold a request that long — the dashboard's BFF proxy aborts at 10s — so a live move answers **`202 {moving, from, to, statusUrl}`** and continues behind the response; poll **`GET /companies/:companyId/projects/:projectId/slug`** for the outcome — always `200 {state: in_progress|succeeded|failed|unknown, currentSlug, appUrl, ...}`, the same resolver the agent surface polls. In-progress state is in-memory only, same reasoning as `hostnsoft-deploy`'s `deploy-status.js` — see `services/renameStatus.ts`, including what it costs if this service is ever run multi-instance — but a *finished* move is also recoverable from the audit log, so `succeeded` survives a restart and the 30-minute in-memory expiry. `unknown` means no record of a move, never "no such app"; every state carries `currentSlug` so a caller never has to infer where the app actually is. A second PATCH while one is running is `409 rename_in_progress`. The new slug is written here only after the migration succeeds. Live renames are rate-limited to one per `SLUG_CHANGE_COOLDOWN_MS` (default 7d, read off the audit log) because each spends a certificate from the zone's weekly Let's Encrypt budget — see open question 8. The **database-only path is not rate-limited**, since it orders no certificate; that is why the two paths audit under different actions (below). Codes: `400 invalid_app_name`/`app_name_too_short`/`app_name_too_long`; `409 app_name_reserved`/`app_name_taken`/`deploy_in_progress`/`no_current_deployment` (running but no record of which image is live — redeploy first); `429 slug_change_cooldown`; `503 app_state_unknown` (can't reach `hostnsoft-deploy` to check — fails closed); `502 rename_failed` (migration refused/rolled back, app untouched); `500 rename_desynced` (the app moved but the name was claimed here mid-migration — needs a human). Re-sending the current slug is a no-op. **The old address dies immediately** — no redirect. Since 2026-10-21 the old name is kept as a `SlugAlias` row for the app: nobody else can claim it, and a deploy or agent call under it reaches the renamed app (`services/projectClaim.ts` `resolveDeployTarget`, `slugChangeFlow.ts` `findRenamedApp`). Deploys can also send the app's stable id (`X-App-Id`, or `appId` in embarko.json), which wins over the name. **Also available to agents** at `POST /apps/:appName/slug-change` (see the agent control plane below); this was dashboard-only until 2026-09-21, on the grounds that a company-wide deploy token meant one agent could strand every other agent and CI job holding the old name. That reasoning did not survive examination — it describes the slug, not the caller, and a person clicking rename here strands them just as completely. What made it safe on both surfaces was making stranding non-terminal: a caller arriving on a name that has moved now gets `404 app_renamed` carrying the new name and a retry URL, rather than `app_not_found`. Audited as `project.slug_change` for the database-only path and `project.slug_change_live` for the migration, with `(agent:<token label>)` appended to the detail when an agent did it. The split is what keeps the cooldown honest: it reads **only** the live action, so renaming a never-deployed app and then deploying it does not lock its address for a week over a move that spent nothing. Readers that only care *that* it moved (the status resolver, the `app_renamed` lookup) match both. Neither is filtered by actor, so the cooldown is shared across the dashboard and agent surfaces and one cannot be used to reset the other. The orchestration is `services/slugChangeFlow.ts`, shared by both routes; `services/projectSlugChange.ts` keeps the policy and mechanics. |
+| `POST /companies/:companyId/projects/:projectId/move` `{targetCompanyId}` | `app.move` here + `app.create` in the target | **Added 2026-10-21.** Moves the app to another workspace the caller is in. Ownership only — same slug, URL, id, running version; no redeploy. `Project.companyId` and `AppDetails.companyId` change; everything keyed by projectId follows; `DeployToken`, `AuditLog`, `FeatureRequest`, `ShowcaseEvent` and `Company` stay with their workspace (table-by-table reasoning in `services/projectMove.ts`). Refused while a rename or a deploy (`Deployment.status = in_progress`) is running. Plan limits: none are enforced on app creation today, so `services/planLimits.ts` is a no-op hook both paths should call once one exists. Audited `project.move` in **both** workspaces with `{from, to, fromName, toName, slug}` — the old-workspace row is how its tokens are told `409 app_moved` instead of a copy being made (`services/tokenAccess.ts`). The free-plan footer is re-pushed (no rebuild) when the two plans differ. hostnsoft-deploy keys nothing by workspace, so it needs no call. Codes: `400 same_workspace`, `403 no_access`, `409 rename_in_progress`/`deploy_in_progress`/`plan_limit_reached`/`move_conflict`. |
 | `DELETE /companies/:companyId/projects/:projectId` | any member | Must also decommission the running app on `hostnsoft-deploy` (stop its Nomad job) — **`hostnsoft-deploy` has no "stop/delete an app" endpoint today**, only deploy. This is a real gap to flag as a needed change to that repo, not something to solve by deleting the DB row alone and leaving the app running orphaned. |
 
 ### Tokens (company-scoped deploy tokens)
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `POST /companies/:companyId/tokens` `{label}` | any member | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. Response: `{id, label, token, created_at}`. |
-| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, created_at, last_used_at, revoked_at, source}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange) — **never** the secret itself, not even truncated/partial, past this one-time creation response. |
+| `POST /companies/:companyId/tokens` `{label, kind?}` | `tokens.manage` (any member) | Generates a token, returns the **plaintext secret exactly once** in this response, stores only its hash. `kind` is `"user"` (default — "Just me" in the dashboard) or `"workspace"` ("Whole workspace"). Response: the list fields below plus `token`. |
+| `GET /companies/:companyId/tokens` | any member | Lists tokens — `{id, label, tokenPrefix, prefix, createdAt, lastUsedAt, revokedAt, source, kind, createdBy}` (`source` is `dashboard`, `agent`, or `connector` — minted in the UI, by the public email endpoint, or by an AI connector exchange; `kind` is what it may reach, see below) — **never** the secret itself, not even truncated/partial, past this one-time creation response. Create, rotate and list return the same fields. A user token is listed in its default workspace, and that workspace's members can revoke it. |
 | `DELETE /companies/:companyId/tokens/:tokenId` | any member | Revokes (sets `revoked_at`) — soft delete, keep the row for audit history. |
 | `POST /companies/:companyId/tokens/:tokenId/rotate` | any member | Creates a replacement token under the same label, and per the earlier rotation note, should keep the old one valid for a short overlap window rather than revoking it instantly — avoids breaking an in-flight CI run. |
 | `POST /connector/token` `{token}` | none (public) — `token` is a live `proxy_auth_token`, not a header | "The token endpoint" (Auth flow #3 above): exchanges a `proxy_auth_token` for a new Deploy Token scoped to the identity's current company. `source: "connector"`. Response: `{accessToken, tokenId, label, companyId, companyName, createdAt}`. `409 {error: "no_company"}` if the identity has no current company yet. |
@@ -332,10 +348,34 @@ Conceptual rules carried over from the earlier design (still apply):
 - Multiple tokens per company, each independently labeled, so revocation
   doesn't require guessing which token is which (e.g. "CI pipeline",
   "Jane's laptop").
-- **Token scope is still an open question** (company-wide vs. project-scoped)
-  — see open questions below; the endpoints above assume company-wide for
-  now since that's the simpler migration path from `hostnsoft-deploy`'s
-  current single-shared-token model.
+- **Token scope: two kinds since 2026-10-21** (`DeployToken.kind`).
+  `"workspace"` keeps the original company-wide rule: the token reaches its
+  own workspace's apps, whoever made it — for CI and shared machines, which
+  must not stop when a person leaves. `"user"` acts as `createdBy`: any app in
+  any workspace where `can()` lets that person do the operation, decided live
+  per call in `services/tokenAccess.ts`; `companyId` is reused as its
+  *default* workspace (where a deploy of a new app lands, and which needs
+  `app.create`) rather than adding a `defaultCompanyId` column, so every
+  "tokens of this workspace" query stays correct for both. Migration
+  `20261021100000_token_kind` made every `agent`/`connector` token a user
+  token (they were always minted for one signed-in person — except email
+  tokens with `createdBy = system:…`, which stay workspace) and left dashboard
+  tokens as workspace. New email/connector tokens are user tokens; the
+  dashboard defaults to user. A rotated token keeps its kind, and its
+  `createdBy` becomes the rotator, so rotating someone else's personal token
+  never yields a token that acts as them.
+- **Addressing an app across workspaces is safe because names are unique
+  platform-wide** (`Project.slug`, and `SlugAlias` for old names): a user
+  token's lookup by name finds the one app the name can mean, then checks
+  access. The app id stays the primary path. Callers refused fall in two
+  groups: someone with a stake in the app (it moved away from a workspace they
+  reach → `409 app_moved`, never naming the new workspace; they lost access to
+  its workspace → `403 no_access`, naming it) and strangers, who get exactly
+  the pre-existing `404 app_not_found` / `409 app_name_taken`. A user token
+  reaching a moved app gets a one-time `app_moved` notice in the deploy reply.
+  hostnsoft-deploy's status/logs/feedback routes ask
+  `POST /internal/deploy-tokens/validate {token, appName, permission}` for the
+  same decision (`appAccess`, `appRefusal`) instead of comparing company ids.
 
 ## Required capabilities (from the person's spec)
 
@@ -524,7 +564,12 @@ deploy execution capability in one place.
 
 1. ~~Token scope: company-wide vs. project-scoped~~ — **resolved: company-wide**
    (confirmed 2026-08-25, implemented in `src/routes/tokens.routes.ts`),
-   matching `hostnsoft-deploy`'s current model.
+   matching `hostnsoft-deploy`'s current model. **Extended 2026-10-21:** a
+   token is now either workspace-wide (as before) or user-wide (acts as its
+   creator across their workspaces) — see "Tokens" above. Still open:
+   project-scoped tokens (none exist), and whether a user token's reach should
+   be narrowable (e.g. "only these workspaces"); today it is all-or-nothing
+   per person.
 2. How env var / memory allocation changes actually propagate to a
    running app on `hostnsoft-deploy` — new endpoints needed there.
 3. Whether this repo also owns the dashboard *frontend*'s auth session, or
