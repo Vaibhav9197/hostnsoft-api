@@ -110,6 +110,27 @@ function renamedNotice(from: string, to: string): DeployNotice {
   };
 }
 
+// Whether `slug` is a name this app had before a rename: a SlugAlias row,
+// or (for renames before SlugAlias existed) findRenamedApp's lookups.
+async function isOldNameOf(project: Project, slug: string): Promise<boolean> {
+  const alias = await prisma.slugAlias.findUnique({ where: { slug } });
+  if (alias) return alias.projectId === project.id;
+  if (!project.companyId) return false;
+  const renamed = await findRenamedApp(project.companyId, slug);
+  return renamed?.project.id === project.id;
+}
+
+function appIdMismatch(slug: string, current: string): ClaimRejection {
+  return {
+    status: 409,
+    code: "app_id_mismatch",
+    reason:
+      `embarko.json's "appId" belongs to the app "${current}", not "${slug}". ` +
+      `If "${slug}" is a new app (e.g. this code was copied from "${current}"), remove "appId" from embarko.json and deploy. ` +
+      `To update "${current}", deploy under that name.`,
+  };
+}
+
 /**
  * Which app a deploy goes to. The deployer sends the app name
  * (X-App-Name) and, after its first deploy, the app's id (X-App-Id, kept in
@@ -117,9 +138,12 @@ function renamedNotice(from: string, to: string): DeployNotice {
  * dashboard without the deployer knowing, and before this a deploy under
  * the old name created a second app.
  *
- * - id given: deploy to that app whatever it is called now. An id that
- *   leads nowhere is refused rather than replaced by a new app, so a
- *   deleted app is never recreated by accident.
+ * - id given: deploy to that app under its current name or any name it
+ *   used to have. Any other name is refused (app_id_mismatch): it means
+ *   the code was copied to start a new app, embarko.json and all, and
+ *   following the id would overwrite the original. An id that leads
+ *   nowhere is refused rather than replaced by a new app, so a deleted
+ *   app is never recreated by accident.
  * - no id: the app with that name, then the app that used to have it
  *   (findRenamedApp), and only then a new app.
  *
@@ -155,6 +179,8 @@ export async function resolveDeployTarget(
     // An orphan has no owner yet, so its id gets the same adopt path its
     // name does.
     if (project?.isOrphan) {
+      // An orphan can't be renamed, so any other name is a copy.
+      if (project.slug !== slug) return { project: null, conflict: false, rejected: appIdMismatch(slug, project.slug) };
       const denied = await createRefusal(who);
       if (denied) return refuse(denied);
       const claim = await claimProjectForCompany(companyId, project.slug, createdBy);
@@ -165,6 +191,11 @@ export async function resolveDeployTarget(
     if (project) {
       const access = await checkAppAccess(who, project, "app.deploy", { notice: true, appName: slug });
       if (access.ok) {
+        // Checked only once the caller may reach the app, so a stranger's
+        // app is never confirmed by name.
+        if (project.slug !== slug && !(await isOldNameOf(project, slug))) {
+          return { project: null, conflict: false, rejected: appIdMismatch(slug, project.slug) };
+        }
         const notices: DeployNotice[] = [];
         if (project.slug !== slug) notices.push(renamedNotice(slug, project.slug));
         if (access.notice) notices.push(access.notice);
