@@ -23,6 +23,11 @@ export enum Webhook {
   // A schedule started failing / recovered — see src/services/scheduleAlerts.ts.
   // ponytail: same flow URL as above.
   SCHEDULE_ALERT_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
+  // Someone was invited to a workspace — see src/services/workspaceRoles.ts
+  // createInvite and src/lib/memberInviteEmail.ts. Proxy's addUser sends no
+  // email itself.
+  // ponytail: same flow URL as above; give it its own flow when it needs one.
+  MEMBER_INVITE_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
 }
 
 export class WebhookError extends Error { }

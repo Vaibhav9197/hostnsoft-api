@@ -149,10 +149,13 @@ model WorkspaceMember {
   companyId String
   userId    String
   // "owner" | "admin" | "member" | "billing" (ROLES in permissions.ts; a
-  // string, not an enum — SQLite). A Member's access to each project is
-  // AppGrant, else "use" (MEMBER_DEFAULT_LEVEL), and "full" on what they
-  // created.
+  // string, not an enum — SQLite).
   role      String
+  // A Member's access (APP_ACCESS in permissions.ts): "use" | "edit" |
+  // "full" on every app, apps added later included; or "chosen": only the
+  // apps in AppGrant, at their level, the rest hidden. Always "full" on
+  // what they created. Ignored for other roles.
+  appAccess String   @default("use")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -160,10 +163,10 @@ model WorkspaceMember {
   @@index([companyId, role])
 }
 
-// A Member's access to one project, above the default "use": "edit" (have
-// their AI make changes as a preview; logs) or "full" (approve and publish,
-// settings, delete, move) — ACCESS_LEVELS in permissions.ts. Ignored for
-// other roles. Goes with the project.
+// One app a Member with appAccess "chosen" can reach, and how far: "use",
+// "edit" (have their AI make changes as a preview; logs) or "full" (approve
+// and publish, settings, delete, move) — ACCESS_LEVELS in permissions.ts.
+// Ignored otherwise. Goes with the project.
 model AppGrant {
   id        String   @id @default(cuid())
   projectId String
@@ -177,9 +180,9 @@ model AppGrant {
   @@index([userId])
 }
 
-// A role chosen for someone before they are a member. The invite email
-// itself is proxy's (the members embed sends it); this only remembers what
-// they should be allowed to do. Applied — turned into a WorkspaceMember
+// A role chosen for someone before they are a member: the invite adds them
+// on proxy and emails them (services/workspaceRoles.ts createInvite); this
+// remembers what they should be allowed to do. Applied — turned into a WorkspaceMember
 // (+ AppGrants) and deleted — the first time their permissions are worked
 // out as a member of companyId (permissions.ts resolveAccess), matched by
 // email. One per (workspace, email): inviting again replaces it.
@@ -188,6 +191,7 @@ model PendingInvite {
   companyId String
   email     String // lowercased
   role      String
+  appAccess String   @default("use") // as WorkspaceMember.appAccess
   // JSON-encoded [{projectId, level}] — SQLite has no array column.
   // Projects deleted in the meantime are skipped when applied.
   grants    String   @default("[]")

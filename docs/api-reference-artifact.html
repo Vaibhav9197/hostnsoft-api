@@ -410,6 +410,7 @@
       <a class="navlink" href="#ep-members-get">Get one</a>
       <a class="navlink" href="#ep-members-update">Change role</a>
       <a class="navlink" href="#ep-members-apps">Set app access</a>
+      <a class="navlink" href="#ep-members-remove">Remove member</a>
       <a class="navlink" href="#ep-invites-create">Invite with a role</a>
       <a class="navlink" href="#ep-invites-delete">Cancel invite</a>
       <a class="navlink" href="#ep-me-permissions">My permissions</a>
@@ -525,7 +526,7 @@
 
   <main>
     <div class="page-head">
-      <div class="eyebrow" id="overview">API Reference · v0.6</div>
+      <div class="eyebrow" id="overview">API Reference · v0.7</div>
       <h1>Embarko API</h1>
       <p class="lede">
         The multi-tenant management API: companies, projects, deployments, environment
@@ -590,12 +591,12 @@
 
       <div class="callout">
         <div class="eyebrow">Roles (changed 2026-10-22)</div>
-        <p>Two checks on every workspace request. <strong>Membership</strong> is still MSG91's, asked fresh every time — removing someone there cuts them off at once. <strong>What a member may do</strong> is this API's: each member has a workspace role (Owner, Admin, Member, Billing) and, as a Member, an access level per app — <code>use</code> on every app by default, more where someone gave it, and full access to apps they created. Owners and Admins have full access to every app; Billing has none. A member with no role set yet is an Admin, which is what everyone was before roles. Refusals are <code>403 permission_denied</code> with <code>{permission, role}</code> (plus <code>access</code>, their level on that app, when it's about an app); an app you can't see is a plain <code>404</code>. Use <a href="#ep-me-permissions">GET /me/permissions</a> to hide what the person can't do — the API enforces it either way. Full table: <a href="#roles">Roles &amp; permissions</a>.</p>
+        <p>Two checks on every workspace request. <strong>Membership</strong> is still MSG91's, asked fresh every time — removing someone there cuts them off at once. <strong>What a member may do</strong> is this API's: each member has a workspace role (Owner, Admin, Member, Billing) and, as a Member, an <code>access</code>: one level (<code>use</code>, <code>edit</code> or <code>full</code>) on every app, apps added later included — <code>use</code> by default — or <code>chosen</code>: only the apps they were given, every other app hidden; always full access to apps they created. Owners and Admins have full access to every app; Billing has none. A member with no role set yet is an Admin, which is what everyone was before roles. Refusals are <code>403 permission_denied</code> with <code>{permission, role}</code> (plus <code>access</code>, their level on that app, when it's about an app); an app you can't see is a plain <code>404</code>. Use <a href="#ep-me-permissions">GET /me/permissions</a> to hide what the person can't do — the API enforces it either way. Full table: <a href="#roles">Roles &amp; permissions</a>.</p>
       </div>
 
       <div class="callout">
-        <div class="eyebrow">Adding and removing people still lives on MSG91</div>
-        <p>Inviting (the email), listing and removing members happens through the MSG91 proxy embed the dashboard hosts. This API keeps only roles: <a href="#ep-invites-create">POST …/invites</a> records the role someone gets when they join, and the dashboard then sends the invite from the embed.</p>
+        <div class="eyebrow">Adding and removing people goes through this API</div>
+        <p><a href="#ep-invites-create">POST …/invites</a> records the role someone gets, has MSG91 add them to the workspace as you, and sends the invite email. <a href="#ep-members-remove">DELETE …/members/:userId</a> removes someone on MSG91 and here. Membership itself is still MSG91's, checked on every request; the dashboard no longer uses MSG91's members embed.</p>
       </div>
     </section>
 
@@ -758,7 +759,7 @@
 
     <section class="resource" id="companies">
       <div class="resource-head"><h2>Companies</h2></div>
-      <p class="resource-intro">A Company is the account/workspace boundary, owned entirely by MSG91 proxy — this API has no local Company table. Every project and deploy token sits under exactly one company id (a plain proxy id string). Rename, delete, and member management all happen through the MSG91 proxy embed, not through this API.</p>
+      <p class="resource-intro">A Company is the account/workspace boundary, owned entirely by MSG91 proxy — this API has no local Company table. Every project and deploy token sits under exactly one company id (a plain proxy id string). Rename and delete happen through the MSG91 proxy embed, not through this API; inviting and removing people go through the <a href="#roles">Members &amp; roles</a> endpoints.</p>
 
       <article class="endpoint" id="ep-companies-list">
         <div class="endpoint-head">
@@ -833,20 +834,20 @@
 
     <section class="resource" id="roles">
       <div class="resource-head"><h2>Members &amp; roles <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
-      <p class="resource-intro">What each member may do in a workspace. Who is in the workspace stays MSG91's (checked on every request); roles are this API's. Four workspace roles: <strong>Owner</strong> (everything, and the only role that can make, change or remove Owners and Admins), <strong>Admin</strong> (everything, billing included, with full access to every app — but can't change Owners or Admins), <strong>Member</strong> (everyone else — what they can do to each app is their access level on it, not a job title: someone in finance or sales works on apps through their AI as much as an engineer does), <strong>Billing</strong> (billing only, no apps). A Member can make their own deploy tokens, add new apps (and has full access to every app they created), and can use every app in the workspace by default (<code>defaultAccess: "use"</code>); an Owner or Admin gives them more on particular apps.</p>
+      <p class="resource-intro">What each member may do in a workspace. Who is in the workspace stays MSG91's (checked on every request); roles are this API's. Four workspace roles: <strong>Owner</strong> (everything, and the only role that can make, change or remove Owners and Admins), <strong>Admin</strong> (everything, billing included, with full access to every app — but can't change Owners or Admins), <strong>Member</strong> (everyone else — what they can do to each app is their access level on it, not a job title: someone in finance or sales works on apps through their AI as much as an engineer does), <strong>Billing</strong> (billing only, no apps). A Member can make their own deploy tokens and add new apps (and always has full access to every app they created). Their <code>access</code> decides the rest: <code>"use"</code> (the default), <code>"edit"</code> or <code>"full"</code> — that level on every app in the workspace, apps added later included — or <code>"chosen"</code>: only the apps in their <code>apps</code> list, each at its own level, and every other app hidden (<code>404</code>, not listed).</p>
       <p class="resource-intro"><strong>Access levels</strong> — three, lowest to highest, each including everything below it, told apart by what happens to the live app: <code>use</code> (&ldquo;Can use&rdquo;: use the app, its Context and history, comment — status, metrics, which env vars are set; nothing changes on the live app), <code>edit</code> (&ldquo;Can edit&rdquo;: + logs, and their AI makes changes as a preview for someone with full access to approve; nothing changes on the live app until then), <code>full</code> (&ldquo;Full access&rdquo;: + publishing — deploy, rollback, applying env vars — settings and env var values, domains, delete, move). Previews aren't built yet, so <code>app.edit</code> is reported by <a href="#ep-me-permissions">/me/permissions</a> but no route checks it, and a &ldquo;Can edit&rdquo; person's AI is refused deploys (<code>permission_denied</code>) today — only Full access can publish.</p>
       <p class="resource-intro"><strong>Who gets what at setup:</strong> everyone in a workspace when its roles are set up becomes an Admin, and its creator its Owner (or, failing that, its earliest member on record); someone who joins later without an invite starts as a Member. Until a workspace is set up, a member with no role counts as an Admin. A workspace always keeps one Owner who is still a member.</p>
-      <p class="resource-intro"><strong>Agents:</strong> a personal deploy token acts with its person's role and app access in the app's workspace, on every agent call and every deploy, and answers <code>403 permission_denied</code> (the <code>error</code> names the action and their access to that app) when they're still a member but their access doesn't allow it, or <code>403 no_access</code> only once they're no longer in that workspace. A workspace token acts as the workspace (full access to its own apps, whoever made it, still working after they leave); only an Owner or Admin can create one. A dashboard upload is checked against the signed-in person's access. Every change is audited (<code>member.role_change</code>, <code>member.app_access</code>, <code>member.invite</code>, <code>member.invite_applied</code>, <code>member.invite_cancel</code>).</p>
+      <p class="resource-intro"><strong>Agents:</strong> a personal deploy token acts with its person's role and app access in the app's workspace, on every agent call and every deploy, and answers <code>403 permission_denied</code> (the <code>error</code> names the action and their access to that app) when they're still a member but their access doesn't allow it, or <code>403 no_access</code> only once they're no longer in that workspace. A workspace token acts as the workspace (full access to its own apps, whoever made it, still working after they leave); only an Owner or Admin can create one. A dashboard upload is checked against the signed-in person's access. Every change is audited (<code>member.role_change</code>, <code>member.app_access</code>, <code>member.invite</code>, <code>member.invite_applied</code>, <code>member.invite_cancel</code>, <code>member.remove</code>).</p>
 
       <table class="status-table">
         <thead><tr><th>Permission</th><th>Who has it</th><th>Required by</th></tr></thead>
         <tbody>
           <tr><td class="code">workspace.manage</td><td>Owner, Admin</td><td>PATCH /companies/:companyId; Showcase event pages (create, change, delete, review listings)</td></tr>
-          <tr><td class="code">members.manage</td><td>Owner, Admin (only an Owner can change Owners/Admins)</td><td>PATCH …/members/:userId, PUT …/members/:userId/apps, POST …/invites, DELETE …/invites/:inviteId</td></tr>
+          <tr><td class="code">members.manage</td><td>Owner, Admin (only an Owner can change Owners/Admins)</td><td>PATCH …/members/:userId, PUT …/members/:userId/apps, DELETE …/members/:userId, POST …/invites, DELETE …/invites/:inviteId</td></tr>
           <tr><td class="code">billing.manage</td><td>Owner, Admin, Billing</td><td>every /billing route except GET …/billing (plan status, any member)</td></tr>
           <tr><td class="code">tokens.manage</td><td>Owner, Admin; Member (own tokens only, personal kind only)</td><td>all /tokens routes</td></tr>
           <tr><td class="code">app.create</td><td>Owner, Admin, Member</td><td>POST …/projects, POST …/orphans/claim, a deploy that makes a new app, a move (in the target workspace)</td></tr>
-          <tr><td class="code">app.view</td><td>Can use and up — every Member on every app by default; Owner, Admin</td><td>project get/list (filtered), deployments list/get, env var list (values hidden without app.settings), domains list, schedules, analytics, slug status, Showcase lists, every agent GET, status on the deploy endpoint</td></tr>
+          <tr><td class="code">app.view</td><td>Can use and up — every Member on every app by default (unless their access is <code>chosen</code>); Owner, Admin</td><td>project get/list (filtered), deployments list/get, env var list (values hidden without app.settings), domains list, schedules, analytics, slug status, Showcase lists, every agent GET, status on the deploy endpoint</td></tr>
           <tr><td class="code">app.logs</td><td>Can edit and up</td><td>logs on the deploy endpoint</td></tr>
           <tr><td class="code">app.edit</td><td>Can edit and up</td><td>nothing yet (previews not built) — reported by /me/permissions</td></tr>
           <tr><td class="code">app.deploy</td><td>Full access (Owner, Admin, a Member on apps they created or were given full access to)</td><td>publishing: a deploy to an existing app, rollback (dashboard + agent), agent env-vars apply</td></tr>
@@ -863,7 +864,7 @@
           <span class="path">/companies/:companyId/members</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">Everyone in the workspace with role and app access, plus roles waiting for invited people. Any member may read it. The member list comes from MSG91; when it can't be read reliably, <code>complete</code> is <code>false</code> and only people with a role here (plus you) are listed. Per member: <code>defaultAccess</code> is a Member's level on apps not in <code>apps</code> (<code>"use"</code>; <code>null</code> for other roles), and <code>apps</code> is the access a Member was given on particular apps (<code>[]</code> for other roles — Owners and Admins have full access to every app, Billing none). Apps a Member created aren't listed; they always have full access to those.</p>
+        <p class="endpoint-desc">Everyone in the workspace with role and app access, plus roles waiting for invited people. Any member may read it. The member list comes from MSG91; when it can't be read reliably, <code>complete</code> is <code>false</code> and only people with a role here (plus you) are listed. The list is cached for 60 seconds per workspace (an invite or removal clears it at once); who may do what is still checked fresh on every request. Per member: <code>access</code> is a Member's <code>"use"</code>, <code>"edit"</code>, <code>"full"</code> or <code>"chosen"</code> (<code>null</code> for other roles — Owners and Admins have full access to every app, Billing none), and <code>apps</code> lists the apps a Member can reach and how far, only when <code>access</code> is <code>"chosen"</code> (<code>[]</code> otherwise). Apps a Member created aren't listed; they always have full access to those. Each invite carries the same <code>role</code>, <code>access</code> and <code>apps</code>.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -875,7 +876,7 @@
       <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;ravi@acme.dev&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;owner&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-      <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
+      <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-bool">null</span><span class="tok-punc">,</span>
       <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[]</span><span class="tok-punc">,</span>
       <span class="tok-key">"isYou"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span>
     <span class="tok-punc">}</span><span class="tok-punc">,</span>
@@ -885,7 +886,7 @@
       <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-      <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
         <span class="tok-punc">{</span>
           <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
@@ -905,6 +906,7 @@
       <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_inv1&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+      <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
       <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
         <span class="tok-punc">{</span>
           <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
@@ -936,7 +938,7 @@
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
@@ -959,12 +961,13 @@
           <span class="path">/companies/:companyId/members/:userId</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
         </div>
-        <p class="endpoint-desc">Change a member's workspace role: <code>"owner"</code>, <code>"admin"</code>, <code>"member"</code> or <code>"billing"</code>. App access is set separately (<a href="#ep-members-apps">PUT …/apps</a>); grants a Member already had are kept but do nothing under another role. Returns the member.</p>
+        <p class="endpoint-desc">Change a member's workspace role — <code>"owner"</code>, <code>"admin"</code>, <code>"member"</code> or <code>"billing"</code> — and, for a Member, their <code>access</code>: <code>"use"</code>, <code>"edit"</code>, <code>"full"</code> or <code>"chosen"</code>. <code>access</code> is optional: left out, a Member keeps theirs (someone becoming a Member gets <code>"use"</code>); ignored for other roles. Which apps a <code>"chosen"</code> Member gets is set with <a href="#ep-members-apps">PUT …/apps</a>. Changing <code>access</code> away from <code>"chosen"</code>, or <code>role</code> away from <code>"member"</code>, deletes their per-app grants. Returns the member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
-  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span>
+  <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span>
 <span class="tok-punc">}</span></code></pre>
           </div>
           <div class="panel">
@@ -975,7 +978,7 @@
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
@@ -999,7 +1002,7 @@
           <span class="path">/companies/:companyId/members/:userId/apps</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
         </div>
-        <p class="endpoint-desc">Replace a Member's access to particular apps — the whole list, so send every app they should have more than <code>use</code> on; an app left out falls back to <code>use</code>. <code>level</code> is <code>"use"</code>, <code>"edit"</code> or <code>"full"</code>. Only counts while their role is Member. Every project must be in this workspace (<code>400 unknown_app</code> otherwise; nothing is saved). Changing an Owner's or Admin's grants needs an Owner (<code>403 owner_required</code>). Returns the member.</p>
+        <p class="endpoint-desc">Set which apps a Member with <code>access: "chosen"</code> can reach, and how far — the whole list, so send every app they should have; an app left out is hidden from them (apps they created stay full access). <code>level</code> is <code>"use"</code>, <code>"edit"</code> or <code>"full"</code>. Only counts while their role is Member and their access is <code>"chosen"</code> (the reply's <code>apps</code> is <code>[]</code> otherwise). Every project must be in this workspace (<code>400 unknown_app</code> otherwise; nothing is saved). Changing an Owner's or Admin's grants needs an Owner (<code>403 owner_required</code>). Returns the member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1024,7 +1027,7 @@
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;asha@acme.dev&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app1&quot;</span><span class="tok-punc">,</span>
@@ -1041,19 +1044,30 @@
         </div>
       </article>
 
+      <article class="endpoint" id="ep-members-remove">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/members/:userId</span>
+          <span class="role-chip">proxy_auth_token</span> <span class="role-chip admin">members.manage</span>
+        </div>
+        <p class="endpoint-desc">Remove someone from the workspace. MSG91 removes them first (acting as you), then their role and app access here are deleted; they lose access at once. <code>204</code>, no body. You can't remove yourself this way. Audited as <code>member.remove</code>.</p>
+        <div class="endpoint-note"><code>400 not_yourself</code> — that's you. <code>403 owner_required</code> — only an Owner may remove an Owner or Admin (an Admin may only when no Owner is still a member). <code>409 last_owner</code> — the workspace would be left with no Owner. <code>404 member_not_found</code> — they aren't in the workspace. <code>400 PROXY_MEMBER_CHANGE_REFUSED</code> — MSG91 refused (<code>"Couldn't remove them: …"</code>); nothing changed here.</div>
+      </article>
+
       <article class="endpoint" id="ep-invites-create">
         <div class="endpoint-head">
           <span class="method post">POST</span>
           <span class="path">/companies/:companyId/invites</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip">members.manage</span>
         </div>
-        <p class="endpoint-desc">Records the role (and, for a Member, app access) someone gets when they join. Owner and Admin only (<code>members.manage</code>). It does <strong>not</strong> send the invite email — the dashboard sends that from the MSG91 embed right after. Applied the first time that person makes a request in this workspace (matched by email); apps deleted in the meantime are skipped. Inviting the same email again replaces the waiting role. <code>grants</code> is optional and kept only when <code>role</code> is <code>"member"</code>; the reply's <code>apps</code> is what was kept.</p>
+        <p class="endpoint-desc">Invites someone. Owner and Admin only (<code>members.manage</code>). Records the role they get (and, for a Member, their <code>access</code> — default <code>"use"</code> — and, with <code>"chosen"</code>, the apps in <code>grants</code>), then has MSG91 add them to the workspace, acting as you; their name there is taken from the email (letters only; they can change it later). If MSG91 refuses, nothing is kept and its reason comes back as <code>400 PROXY_MEMBER_CHANGE_REFUSED</code> (<code>"Couldn't send the invite: …"</code>). Then this API emails them an invite naming the workspace, their role and access, with a sign-in link — best effort: if the email fails, the invite still succeeds. The role is applied the first time that person makes a request in this workspace (matched by email); apps deleted in the meantime are skipped. Inviting the same email again replaces the waiting role. <code>access</code> and <code>grants</code> are optional; <code>grants</code> is kept only for a <code>"member"</code> with <code>access: "chosen"</code>, and the reply's <code>apps</code> is what was kept.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">Request body</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"grants"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
@@ -1068,6 +1082,7 @@
   <span class="tok-key">"id"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_inv1&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"email"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;new@acme.dev&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"apps"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-punc">{</span>
       <span class="tok-key">"projectId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;cm_app2&quot;</span><span class="tok-punc">,</span>
@@ -1079,7 +1094,7 @@
 <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note"><code>403 permission_denied</code> — the caller isn't an Owner or Admin. <code>409 already_member</code> — they're already in the workspace; change their role instead. <code>403 owner_required</code> — inviting an Owner or Admin needs an Owner. <code>400 unknown_app</code> — a granted app isn't in this workspace. Someone who left and is invited back loses their old role and app access.</div>
+        <div class="endpoint-note"><code>403 permission_denied</code> — the caller isn't an Owner or Admin. <code>409 already_member</code> — they're already in the workspace; change their role instead. <code>403 owner_required</code> — inviting an Owner or Admin needs an Owner. <code>400 unknown_app</code> — a granted app isn't in this workspace. <code>400 PROXY_MEMBER_CHANGE_REFUSED</code> — MSG91 refused to add them; <code>error</code> carries its reason. Someone who left and is invited back loses their old role and app access.</div>
       </article>
 
       <article class="endpoint" id="ep-invites-delete">
@@ -1088,7 +1103,7 @@
           <span class="path">/companies/:companyId/invites/:inviteId</span>
           <span class="role-chip">proxy_auth_token</span> <span class="role-chip">members.manage</span>
         </div>
-        <p class="endpoint-desc">Forget a waiting role. <code>204</code>. Doesn't withdraw the MSG91 invite email. Needs <code>members.manage</code> (Owner, Admin). Cancelling an Owner or Admin invite still needs an Owner (<code>403 owner_required</code>). <code>404</code> if there's no such invite.</p>
+        <p class="endpoint-desc">Take back an invite: the waiting role goes, and if MSG91 already added them to the workspace, they're removed there too. <code>204</code>. The email already sent can't be recalled. A refusal from MSG91 is <code>400 PROXY_MEMBER_CHANGE_REFUSED</code> and the invite is kept. Needs <code>members.manage</code> (Owner, Admin). Cancelling an Owner or Admin invite still needs an Owner (<code>403 owner_required</code>). <code>404</code> if there's no such invite.</p>
       </article>
 
       <article class="endpoint" id="ep-me-permissions">
@@ -1097,7 +1112,7 @@
           <span class="path">/me/permissions?companyId=:companyId</span>
           <span class="role-chip">proxy_auth_token</span>
         </div>
-        <p class="endpoint-desc">What the signed-in person may do in one workspace, so a client can hide what they can't. <code>permissions</code> is workspace-level (&quot;could they do this to some app&quot; — a Member always could, on an app they create); <code>apps</code> lists every app they can see with their <code>level</code> on it and what that lets them do. <code>defaultAccess</code> is a Member's level on apps nobody gave them more access to (<code>null</code> for other roles). <code>404</code> if not a member.</p>
+        <p class="endpoint-desc">What the signed-in person may do in one workspace, so a client can hide what they can't. <code>permissions</code> is workspace-level (&quot;could they do this to some app&quot; — a Member always could, on an app they create); <code>apps</code> lists every app they can see with their <code>level</code> on it and what that lets them do. <code>access</code> is a Member's <code>"use"</code>, <code>"edit"</code>, <code>"full"</code> or <code>"chosen"</code> (<code>null</code> for other roles); with <code>"chosen"</code>, apps they weren't given aren't in <code>apps</code>. <code>404</code> if not a member.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
@@ -1106,7 +1121,7 @@
   <span class="tok-key">"userId"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;u_2&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"role"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;member&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"roleIsSet"</span><span class="tok-punc">:</span> <span class="tok-bool">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"defaultAccess"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;use&quot;</span><span class="tok-punc">,</span>
+  <span class="tok-key">"access"</span><span class="tok-punc">:</span> <span class="tok-str">&quot;chosen&quot;</span><span class="tok-punc">,</span>
   <span class="tok-key">"permissions"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span>
     <span class="tok-str">&quot;tokens.manage&quot;</span><span class="tok-punc">,</span>
     <span class="tok-str">&quot;app.create&quot;</span><span class="tok-punc">,</span>

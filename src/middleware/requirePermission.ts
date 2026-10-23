@@ -40,6 +40,7 @@ function workspaceTokenAccess(companyId: string, createdBy: string): Access {
     userId: createdBy,
     role: DEFAULT_ROLE,
     explicit: false,
+    appAccess: null,
     defaultLevel: null,
     grants: new Map(),
   };

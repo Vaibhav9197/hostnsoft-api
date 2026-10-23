@@ -4,8 +4,8 @@
  * in services/workspaceRoles.ts and lib/permissions.ts; this file is
  * addressing, validation and reply shapes.
  *
- * Membership itself (adding, removing, the invite email) is still proxy's,
- * through the members embed — see the header of workspaceRoles.ts.
+ * Membership itself lives on proxy; inviting and removing people here
+ * changes it there too — see the header of workspaceRoles.ts.
  */
 import { Router, type Response } from "express";
 import { z } from "zod";
@@ -13,7 +13,7 @@ import { prisma } from "../lib/prisma";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { loadCompanyContext } from "../middleware/companyContext";
 import { accessFor, requirePermission } from "../middleware/requirePermission";
-import { ACCESS_LEVELS, ROLES, allowedPermissions, projectLevel, resolveAccess } from "../lib/permissions";
+import { ACCESS_LEVELS, APP_ACCESS, ROLES, allowedPermissions, projectLevel, resolveAccess } from "../lib/permissions";
 import { isCompanyMember } from "../lib/msg91";
 import {
   changeMember,
@@ -21,6 +21,7 @@ import {
   deleteInvite,
   getMember,
   listMembers,
+  removeMember,
   setAppGrants,
   type RoleError,
 } from "../services/workspaceRoles";
@@ -49,6 +50,7 @@ membersRouter.get("/companies/:companyId/members/:userId", loadCompanyContext, a
 
 const roleChangeSchema = z.object({
   role: z.enum(ROLES),
+  access: z.enum(APP_ACCESS).optional(),
 });
 
 membersRouter.patch(
@@ -79,23 +81,33 @@ membersRouter.put(
   }
 );
 
+// Removes someone from the workspace, on proxy and here.
+membersRouter.delete(
+  "/companies/:companyId/members/:userId",
+  loadCompanyContext,
+  requirePermission("members.manage"),
+  async (req, res) => {
+    const result = await removeMember(req.access!, req.params.userId, req.proxyAuthToken!);
+    if (!result.ok) return sendRoleError(res, result.err);
+    res.status(204).end();
+  }
+);
+
 const inviteSchema = roleChangeSchema.extend({
   email: z.string().trim().email(),
   grants: grantsSchema.shape.grants.optional(),
 });
 
-// Records the role someone gets when they join. It does NOT send the invite
-// email: that's proxy's, and the dashboard sends it through the members
-// embed right after this succeeds (the API can't — proxy's invite call is
-// user-key on the inviter's current company and its shape is unverified on
-// this account; see docs/CLAUDE.md open question 6).
+// Invites someone: records the role and access they get, has proxy add them
+// to the workspace as the caller, then sends Embarko's invite email
+// (services/workspaceRoles.ts createInvite).
 membersRouter.post(
   "/companies/:companyId/invites",
   loadCompanyContext,
   requirePermission("members.manage"),
   async (req, res) => {
     const input = inviteSchema.parse(req.body);
-    const result = await createInvite(req.access!, input);
+    const result = await createInvite(req.access!, input, req.proxyAuthToken!);
     if (!result.ok) return sendRoleError(res, result.err);
     res.status(201).json(result.invite);
   }
@@ -106,7 +118,7 @@ membersRouter.delete(
   loadCompanyContext,
   requirePermission("members.manage"),
   async (req, res) => {
-    const result = await deleteInvite(req.access!, req.params.inviteId);
+    const result = await deleteInvite(req.access!, req.params.inviteId, req.proxyAuthToken!);
     if (!result.ok) {
       return result.status === 404
         ? res.status(404).json({ error: "Invite not found" })
@@ -138,7 +150,7 @@ membersRouter.get("/me/permissions", async (req, res) => {
     userId: access.userId,
     role: access.role,
     roleIsSet: access.explicit,
-    defaultAccess: access.defaultLevel,
+    access: access.appAccess,
     permissions: allowedPermissions(access),
     apps: projects.flatMap((p) => {
       const level = projectLevel(access, p);

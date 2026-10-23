@@ -61,9 +61,10 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
                                       │   docs/schedules.md, added 2026-10-17)
                                       └─ current resource allocation (memory; cpu once enforced)
  AuditLog (actorUserId, companyId, projectId — all plain strings)
- WorkspaceMember (companyId, userId, role owner|admin|member|billing)       ← roles, added 2026-10-21
- AppGrant (projectId → Project, userId, level use|edit|full)                ← a Member's per-app access
- PendingInvite (companyId, email, role, invitedBy, grants JSON)             ← role waiting for an invitee
+ WorkspaceMember (companyId, userId, role owner|admin|member|billing,
+                  appAccess use|edit|full|chosen)                           ← roles, added 2026-10-21
+ AppGrant (projectId → Project, userId, level use|edit|full)                ← a "chosen" Member's apps
+ PendingInvite (companyId, email, role, appAccess, invitedBy, grants JSON)  ← role waiting for an invitee
  WorkspaceRoleSetup (companyId, ownerDecidedAt, membersCapturedAt)          ← one-time roles setup per workspace
 ```
 
@@ -82,9 +83,12 @@ question 6 said would be needed. Two checks, in this order, on every request:
    Admins), `admin` (everything incl. `billing.manage`, full access to every
    app; can't change Owners/Admins), `member` (`tokens.manage` for their own
    tokens, `app.create` with
-   full access to apps they created — `Project.createdBy` — `use` on every
-   other app by default (`MEMBER_DEFAULT_LEVEL`), more per app via
-   `AppGrant`), `billing` (`billing.manage` only, no apps). Roles are named for
+   full access to apps they created — `Project.createdBy` — and an
+   **access** (`WorkspaceMember.appAccess`, `APP_ACCESS`): `use`, `edit` or
+   `full` on every app, apps added later included, or `chosen` — only the
+   apps in their `AppGrant` rows, each at its level, every other app hidden
+   (404, not listed); default `use` (`MEMBER_DEFAULT_ACCESS`)),
+   `billing` (`billing.manage` only, no apps). Roles are named for
    a workspace where non-engineers work on apps through their AI: what a Member
    can do to an app is its access level, not a job title. Three access levels,
    lowest first, each including the one below, told apart by what happens to
@@ -154,27 +158,44 @@ creator's Owner row and a completed setup row up front.
 permissions are resolved in that workspace, matched by email — not at login,
 since login only knows proxy's *current* company.
 
-**Members.** Adding/removing people and the invite email stay in the proxy
-embed. This API: `GET /companies/:companyId/members` (proxy list merged with
-roles — `listCompanyMembers` uses admin `getDetails?company_id=` without
-`user_id`, **unverified**, every row re-checked with `isCompanyMember` and the
-whole list discarded if any row fails; then `complete: false` and only known
-members are listed), `GET/PATCH …/members/:userId`, `PUT …/members/:userId/apps`,
-`POST/DELETE …/invites`, `GET /me/permissions?companyId=`. A member has one
+**Members.** Inviting and removing people go through this API (the dashboard
+no longer uses proxy's members embed). This API: `GET
+/companies/:companyId/members` (proxy list merged with roles —
+`listCompanyMembers` uses admin `getDetails?company_id=` without `user_id`,
+**unverified**, every row re-checked with `isCompanyMember` and the whole list
+discarded if any row fails; then `complete: false` and only known members are
+listed; a trustworthy list is cached 60 s per workspace, and an invite or
+removal clears it — access never reads it), `GET/PATCH/DELETE
+…/members/:userId`, `PUT …/members/:userId/apps`, `POST/DELETE …/invites`,
+`GET /me/permissions?companyId=` (returns `access` too). A member has one
 shape everywhere (list, get-one, PATCH and PUT replies):
-`{userId, name, email, role, roleIsSet, defaultAccess, apps: [{projectId,
-level}], isYou}` — `defaultAccess` is `"use"` for a Member and `null`
-otherwise, `apps` a Member's grants (`[]` for other roles). PATCH takes
-`{role}`; PUT `…/apps` takes `{grants: [{projectId, level}]}` and replaces
-the grants (both `members.manage`); `POST …/invites` takes `{email, role,
-grants?}` (grants kept for role `member` only). Guards
-(`services/workspaceRoles.ts`): inviting and cancelling invites need
-`members.manage` (Owner, Admin), like every other change here; only Owners
-make/change/un-make Owners and Admins (and change an Owner's/Admin's grants,
-or create/cancel Owner/Admin invites — `403 owner_required`); the last Owner who
-is still a member can't be demoted; if every Owner
-has left proxy, an Admin may make someone Owner. Every change is audited
-(`member.*`).
+`{userId, name, email, role, roleIsSet, access, apps: [{projectId, level}],
+isYou}` — `access` is the Member's `use|edit|full|chosen` and `null` for
+other roles, `apps` their grants only when `access` is `"chosen"` (else
+`[]`). PATCH takes `{role, access?}`; moving `access` away from `chosen` or
+`role` away from `member` deletes their grants. PUT `…/apps` takes
+`{grants: [{projectId, level}]}` and replaces the grants (used with access
+`chosen`). `POST …/invites` takes `{email, role, access?, grants?}` (grants
+kept for a `member` with access `chosen`): it records the role, then has proxy
+add the person to the workspace as the caller (`addUserToCompany`: user-key
+`c/addUser` after `switchCompany`; the name is derived from the email, letters
+only — proxy rejects digits, `nameFromEmail`). If proxy refuses, the invite is
+deleted and its message returned (`400 PROXY_MEMBER_CHANGE_REFUSED`,
+"Couldn't send the invite: …"). Then this API sends the invite email through
+the viasocket webhook `MEMBER_INVITE_EMAIL` (`docs/email-templates/member-invite.md`),
+best effort — a failed send is logged, the invite still succeeds. Invite
+view: `{id, email, role, access, apps, invitedBy, createdAt}`. `DELETE
+…/invites/:inviteId` also removes the person on proxy if they were already
+added. `DELETE …/members/:userId` → `204`: removes them on proxy
+(`removeUserFromCompany`, `c/removeUser/:id` as the caller), then deletes their
+role and grants here; `400 not_yourself`, `403 owner_required`,
+`409 last_owner`, `404 member_not_found`, `400 PROXY_MEMBER_CHANGE_REFUSED`.
+Guards (`services/workspaceRoles.ts`): every change here needs
+`members.manage` (Owner, Admin); only Owners make/change/un-make/remove Owners
+and Admins (and change an Owner's/Admin's grants, or create/cancel Owner/Admin
+invites — `403 owner_required`); the last Owner who is still a member can't be
+demoted or removed; if every Owner has left proxy, an Admin may make someone
+Owner. Every change is audited (`member.*`; removal `member.remove`).
 
 A user can belong to multiple companies; which one a request targets is always
 the `:companyId` in the URL, checked against proxy membership per request.
@@ -402,10 +423,9 @@ permission beyond membership.
 
 ### Companies
 
-Creating, renaming and deleting companies, and adding/removing members
-(invite email, removal), happen through the **proxy embed on the dashboard**.
-Roles are this API's — see "Authorization" above and the members endpoints
-there.
+Creating, renaming and deleting companies happen through the **proxy embed
+on the dashboard**. Members — inviting, removing, roles — are this API's: see
+"Authorization" and "Members" above.
 
 | Endpoint | Permission | Notes |
 |---|---|---|
@@ -701,16 +721,18 @@ deploy execution capability in one place.
    `PendingInvite`, keyed by proxy ids) — see "Authorization". Still open
    around it: (a) proxy's `getDetails?company_id=` member listing and
    `company.created_by` are unverified on this account (both fail safe);
-   (b) the invite email is still sent from the embed — proxy's `/c/addUser`
-   (user-key, current company, email only per earlier research) could let
-   `POST …/invites` send it, once its request shape is confirmed;
+   (b) — done: `POST …/invites` adds the person through proxy's user-key
+   `/c/addUser` (`{user: {name, email, mobile}}`, current company) and this
+   API sends the invite email (viasocket `MEMBER_INVITE_EMAIL`); removal is
+   `DELETE …/members/:userId` (`/c/removeUser/:id`);
    (c) — done: hostnsoft-deploy's status/logs send `appName` and the
    permission (`app.view` for status, `app.logs` for logs) to both validate
    endpoints and honour `appAccess` (`verify-membership`'s `permission` is
    optional, default `app.logs`; `deploy-tokens/validate`'s defaults to
-   `app.view`); (d) the proxy embed's own
-   add/remove controls follow proxy's rules, not these roles (the dashboard
-   only hides the embed from people without `members.manage`).
+   `app.view`); (d) — done: the members embed is
+   removed from the dashboard; adding and removing people go through the
+   API's routes, so these roles' guards apply (proxy still applies its own
+   rules to the caller on top).
 7. **`hostnsoft-deploy` needs a "stop/decommission an app" endpoint** —
    it currently only supports deploying, never removing. `DELETE
    /companies/:companyId/projects/:projectId` in this API has nothing to call for

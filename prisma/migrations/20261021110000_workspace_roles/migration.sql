@@ -15,6 +15,7 @@ CREATE TABLE "WorkspaceMember" (
     "companyId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "role" TEXT NOT NULL,
+    "appAccess" TEXT NOT NULL DEFAULT 'use',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
@@ -35,6 +36,7 @@ CREATE TABLE "PendingInvite" (
     "companyId" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "role" TEXT NOT NULL,
+    "appAccess" TEXT NOT NULL DEFAULT 'use',
     "grants" TEXT NOT NULL DEFAULT '[]',
     "invitedBy" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

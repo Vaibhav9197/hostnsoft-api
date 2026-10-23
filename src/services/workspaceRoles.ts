@@ -4,10 +4,13 @@
  * Reading permissions is lib/permissions.ts; this is the writing side and
  * its guard rails. Routes in routes/members.routes.ts.
  *
- * Membership itself — adding and removing people, the invite email — stays
- * proxy's, through the members embed on the dashboard. That's why nothing
- * here deletes a member: removing them on proxy is what takes access away
- * (permissions.ts checks proxy first), and a row left behind is inert.
+ * Membership itself lives on proxy: inviting and removing someone here calls
+ * proxy as the person doing it (msg91.ts addUserToCompany /
+ * removeUserFromCompany — the calls proxy's own members embed made); proxy
+ * sends no email, so the invite email is ours (lib/memberInviteEmail.ts).
+ * Removing someone on proxy is what takes
+ * their access away (permissions.ts checks proxy first); their rows here
+ * are deleted with it.
  *
  * Guard rails, all enforced here rather than in the UI:
  *   - only an Owner may make, change or un-make an Owner or Admin;
@@ -17,7 +20,15 @@
  *     nobody able to manage billing or Admins, forever.
  */
 import { prisma } from "../lib/prisma";
-import { getUserByEmail, getUserById, isCompanyMember, listCompanyMembers } from "../lib/msg91";
+import {
+  addUserToCompany,
+  getCompanyById,
+  getUserByEmail,
+  getUserById,
+  isCompanyMember,
+  listCompanyMembers,
+  removeUserFromCompany,
+} from "../lib/msg91";
 import {
   DEFAULT_ROLE,
   startSetUp,
@@ -25,15 +36,23 @@ import {
   resolveAccess,
   ensureMemberRow,
   type Access,
-  MEMBER_DEFAULT_LEVEL,
+  MEMBER_DEFAULT_ACCESS,
   type AccessLevel,
+  type AppAccess,
   type InviteGrant,
   type Role,
 } from "../lib/permissions";
 import { logAudit } from "./audit";
+import { callWebhook, Webhook } from "../lib/webhooks";
+import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
+import { memberInviteEmailSubject, renderMemberInviteEmail } from "../lib/memberInviteEmail";
+import { logger } from "../lib/logger";
 
 export type RoleChange = {
   role: Role;
+  // A Member's access (APP_ACCESS). Omitted: kept as it is (a new Member:
+  // MEMBER_DEFAULT_ACCESS). Ignored for other roles.
+  access?: AppAccess;
 };
 
 // One member as every endpoint returns them — list, get-one, and the reply
@@ -45,10 +64,12 @@ export interface MemberView {
   role: Role;
   // false: no role was ever set, DEFAULT_ROLE applies.
   roleIsSet: boolean;
-  // A Member's access to apps not listed in `apps` (null for other roles:
-  // Owner and Admin have full access to every app, Billing to none).
-  defaultAccess: AccessLevel | null;
-  // A Member's access to particular apps, above defaultAccess.
+  // A Member's access: "use" | "edit" | "full" on every app, or "chosen"
+  // (only `apps`). Null for other roles: Owner and Admin have full access
+  // to every app, Billing to none. A Member always has full access to apps
+  // they created (the app's createdBy), whatever this says.
+  access: AppAccess | null;
+  // With access "chosen": the apps they can reach and how far. Else [].
   apps: { projectId: string; level: AccessLevel }[];
   isYou: boolean;
 }
@@ -57,6 +78,7 @@ export type RoleError =
   | { status: 403; code: "owner_required"; error: string }
   | { status: 404; code: "member_not_found"; error: string }
   | { status: 409; code: "last_owner" | "already_member"; error: string }
+  | { status: 400; code: "not_yourself"; error: string }
   | { status: 400; code: "unknown_app"; error: string };
 
 const OWNERISH: ReadonlySet<Role> = new Set<Role>(["owner", "admin"]);
@@ -76,8 +98,8 @@ async function mayManageOwnerish(actor: Access): Promise<boolean> {
   return actor.role === "admin" && (await liveOwnerIds(actor.companyId)).length === 0;
 }
 
-function describe(r: { role: string }): string {
-  return r.role;
+function describe(r: { role: string; appAccess?: string | null }): string {
+  return r.role === "member" ? `member (apps: ${r.appAccess ?? MEMBER_DEFAULT_ACCESS})` : r.role;
 }
 
 async function grantsByUser(companyId: string): Promise<Map<string, { projectId: string; level: AccessLevel }[]>> {
@@ -110,10 +132,9 @@ function toView(
     email: person?.email || null,
     role: (row?.role as Role | undefined) ?? DEFAULT_ROLE,
     roleIsSet: !!row,
-    defaultAccess: row?.role === "member" ? MEMBER_DEFAULT_LEVEL : null,
-    // Grants only count for a Member; anyone else's are left over from an
-    // earlier role and do nothing.
-    apps: row?.role === "member" ? apps : [],
+    access: row?.role === "member" ? ((row.appAccess as AppAccess) ?? MEMBER_DEFAULT_ACCESS) : null,
+    // Grants only count for a Member on chosen apps.
+    apps: row?.role === "member" && row.appAccess === "chosen" ? apps : [],
     isYou: userId === callerId,
   };
 }
@@ -207,18 +228,19 @@ export async function changeMember(
   }
 
   const before = await prisma.workspaceMember.findUnique({ where: { companyId_userId: { companyId, userId: targetUserId } } });
-  const data = { role: change.role };
-  // Per-app access only means something for a Member; leaving that role
-  // clears it, so it can't quietly come back if they're made a Member again.
+  const appAccess: AppAccess =
+    change.access ?? (before?.role === "member" ? (before.appAccess as AppAccess) : MEMBER_DEFAULT_ACCESS);
+  const data = { role: change.role, appAccess };
+  // Per-app grants only mean something for a Member on chosen apps; any
+  // other role or access clears them, so they can't quietly come back.
+  const keepGrants = change.role === "member" && appAccess === "chosen";
   await prisma.$transaction([
     prisma.workspaceMember.upsert({
       where: { companyId_userId: { companyId, userId: targetUserId } },
       update: data,
       create: { companyId, userId: targetUserId, ...data },
     }),
-    ...(change.role === "member"
-      ? []
-      : [prisma.appGrant.deleteMany({ where: { userId: targetUserId, project: { companyId } } })]),
+    ...(keepGrants ? [] : [prisma.appGrant.deleteMany({ where: { userId: targetUserId, project: { companyId } } })]),
   ]);
 
   await logAudit({
@@ -275,6 +297,7 @@ export async function setAppGrants(
 
 export interface InviteInput extends RoleChange {
   email: string;
+  // With access "chosen": the apps they get, and how far.
   grants?: InviteGrant[];
 }
 
@@ -283,13 +306,36 @@ function toInviteView(i: Awaited<ReturnType<typeof prisma.pendingInvite.findMany
     id: i.id,
     email: i.email,
     role: i.role as Role,
+    access: i.role === "member" ? (i.appAccess as AppAccess) : null,
     apps: parseInviteGrants(i.grants),
     invitedBy: i.invitedBy,
     createdAt: i.createdAt,
   };
 }
 
-export async function createInvite(actor: Access, input: InviteInput) {
+// The invite form asks only for an email, but proxy's addUser needs a name
+// and refuses one with digits or symbols ("The user.name format is
+// invalid"). So: the email's local part, plain letters only (accents
+// dropped), words capitalised —
+// "rahul.mehta" → "Rahul Mehta", "priyankapathak0811" → "Priyankapathak".
+// They can change it on proxy once they've joined.
+export function nameFromEmail(email: string): string {
+  const words = email
+    .split("@")[0]
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  return words.join(" ").slice(0, 60) || "Teammate";
+}
+
+// Records what they'll be allowed to do, has proxy add them to the
+// workspace — as the caller, with their own session token — then emails
+// them. If proxy refuses, the record goes too and its reason is passed on.
+export async function createInvite(actor: Access, input: InviteInput, proxyAuthToken: string) {
   const companyId = actor.companyId;
   const email = input.email.trim().toLowerCase();
 
@@ -324,9 +370,11 @@ export async function createInvite(actor: Access, input: InviteInput) {
     ]);
   }
 
+  const appAccess: AppAccess = input.access ?? MEMBER_DEFAULT_ACCESS;
   const data = {
     role: input.role,
-    grants: JSON.stringify(input.role === "member" ? grants : []),
+    appAccess,
+    grants: JSON.stringify(input.role === "member" && appAccess === "chosen" ? grants : []),
     invitedBy: actor.userId,
   };
   const invite = await prisma.pendingInvite.upsert({
@@ -334,6 +382,19 @@ export async function createInvite(actor: Access, input: InviteInput) {
     update: data,
     create: { companyId, email, ...data },
   });
+
+  try {
+    await addUserToCompany(proxyAuthToken, companyId, { email, name: nameFromEmail(email) });
+  } catch (err) {
+    await prisma.pendingInvite.delete({ where: { id: invite.id } }).catch(() => undefined);
+    throw err;
+  }
+
+  // They're in; the email only tells them. Best effort: a failed send is
+  // logged, never turned into a failed invite.
+  await sendInviteEmail(actor, companyId, email, input.role, appAccess, grants.length).catch((err) =>
+    logger.warn(`[members] invite email to ${companyId} not sent: ${(err as Error)?.message}`)
+  );
 
   await logAudit({
     actorUserId: actor.userId,
@@ -344,7 +405,9 @@ export async function createInvite(actor: Access, input: InviteInput) {
   return { ok: true as const, invite: toInviteView(invite) };
 }
 
-export async function deleteInvite(actor: Access, inviteId: string) {
+// Takes back an invite: the waiting role goes, and if proxy already added
+// them to the workspace (its invite does), they're removed there too.
+export async function deleteInvite(actor: Access, inviteId: string, proxyAuthToken: string) {
   const invite = await prisma.pendingInvite.findFirst({ where: { id: inviteId, companyId: actor.companyId } });
   if (!invite) return { ok: false as const, status: 404 as const };
   if (OWNERISH.has(invite.role as Role) && !(await mayManageOwnerish(actor))) {
@@ -355,6 +418,10 @@ export async function deleteInvite(actor: Access, inviteId: string) {
       error: "Only an Owner can cancel an Owner or Admin invite.",
     };
   }
+  const person = await getUserByEmail(invite.email).catch(() => null);
+  if (person && (await isCompanyMember(person.id, actor.companyId))) {
+    await removeUserFromCompany(proxyAuthToken, actor.companyId, person.id);
+  }
   await prisma.pendingInvite.delete({ where: { id: invite.id } });
   await logAudit({
     actorUserId: actor.userId,
@@ -363,4 +430,81 @@ export async function deleteInvite(actor: Access, inviteId: string) {
     details: `${invite.email} (${invite.role})`,
   });
   return { ok: true as const };
+}
+
+// Takes someone out of the workspace: on proxy (as the caller), then their
+// role and app access here. Same guard rails as changing a role, and nobody
+// removes themselves this way.
+export async function removeMember(
+  actor: Access,
+  targetUserId: string,
+  proxyAuthToken: string
+): Promise<{ ok: true } | { ok: false; err: RoleError }> {
+  const companyId = actor.companyId;
+  if (targetUserId === actor.userId) {
+    return { ok: false, err: { status: 400, code: "not_yourself", error: "You can't remove yourself here." } };
+  }
+  if (!(await isCompanyMember(targetUserId, companyId))) {
+    return { ok: false, err: { status: 404, code: "member_not_found", error: "That person isn't a member of this workspace." } };
+  }
+  const current = await resolveAccess(targetUserId, companyId, { membershipChecked: true });
+  const role = current?.role ?? DEFAULT_ROLE;
+  if (OWNERISH.has(role) && !(await mayManageOwnerish(actor))) {
+    return { ok: false, err: { status: 403, code: "owner_required", error: "Only an Owner can remove an Owner or Admin." } };
+  }
+  if (role === "owner" && (await liveOwnerIds(companyId)).filter((id) => id !== targetUserId).length === 0) {
+    return {
+      ok: false,
+      err: { status: 409, code: "last_owner", error: "A workspace needs at least one Owner. Make someone else an Owner first." },
+    };
+  }
+
+  await removeUserFromCompany(proxyAuthToken, companyId, targetUserId);
+  await prisma.$transaction([
+    prisma.workspaceMember.deleteMany({ where: { companyId, userId: targetUserId } }),
+    prisma.appGrant.deleteMany({ where: { userId: targetUserId, project: { companyId } } }),
+  ]);
+  await logAudit({
+    actorUserId: actor.userId,
+    companyId,
+    action: "member.remove",
+    details: `${targetUserId} (${role})`,
+  });
+  return { ok: true };
+}
+
+const ROLE_NAMES_FOR_EMAIL: Record<Role, string> = { owner: "Owner", admin: "Admin", member: "Member", billing: "Billing" };
+
+function accessInWords(access: AppAccess, chosenCount: number): string {
+  if (access === "use") return "Can use all apps";
+  if (access === "edit") return "Can edit all apps";
+  if (access === "full") return "Full access to all apps";
+  return chosenCount === 1 ? "1 app" : `${chosenCount} apps`;
+}
+
+async function sendInviteEmail(
+  actor: Access,
+  companyId: string,
+  email: string,
+  role: Role,
+  access: AppAccess,
+  chosenCount: number
+): Promise<void> {
+  const [inviter, company] = await Promise.all([
+    getUserById(actor.userId).catch(() => null),
+    getCompanyById(companyId).catch(() => null),
+  ]);
+  const input = {
+    email,
+    inviterName: inviter?.name || null,
+    workspaceName: company?.name || "your team's workspace",
+    roleName: ROLE_NAMES_FOR_EMAIL[role],
+    accessSummary: role === "member" ? accessInWords(access, chosenCount) : null,
+    signInUrl: `${FRONTEND_ORIGIN}/app`,
+  };
+  await callWebhook(Webhook.MEMBER_INVITE_EMAIL, {
+    to: [{ email }],
+    subject: memberInviteEmailSubject(input),
+    variables: { content: renderMemberInviteEmail(input) },
+  });
 }

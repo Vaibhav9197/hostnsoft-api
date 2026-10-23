@@ -436,6 +436,44 @@ export async function switchCompany(proxyAuthToken: string, companyId: string): 
   await identityByPat.delete(proxyAuthToken);
 }
 
+// Adding and removing people, as the person doing it — the same user-key
+// calls proxy's members embed makes (c/addUser, c/removeUser/:id), so proxy
+// applies its own rules to the caller exactly as it did for the embed. Both
+// act on proxy's CURRENT company for that token, hence the switch first.
+// Proxy sends no email for this (the invite email is ours:
+// lib/memberInviteEmail.ts). Its refusals carry a message meant
+// for the person (e.g. the email is already in the company), passed on as
+// a 400.
+function refusedFor(action: string, path: string, message: string | undefined): ProxyError {
+  return new ProxyError(
+    `proxy refused ${path}: ${message ?? "unknown"}`,
+    400,
+    message ? `Couldn't ${action}: ${message}` : `Couldn't ${action}.`,
+    "PROXY_MEMBER_CHANGE_REFUSED"
+  );
+}
+
+export async function addUserToCompany(
+  proxyAuthToken: string,
+  companyId: string,
+  user: { email: string; name: string }
+): Promise<void> {
+  await switchCompany(proxyAuthToken, companyId);
+  const body = await userRequest<unknown>(proxyAuthToken, `/addUser`, {
+    method: "POST",
+    body: JSON.stringify({ user: { name: user.name, email: user.email, mobile: "" } }),
+  });
+  if (body.hasError) throw refusedFor("send the invite", "addUser", body.message);
+  memberListCache.delete(companyId);
+}
+
+export async function removeUserFromCompany(proxyAuthToken: string, companyId: string, userId: string): Promise<void> {
+  await switchCompany(proxyAuthToken, companyId);
+  const body = await userRequest<unknown>(proxyAuthToken, `/removeUser/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  if (body.hasError) throw refusedFor("remove them", "removeUser", body.message);
+  memberListCache.delete(companyId);
+}
+
 export interface CreateCompanyInput {
   name: string;
   email?: string;

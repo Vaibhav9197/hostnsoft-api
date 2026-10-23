@@ -104,9 +104,19 @@ const LEVEL_PERMISSIONS: Record<AccessLevel, ReadonlySet<Permission>> = (() => {
   return { use: new Set(use), edit: new Set(edit), full: new Set(full) };
 })();
 
-// What a Member reaches on a project nobody gave them access to: they can
-// find and use everything the company built.
-export const MEMBER_DEFAULT_LEVEL: AccessLevel = "use";
+// A Member's access, set when they're invited and changeable later: one
+// level on every app (apps added later included), or "chosen" — only the
+// apps in their AppGrant rows, each at its level, every other app hidden.
+// Whatever it is, they have full access to apps they created.
+export const APP_ACCESS = ["use", "edit", "full", "chosen"] as const;
+export type AppAccess = (typeof APP_ACCESS)[number];
+
+// The default: they can find and use everything the company built.
+export const MEMBER_DEFAULT_ACCESS: AppAccess = "use";
+
+function toAppAccess(raw: string | null | undefined): AppAccess {
+  return (APP_ACCESS as readonly string[]).includes(raw ?? "") ? (raw as AppAccess) : MEMBER_DEFAULT_ACCESS;
+}
 
 // What a member who was already in the workspace before roles is. Everyone
 // could do everything before roles, and Admin still can (only managing
@@ -153,10 +163,12 @@ export interface Access {
   // false when there's no row and DEFAULT_ROLE applies — the members page
   // says so, so an Owner can see who has never been given a role.
   explicit: boolean;
-  // A Member's level on projects with no grant; null for none (a role
-  // this code doesn't recognise reads as reaching nothing).
+  // A Member's access as set (APP_ACCESS); null for other roles.
+  appAccess: AppAccess | null;
+  // A Member's level on apps with no grant: their appAccess, or null when
+  // it's "chosen" (unlisted apps are hidden) or the role isn't recognised.
   defaultLevel: AccessLevel | null;
-  // A Member's per-project grants: projectId -> level.
+  // A Member's per-app grants (appAccess "chosen"): projectId -> level.
   grants: Map<string, AccessLevel>;
 }
 
@@ -301,8 +313,9 @@ export async function resolveAccess(
     logger.error(`[permissions] unknown role "${row.role}" for ${userId} in ${companyId}; treating as a member who reaches nothing`);
   }
 
+  const appAccess = role === "member" ? toAppAccess(row.appAccess) : null;
   const grants = new Map<string, AccessLevel>();
-  if (role === "member" || !role) {
+  if (appAccess === "chosen") {
     const rows = await prisma.appGrant.findMany({
       where: { userId, project: { companyId } },
       select: { projectId: true, level: true },
@@ -318,7 +331,8 @@ export async function resolveAccess(
     userId,
     role: role ?? "member",
     explicit,
-    defaultLevel: role === "member" ? MEMBER_DEFAULT_LEVEL : null,
+    appAccess,
+    defaultLevel: appAccess && appAccess !== "chosen" ? appAccess : null,
     grants,
   };
 }
@@ -326,7 +340,7 @@ export async function resolveAccess(
 // ---------------------------------------------------------------- default role
 
 // The role fields resolveAccess reads, whether stored or defaulted.
-type MemberRole = { role: string };
+type MemberRole = { role: string; appAccess?: string | null };
 
 // A member with no row and no invite. Before their workspace's members were
 // captured (setUpWorkspaceRoles), they may have been there before roles
@@ -341,7 +355,7 @@ async function defaultRow(userId: string, companyId: string): Promise<MemberRole
 async function writeNewcomerRow(userId: string, companyId: string) {
   try {
     const row = await prisma.workspaceMember.create({
-      data: { companyId, userId, role: NEWCOMER_ROLE },
+      data: { companyId, userId, role: NEWCOMER_ROLE, appAccess: MEMBER_DEFAULT_ACCESS },
     });
     await prisma.auditLog.create({
       data: {
@@ -637,6 +651,7 @@ async function applyPendingInvite(userId: string, companyId: string, knownEmail?
         companyId,
         userId,
         role: invite.role,
+        appAccess: invite.appAccess,
       },
     }),
     ...grants
