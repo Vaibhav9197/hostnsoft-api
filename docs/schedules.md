@@ -138,6 +138,13 @@ never retried:
 - **Email** to the project's creator (`Project.createdBy`, else the
   schedule's creator), through the viaSocket email flow
   (`Webhook.SCHEDULE_ALERT_EMAIL`, same payload shape as the token mail).
+  Written for an owner who didn't write the app: what went wrong in plain
+  words (`plainReason`), no cron or status codes, and a "Fix with your AI"
+  button to the app's dashboard page with `?fix=<scheduleId>`, which
+  scrolls to that job's own "Fix with your AI" copy button. The same prompt,
+  last error included, is also in the email for copying by hand; it mirrors
+  the dashboard's `consoleFixSchedulePrompt` (hostnsoft
+  `app/lib/deployPrompt.ts`) — change both.
 - **Webhook** (optional, per schedule, `alertWebhookUrl`): `POST` JSON
 
 ```json

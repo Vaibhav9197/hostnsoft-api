@@ -11,12 +11,13 @@
  * See docs/schedules.md "Alerts" for the webhook payload.
  */
 import type { Schedule, ScheduleRun } from "@prisma/client";
+import cronstrue from "cronstrue";
 import { callWebhook, Webhook } from "../lib/webhooks";
 import { getUserById } from "../lib/msg91";
 import { assertPublicHttpsUrl } from "../lib/publicHttpsUrl";
 import { logger } from "../lib/logger";
-import { prisma } from "../lib/prisma";
 import { FRONTEND_ORIGIN } from "../lib/frontendOrigin";
+import { API_PUBLIC_URL } from "../lib/publicTokenConfig";
 import { platformAppUrl } from "./showcase";
 import { toRunResponse } from "./schedules";
 
@@ -32,9 +33,6 @@ interface AlertInput {
 }
 
 const WEBHOOK_TIMEOUT_MS = 10_000;
-
-// Failed runs listed in the "failing" email, newest first.
-const RECENT_FAILURES_SHOWN = 5;
 
 function escapeHtml(value: string): string {
   return value
@@ -65,126 +63,149 @@ function formatTime(date: Date, timezone: string): string {
   }
 }
 
+// "every 5 minutes", "at 09:00, Monday through Friday" — same wording the
+// dashboard's jobs list uses (cronstrue there too). Null if unreadable.
+function describeTiming(cron: string): string | null {
+  try {
+    const words = cronstrue.toString(cron, { use24HourTimeFormat: true, verbose: false });
+    return words.charAt(0).toLowerCase() + words.slice(1);
+  } catch {
+    return null;
+  }
+}
+
+// What went wrong, for someone who didn't write the app. The raw error
+// still goes to the AI, inside the prompt.
+function plainReason(run: ScheduleRun): string {
+  const error = run.error ?? "";
+  const status = run.httpStatus ?? 0;
+  if (error.startsWith("Could not reach the app")) return "Embarko couldn't connect to your app.";
+  if (error.startsWith("No complete response")) return "Your app took too long to answer (more than 5 minutes).";
+  if (status >= 300 && status < 400) return "Your app sent the job somewhere else instead of doing it.";
+  if (status === 404) return "Your app no longer has the page this job calls. It may have been renamed or removed.";
+  if (status === 401 || status === 403) return "Your app refused the job, as if it needed a login or a password.";
+  if (status === 503 || status === 502) return "Your app wasn't ready to answer, or it crashed while starting.";
+  if (status >= 500) return "Your app ran into an error while doing this job.";
+  if (status >= 400) return "Your app rejected the job's request.";
+  return "The job didn't finish successfully.";
+}
+
+// The prompt the "Fix with your AI" button hands over. Keep in step with
+// the dashboard's consoleFixSchedulePrompt (hostnsoft app/lib/deployPrompt.ts):
+// same instructions, plus how long the streak has run, which only this
+// side knows.
+function fixPrompt(schedule: Schedule, run: ScheduleRun, app: string): string {
+  const job = schedule.name ?? schedule.path;
+  const reply = run.responseExcerpt?.trim().slice(0, 300) || null;
+  const lastError = [run.error, reply && reply !== run.error ? `the app replied: ${reply}` : null].filter(Boolean).join("; ");
+  const streak = schedule.failingSince
+    ? `It has failed ${schedule.consecutiveFailures} run${schedule.consecutiveFailures === 1 ? "" : "s"} in a row, since ${schedule.failingSince.toISOString()}.\n`
+    : "";
+  return `My Embarko app "${app}" (${platformAppUrl(app)}) has a scheduled job that is failing: ${job} (GET ${schedule.path}).
+Last error: ${lastError || "unknown"}.
+${streak}
+Read ${FRONTEND_ORIGIN}/docs/schedules.md and fix it. Use my deploy token: DEPLOY_TOKEN or ~/.embarko/credentials if either is set; if neither is, ask me for one from ${FRONTEND_ORIGIN}/app/tokens and save it to ~/.embarko/credentials.
+Check the job's recent runs at ${API_PUBLIC_URL}/apps/${app}/schedules/${schedule.id}/runs, fix the route in this app's code, then redeploy it as the existing app "${app}" — that exact name. Tell me it's fixed only when the job's test run says "ok".`;
+}
+
 const FONT = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
-const MONO = "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
 
 const TONE = {
-  failed: { label: "Failing", fg: "#b42318", bg: "#fef3f2", border: "#fecdca" },
+  failed: { label: "Needs attention", fg: "#b42318", bg: "#fef3f2", border: "#fecdca" },
   recovered: { label: "Working again", fg: "#067647", bg: "#ecfdf3", border: "#abefc6" },
 };
 
 // Email-safe layout (tables + inline styles), same look as the showcase and
-// deploy-token mails. Every argument is already-escaped HTML.
-function layout(o: { tone: (typeof TONE)[keyof typeof TONE]; title: string; body: string; cta: { url: string; label: string }; footer: string }): string {
+// deploy-token mails. title, body and footer are already-escaped HTML.
+function layout(o: {
+  tone: (typeof TONE)[keyof typeof TONE];
+  title: string;
+  body: string;
+  cta: { url: string; label: string; icon?: string };
+  after?: string;
+  footer: string;
+}): string {
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${FONT} background:#ffffff;">
   <tr>
     <td align="center" style="padding:24px 12px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; text-align:left;">
-        <tr><td style="padding:0 0 24px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; text-align:left;">
+        <tr><td style="padding:0 0 28px 0;">
           <a href="${escapeHtml(FRONTEND_ORIGIN)}" style="text-decoration:none; color:#1f2328;">
             <img src="${escapeHtml(FRONTEND_ORIGIN)}/assets/android-chrome-192x192.png" width="28" height="28" alt="" style="display:inline-block; vertical-align:middle; border:0;">
             <span style="${FONT} display:inline-block; vertical-align:middle; margin-left:8px; font-size:16px; font-weight:700; color:#1f2328;">Embarko</span>
           </a>
         </td></tr>
-        <tr><td style="padding:0 0 12px 0;">
-          <span style="${FONT} display:inline-block; padding:3px 10px; border-radius:999px; border:1px solid ${o.tone.border}; background:${o.tone.bg}; color:${o.tone.fg}; font-size:12px; font-weight:600;">${o.tone.label}</span>
+        <tr><td style="padding:0 0 14px 0;">
+          <span style="${FONT} display:inline-block; padding:4px 12px; border-radius:999px; border:1px solid ${o.tone.border}; background:${o.tone.bg}; color:${o.tone.fg}; font-size:12px; font-weight:600;">${o.tone.label}</span>
         </td></tr>
-        <tr><td style="padding:0 0 12px 0; font-size:20px; line-height:1.4; font-weight:600; color:#1f2328;">${o.title}</td></tr>
-        <tr><td style="padding:0 0 8px 0; font-size:14px; line-height:1.6; color:#2c3e50;">${o.body}</td></tr>
-        <tr><td style="padding:16px 0 24px 0;">
-          <a href="${escapeHtml(o.cta.url)}" style="${FONT} display:inline-block; background:#1f2328; color:#ffffff; font-size:14px; font-weight:600; text-decoration:none; padding:10px 18px; border-radius:6px;">${escapeHtml(o.cta.label)}</a>
+        <tr><td style="padding:0 0 14px 0; font-size:22px; line-height:1.35; font-weight:700; color:#1f2328;">${o.title}</td></tr>
+        <tr><td style="padding:0; font-size:15px; line-height:1.6; color:#2c3e50;">${o.body}</td></tr>
+        <tr><td style="padding:24px 0 8px 0;">
+          <a href="${escapeHtml(o.cta.url)}" style="${FONT} display:inline-block; background:#1f2328; color:#ffffff; font-size:15px; font-weight:600; text-decoration:none; padding:13px 22px; border-radius:8px;">${o.cta.icon ? `${o.cta.icon}&nbsp; ` : ""}${escapeHtml(o.cta.label)}</a>
         </td></tr>
-        <tr><td style="padding:16px 0 0 0; border-top:1px solid #e6e8eb; font-size:12px; line-height:1.6; color:#8c959f;">${o.footer}<br>— The Embarko team</td></tr>
+        ${o.after ? `<tr><td style="padding:16px 0 0 0;">${o.after}</td></tr>` : ""}
+        <tr><td style="padding:28px 0 0 0;"><div style="border-top:1px solid #e6e8eb; padding-top:16px; font-size:12px; line-height:1.6; color:#8c959f;">${o.footer}<br>— The Embarko team</div></td></tr>
       </table>
     </td>
   </tr>
 </table>`.trim();
 }
 
-// Label / value rows in a light box: what the schedule is.
-function detailsBox(rows: [string, string][]): string {
-  const body = rows
-    .map(
-      ([k, v]) => `<tr>
-        <td style="padding:6px 16px 6px 0; font-size:13px; color:#656d76; white-space:nowrap; vertical-align:top;">${k}</td>
-        <td style="padding:6px 0; font-size:13px; color:#1f2328; word-break:break-all;">${v}</td>
-      </tr>`
-    )
-    .join("");
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0; background:#f6f8fa; border:1px solid #e6e8eb; border-radius:8px;">
-    <tr><td style="padding:10px 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0">${body}</table></td></tr>
-  </table>`;
+function reasonCallout(text: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0 0;"><tr>
+    <td style="padding:14px 16px; background:#fef3f2; border:1px solid #fecdca; border-radius:8px; font-size:14px; line-height:1.55; color:#7a271a;">
+      <b style="color:#b42318;">What went wrong:</b> ${escapeHtml(text)}
+    </td>
+  </tr></table>`;
 }
 
-function failuresList(runs: ScheduleRun[], timezone: string): string {
-  if (runs.length === 0) return "";
-  const rows = runs
-    .map(
-      (r) => `<tr>
-        <td style="padding:10px 12px; border-top:1px solid #f0f1f3; font-size:13px; color:#656d76; white-space:nowrap; vertical-align:top;">${escapeHtml(formatTime(r.startedAt, timezone))}</td>
-        <td style="padding:10px 12px; border-top:1px solid #f0f1f3; ${MONO} font-size:12px; line-height:1.5; color:#b42318; word-break:break-word;">${escapeHtml(r.error ?? (r.httpStatus ? `HTTP ${r.httpStatus}` : "unknown"))}</td>
-      </tr>`
-    )
-    .join("");
-  return `<p style="margin:20px 0 8px 0; font-size:14px; font-weight:600; color:#1f2328;">Recent failed runs</p>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e6e8eb; border-radius:8px; border-collapse:separate;">
-    <tr>
-      <td width="150" style="padding:8px 12px; font-size:12px; font-weight:600; color:#656d76; background:#f6f8fa; border-radius:8px 0 0 0;">When</td>
-      <td style="padding:8px 12px; font-size:12px; font-weight:600; color:#656d76; background:#f6f8fa; border-radius:0 8px 0 0;">What went wrong</td>
-    </tr>
-    ${rows}
-  </table>`;
+// The prompt again, in the email itself, for whoever reads mail where the
+// dashboard isn't handy (a phone, someone else's laptop).
+function promptBox(prompt: string): string {
+  return `<p style="margin:0 0 8px 0; font-size:13px; line-height:1.5; color:#656d76;">Can't open the dashboard? Copy this message and paste it into the AI that built your app:</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td style="padding:14px 16px; background:#f6f8fa; border:1px solid #e6e8eb; border-radius:8px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; line-height:1.55; color:#2c3e50; white-space:pre-wrap; word-break:break-word;">${escapeHtml(prompt)}</td>
+  </tr></table>`;
 }
 
 async function renderEmail(input: AlertInput): Promise<{ subject: string; html: string }> {
   const { event, schedule, run, project } = input;
   const app = project.slug;
   const name = label(schedule);
-  const failed = event === "schedule.failed";
-  const subject = failed
-    ? `Scheduled job failing: ${name} on ${app}`
-    : `Scheduled job working again: ${name} on ${app}`;
+  const timing = describeTiming(schedule.cron);
+  const appPage = `${FRONTEND_ORIGIN}/app/projects/${encodeURIComponent(project.id)}`;
 
-  const details = detailsBox([
-    ["App", `<a href="${escapeHtml(platformAppUrl(app))}" style="color:#0969da; text-decoration:none;">${escapeHtml(app)}</a>`],
-    ["Calls", `<span style="${MONO}">GET ${escapeHtml(schedule.path)}</span>`],
-    ["Runs", `<span style="${MONO}">${escapeHtml(schedule.cron)}</span> (${escapeHtml(schedule.timezone)})`],
-  ]);
-
-  let body: string;
-  if (failed) {
+  if (event === "schedule.failed") {
     const n = schedule.consecutiveFailures;
-    // The newest n failed runs are this streak; older ones came before a success.
-    const recent = await prisma.scheduleRun.findMany({
-      where: { scheduleId: schedule.id, outcome: "failed" },
-      orderBy: { startedAt: "desc" },
-      take: Math.max(1, Math.min(n, RECENT_FAILURES_SHOWN)),
-    });
     const when = schedule.failingSince ? escapeHtml(formatTime(schedule.failingSince, schedule.timezone)) : null;
-    const what =
+    const tries =
       n <= 1
-        ? `This scheduled job failed${when ? ` at <b>${when}</b>` : ""} and hasn't succeeded since.`
-        : `This scheduled job has failed <b>${n} runs in a row</b>${when ? ` since ${when}` : ""}, with no successful run in between.`;
-    body = `<p style="margin:0;">${what} It keeps running on schedule, and you'll get one more email when it works again.</p>
-      ${details}
-      ${failuresList(recent.length ? recent : [run], schedule.timezone)}
-      <p style="margin:20px 0 0 0;"><b>To fix it,</b> ask the AI agent that built the app to check this schedule's recent runs and fix the route.</p>`;
-  } else {
-    const n = input.failedInARow ?? 0;
-    const after = n > 0 ? ` after ${n} failed run${n === 1 ? "" : "s"} in a row` : "";
-    body = `<p style="margin:0;">The run at <b>${escapeHtml(formatTime(run.startedAt, schedule.timezone))}</b> succeeded${after}. No action needed.</p>
-      ${details}`;
+        ? `its last try${when ? `, at ${when},` : ""} failed`
+        : `its last ${n} tries failed${when ? `, starting ${when}` : ""}`;
+    const body = `<p style="margin:0;">Your app <b>${escapeHtml(app)}</b> has a job that runs on its own${timing ? `, ${escapeHtml(timing)}` : ""}: <b>${escapeHtml(name)}</b>. It has stopped working: ${tries}.</p>
+      ${reasonCallout(plainReason(run))}
+      <p style="margin:18px 0 0 0;">You don't need to fix this yourself. Click the button, then paste into the AI that built your app. It gets everything it needs to find the problem and put it right.</p>`;
+    const html = layout({
+      tone: TONE.failed,
+      title: `A scheduled job in ${escapeHtml(app)} stopped working`,
+      body,
+      cta: { url: `${appPage}?fix=${encodeURIComponent(schedule.id)}`, label: "Fix with your AI", icon: "&#10024;" },
+      after: promptBox(fixPrompt(schedule, run, app)),
+      footer: `We'll email you once it's working again. You're getting this because you own ${escapeHtml(app)} on Embarko.`,
+    });
+    return { subject: `Needs attention: a scheduled job in ${app} stopped working`, html };
   }
 
+  const n = input.failedInARow ?? 0;
   const html = layout({
-    tone: failed ? TONE.failed : TONE.recovered,
-    title: `${escapeHtml(name)} ${failed ? "is failing" : "is working again"} on ${escapeHtml(app)}`,
-    body,
-    cta: { url: `${FRONTEND_ORIGIN}/app/projects/${encodeURIComponent(project.id)}`, label: "Open in Embarko" },
+    tone: TONE.recovered,
+    title: `${escapeHtml(name)} is working again`,
+    body: `<p style="margin:0;">Good news: the scheduled job <b>${escapeHtml(name)}</b> in <b>${escapeHtml(app)}</b> ran successfully at ${escapeHtml(formatTime(run.startedAt, schedule.timezone))}${n > 1 ? `, after ${n} failed tries` : ""}. Nothing to do.</p>`,
+    cta: { url: appPage, label: "Open in Embarko" },
     footer: `You're getting this because you own ${escapeHtml(app)} on Embarko.`,
   });
-  return { subject, html };
+  return { subject: `Working again: ${name} in ${app}`, html };
 }
 
 // Stand-ins written where no person was behind an action (projectClaim.ts
