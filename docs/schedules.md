@@ -138,13 +138,15 @@ never retried:
 - **Email** to the project's creator (`Project.createdBy`, else the
   schedule's creator), through the viaSocket email flow
   (`Webhook.SCHEDULE_ALERT_EMAIL`, same payload shape as the token mail).
-  Written for an owner who didn't write the app: what went wrong in plain
-  words (`plainReason`), no cron or status codes, and a "Fix with your AI"
-  button to the app's dashboard page with `?fix=<scheduleId>`, which
-  scrolls to that job's own "Fix with your AI" copy button. The same prompt,
-  last error included, is also in the email for copying by hand; it mirrors
-  the dashboard's `consoleFixSchedulePrompt` (hostnsoft
-  `app/lib/deployPrompt.ts`) — change both.
+  Short, for an owner who didn't write the app: which job stopped working
+  and how many times it failed, no error text, cron or status codes, and two
+  buttons. "Fix with your AI" opens `embarko.ai/fix#<base64url JSON {app,
+  job, prompt}>` (`fixLink`), a page that copies the prompt on arrival (an
+  email can't touch the clipboard; Safari and Firefox need one tap). The
+  prompt carries the real error and the app's reply, rides in the URL
+  fragment so no server log keeps it, and mirrors the dashboard's
+  `consoleFixSchedulePrompt` (hostnsoft `app/lib/deployPrompt.ts`) — change
+  both. "Open in Embarko" goes to the app's dashboard page.
 - **Webhook** (optional, per schedule, `alertWebhookUrl`): `POST` JSON
 
 ```json

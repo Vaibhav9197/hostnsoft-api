@@ -186,7 +186,6 @@ async function settleFailureState(schedule: Schedule, run: ScheduleRun, project:
         schedule: { ...current, failing: false, consecutiveFailures: 0, failingSince: null },
         run,
         project,
-        failedInARow: current.consecutiveFailures,
       });
     } else {
       await prisma.schedule.update({ where: { id: schedule.id }, data: { consecutiveFailures: 0, failingSince: null } });

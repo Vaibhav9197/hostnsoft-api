@@ -11,7 +11,6 @@
  * See docs/schedules.md "Alerts" for the webhook payload.
  */
 import type { Schedule, ScheduleRun } from "@prisma/client";
-import cronstrue from "cronstrue";
 import { callWebhook, Webhook } from "../lib/webhooks";
 import { getUserById } from "../lib/msg91";
 import { assertPublicHttpsUrl } from "../lib/publicHttpsUrl";
@@ -28,8 +27,6 @@ interface AlertInput {
   schedule: Schedule;
   run: ScheduleRun;
   project: { id: string; slug: string; createdBy: string | null };
-  // schedule.recovered only: how many runs had failed in a row before it.
-  failedInARow?: number;
 }
 
 const WEBHOOK_TIMEOUT_MS = 10_000;
@@ -63,37 +60,9 @@ function formatTime(date: Date, timezone: string): string {
   }
 }
 
-// "every 5 minutes", "at 09:00, Monday through Friday" — same wording the
-// dashboard's jobs list uses (cronstrue there too). Null if unreadable.
-function describeTiming(cron: string): string | null {
-  try {
-    const words = cronstrue.toString(cron, { use24HourTimeFormat: true, verbose: false });
-    return words.charAt(0).toLowerCase() + words.slice(1);
-  } catch {
-    return null;
-  }
-}
-
-// What went wrong, for someone who didn't write the app. The raw error
-// still goes to the AI, inside the prompt.
-function plainReason(run: ScheduleRun): string {
-  const error = run.error ?? "";
-  const status = run.httpStatus ?? 0;
-  if (error.startsWith("Could not reach the app")) return "Embarko couldn't connect to your app.";
-  if (error.startsWith("No complete response")) return "Your app took too long to answer (more than 5 minutes).";
-  if (status >= 300 && status < 400) return "Your app sent the job somewhere else instead of doing it.";
-  if (status === 404) return "Your app no longer has the page this job calls. It may have been renamed or removed.";
-  if (status === 401 || status === 403) return "Your app refused the job, as if it needed a login or a password.";
-  if (status === 503 || status === 502) return "Your app wasn't ready to answer, or it crashed while starting.";
-  if (status >= 500) return "Your app ran into an error while doing this job.";
-  if (status >= 400) return "Your app rejected the job's request.";
-  return "The job didn't finish successfully.";
-}
-
-// The prompt the "Fix with your AI" button hands over. Keep in step with
-// the dashboard's consoleFixSchedulePrompt (hostnsoft app/lib/deployPrompt.ts):
-// same instructions, plus how long the streak has run, which only this
-// side knows.
+// The prompt "Fix with your AI" copies. Keep in step with the dashboard's
+// consoleFixSchedulePrompt (hostnsoft app/lib/deployPrompt.ts): same
+// instructions, plus how long the streak has run, which only this side knows.
 function fixPrompt(schedule: Schedule, run: ScheduleRun, app: string): string {
   const job = schedule.name ?? schedule.path;
   const reply = run.responseExcerpt?.trim().slice(0, 300) || null;
@@ -108,6 +77,15 @@ Read ${FRONTEND_ORIGIN}/docs/schedules.md and fix it. Use my deploy token: DEPLO
 Check the job's recent runs at ${API_PUBLIC_URL}/apps/${app}/schedules/${schedule.id}/runs, fix the route in this app's code, then redeploy it as the existing app "${app}" — that exact name. Tell me it's fixed only when the job's test run says "ok".`;
 }
 
+// An email can't write to the clipboard, so the button opens the site's
+// /fix page, which copies the prompt on arrival. The prompt rides in the
+// fragment (base64url JSON, read by hostnsoft app/fix/page.tsx): a fragment
+// never reaches a server, so no log keeps the app's error text.
+function fixLink(schedule: Schedule, run: ScheduleRun, app: string): string {
+  const payload = JSON.stringify({ app, job: schedule.name ?? schedule.path, prompt: fixPrompt(schedule, run, app) });
+  return `${FRONTEND_ORIGIN}/fix#${Buffer.from(payload, "utf8").toString("base64url")}`;
+}
+
 const FONT = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
 
 const TONE = {
@@ -115,21 +93,23 @@ const TONE = {
   recovered: { label: "Working again", fg: "#067647", bg: "#ecfdf3", border: "#abefc6" },
 };
 
+type Cta = { url: string; label: string; primary?: boolean };
+
+function button({ url, label, primary }: Cta): string {
+  const look = primary
+    ? "background:#1f2328; color:#ffffff; border:1px solid #1f2328;"
+    : "background:#ffffff; color:#1f2328; border:1px solid #d0d7de;";
+  return `<a href="${escapeHtml(url)}" style="${FONT} display:inline-block; ${look} font-size:15px; font-weight:600; text-decoration:none; padding:12px 20px; border-radius:8px; margin:0 8px 8px 0;">${escapeHtml(label)}</a>`;
+}
+
 // Email-safe layout (tables + inline styles), same look as the showcase and
 // deploy-token mails. title, body and footer are already-escaped HTML.
-function layout(o: {
-  tone: (typeof TONE)[keyof typeof TONE];
-  title: string;
-  body: string;
-  cta: { url: string; label: string; icon?: string };
-  after?: string;
-  footer: string;
-}): string {
+function layout(o: { tone: (typeof TONE)[keyof typeof TONE]; title: string; body: string; ctas: Cta[]; footer: string }): string {
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${FONT} background:#ffffff;">
   <tr>
     <td align="center" style="padding:24px 12px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; text-align:left;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px; text-align:left;">
         <tr><td style="padding:0 0 28px 0;">
           <a href="${escapeHtml(FRONTEND_ORIGIN)}" style="text-decoration:none; color:#1f2328;">
             <img src="${escapeHtml(FRONTEND_ORIGIN)}/assets/android-chrome-192x192.png" width="28" height="28" alt="" style="display:inline-block; vertical-align:middle; border:0;">
@@ -139,70 +119,45 @@ function layout(o: {
         <tr><td style="padding:0 0 14px 0;">
           <span style="${FONT} display:inline-block; padding:4px 12px; border-radius:999px; border:1px solid ${o.tone.border}; background:${o.tone.bg}; color:${o.tone.fg}; font-size:12px; font-weight:600;">${o.tone.label}</span>
         </td></tr>
-        <tr><td style="padding:0 0 14px 0; font-size:22px; line-height:1.35; font-weight:700; color:#1f2328;">${o.title}</td></tr>
+        <tr><td style="padding:0 0 10px 0; font-size:22px; line-height:1.35; font-weight:700; color:#1f2328;">${o.title}</td></tr>
         <tr><td style="padding:0; font-size:15px; line-height:1.6; color:#2c3e50;">${o.body}</td></tr>
-        <tr><td style="padding:24px 0 8px 0;">
-          <a href="${escapeHtml(o.cta.url)}" style="${FONT} display:inline-block; background:#1f2328; color:#ffffff; font-size:15px; font-weight:600; text-decoration:none; padding:13px 22px; border-radius:8px;">${o.cta.icon ? `${o.cta.icon}&nbsp; ` : ""}${escapeHtml(o.cta.label)}</a>
-        </td></tr>
-        ${o.after ? `<tr><td style="padding:16px 0 0 0;">${o.after}</td></tr>` : ""}
-        <tr><td style="padding:28px 0 0 0;"><div style="border-top:1px solid #e6e8eb; padding-top:16px; font-size:12px; line-height:1.6; color:#8c959f;">${o.footer}<br>— The Embarko team</div></td></tr>
+        <tr><td style="padding:22px 0 0 0;">${o.ctas.map(button).join("")}</td></tr>
+        <tr><td style="padding:20px 0 0 0;"><div style="border-top:1px solid #e6e8eb; padding-top:14px; font-size:12px; line-height:1.6; color:#8c959f;">${o.footer}</div></td></tr>
       </table>
     </td>
   </tr>
 </table>`.trim();
 }
 
-function reasonCallout(text: string): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0 0;"><tr>
-    <td style="padding:14px 16px; background:#fef3f2; border:1px solid #fecdca; border-radius:8px; font-size:14px; line-height:1.55; color:#7a271a;">
-      <b style="color:#b42318;">What went wrong:</b> ${escapeHtml(text)}
-    </td>
-  </tr></table>`;
-}
-
-// The prompt again, in the email itself, for whoever reads mail where the
-// dashboard isn't handy (a phone, someone else's laptop).
-function promptBox(prompt: string): string {
-  return `<p style="margin:0 0 8px 0; font-size:13px; line-height:1.5; color:#656d76;">Can't open the dashboard? Copy this message and paste it into the AI that built your app:</p>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-    <td style="padding:14px 16px; background:#f6f8fa; border:1px solid #e6e8eb; border-radius:8px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; line-height:1.55; color:#2c3e50; white-space:pre-wrap; word-break:break-word;">${escapeHtml(prompt)}</td>
-  </tr></table>`;
-}
-
-async function renderEmail(input: AlertInput): Promise<{ subject: string; html: string }> {
+function renderEmail(input: AlertInput): { subject: string; html: string } {
   const { event, schedule, run, project } = input;
   const app = project.slug;
   const name = label(schedule);
-  const timing = describeTiming(schedule.cron);
-  const appPage = `${FRONTEND_ORIGIN}/app/projects/${encodeURIComponent(project.id)}`;
+  const dashboard = { url: `${FRONTEND_ORIGIN}/app/projects/${encodeURIComponent(project.id)}`, label: "Open in Embarko" };
 
   if (event === "schedule.failed") {
+    // The dashboard scrolls to this job and marks its fix button.
+    dashboard.url += `?fix=${encodeURIComponent(schedule.id)}`;
     const n = schedule.consecutiveFailures;
-    const when = schedule.failingSince ? escapeHtml(formatTime(schedule.failingSince, schedule.timezone)) : null;
-    const tries =
-      n <= 1
-        ? `its last try${when ? `, at ${when},` : ""} failed`
-        : `its last ${n} tries failed${when ? `, starting ${when}` : ""}`;
-    const body = `<p style="margin:0;">Your app <b>${escapeHtml(app)}</b> has a job that runs on its own${timing ? `, ${escapeHtml(timing)}` : ""}: <b>${escapeHtml(name)}</b>. It has stopped working: ${tries}.</p>
-      ${reasonCallout(plainReason(run))}
-      <p style="margin:18px 0 0 0;">You don't need to fix this yourself. Click the button, then paste into the AI that built your app. It gets everything it needs to find the problem and put it right.</p>`;
+    const what =
+      n <= 1 && schedule.failingSince
+        ? `failed and hasn't worked since ${escapeHtml(formatTime(schedule.failingSince, schedule.timezone))}`
+        : `failed ${n} times in a row`;
     const html = layout({
       tone: TONE.failed,
-      title: `A scheduled job in ${escapeHtml(app)} stopped working`,
-      body,
-      cta: { url: `${appPage}?fix=${encodeURIComponent(schedule.id)}`, label: "Fix with your AI", icon: "&#10024;" },
-      after: promptBox(fixPrompt(schedule, run, app)),
-      footer: `We'll email you once it's working again. You're getting this because you own ${escapeHtml(app)} on Embarko.`,
+      title: `${escapeHtml(name)} stopped working`,
+      body: `This scheduled job in <b>${escapeHtml(app)}</b> ${what}. Your AI can fix it: tap the button, then paste into your AI.`,
+      ctas: [{ url: fixLink(schedule, run, app), label: "✨ Fix with your AI", primary: true }, dashboard],
+      footer: `We'll email you when it works again.`,
     });
-    return { subject: `Needs attention: a scheduled job in ${app} stopped working`, html };
+    return { subject: `Needs attention: ${name} stopped working in ${app}`, html };
   }
 
-  const n = input.failedInARow ?? 0;
   const html = layout({
     tone: TONE.recovered,
     title: `${escapeHtml(name)} is working again`,
-    body: `<p style="margin:0;">Good news: the scheduled job <b>${escapeHtml(name)}</b> in <b>${escapeHtml(app)}</b> ran successfully at ${escapeHtml(formatTime(run.startedAt, schedule.timezone))}${n > 1 ? `, after ${n} failed tries` : ""}. Nothing to do.</p>`,
-    cta: { url: appPage, label: "Open in Embarko" },
+    body: `This scheduled job in <b>${escapeHtml(app)}</b> ran fine at ${escapeHtml(formatTime(run.startedAt, schedule.timezone))}. Nothing to do.`,
+    ctas: [dashboard],
     footer: `You're getting this because you own ${escapeHtml(app)} on Embarko.`,
   });
   return { subject: `Working again: ${name} in ${app}`, html };
@@ -238,7 +193,7 @@ async function sendEmail(input: AlertInput): Promise<void> {
     return;
   }
   const owner = { email };
-  const { subject, html } = await renderEmail(input);
+  const { subject, html } = renderEmail(input);
   await callWebhook(Webhook.SCHEDULE_ALERT_EMAIL, {
     to: [{ email: owner.email }],
     subject,
