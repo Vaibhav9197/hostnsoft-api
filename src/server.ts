@@ -8,12 +8,17 @@ import { startScheduleRunner } from "./services/scheduleRunner";
 import { startRolesSetupSweep } from "./lib/permissions";
 
 const port = Number(process.env.PORT ?? 4100);
+// Loopback only: the public path is Traefik (host network) -> 127.0.0.1,
+// and hostnsoft-deploy calls over loopback too. Listening on every
+// interface would also expose this port to app containers via the
+// docker bridge gateway, bypassing Traefik's /api/internal block.
+const host = process.env.HOST ?? "127.0.0.1";
 const app = createApp();
 
 connectRedis()
   .then(() => {
-    const server = app.listen(port, () => {
-      logger.info(`hostnsoft-api listening on port ${port}`);
+    const server = app.listen(port, host, () => {
+      logger.info(`hostnsoft-api listening on ${host}:${port}`);
       // Tell pm2 we can serve (wait_ready). No-op outside pm2.
       process.send?.("ready");
     });
