@@ -26,6 +26,16 @@ export const SCHEDULE_TICK_MS: number = envNumber("SCHEDULE_TICK_MS", 30 * 1000)
 // this wait for the next tick.
 export const SCHEDULE_MAX_CONCURRENT_RUNS: number = envNumber("SCHEDULE_MAX_CONCURRENT_RUNS", 20);
 
+// Failed runs in a row before the owner is emailed and the app shows
+// "Needs attention". One failure is usually a blip (a dropped connection,
+// a restart) that the next run gets past; this waits for a pattern.
+export const SCHEDULE_ALERT_AFTER_FAILURES: number = Math.max(1, envNumber("SCHEDULE_ALERT_AFTER_FAILURES", 3));
+
+// ...or once a failure streak is this old with no success, whichever comes
+// first, so a daily job is not left broken for three days before anyone
+// hears. Checked every tick, so it fires even when no further run is due.
+export const SCHEDULE_ALERT_AFTER_HOURS: number = envNumber("SCHEDULE_ALERT_AFTER_HOURS", 6);
+
 // Run rows kept per schedule; older ones are pruned after each run.
 export const SCHEDULE_RUN_HISTORY: number = envNumber("SCHEDULE_RUN_HISTORY", 100);
 

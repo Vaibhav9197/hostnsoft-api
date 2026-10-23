@@ -23,6 +23,8 @@ import type { Schedule, ScheduleRun } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import {
+  SCHEDULE_ALERT_AFTER_FAILURES,
+  SCHEDULE_ALERT_AFTER_HOURS,
   SCHEDULE_MAX_CONCURRENT_RUNS,
   SCHEDULE_RESPONSE_EXCERPT_BYTES,
   SCHEDULE_RUN_HISTORY,
@@ -142,20 +144,70 @@ async function pruneRuns(scheduleId: string): Promise<void> {
   if (stale.length) await prisma.scheduleRun.deleteMany({ where: { id: { in: stale.map((r) => r.id) } } });
 }
 
-// Failure state + alerts. One alert on the first failure, one on recovery.
+const ALERT_AFTER_MS = SCHEDULE_ALERT_AFTER_HOURS * 60 * 60 * 1000;
+
+// Flips `failing` and sends the one "failing" alert. A compare-and-set on
+// the row, so the run path and the age sweep can't both send it.
+async function raiseFailing(schedule: Schedule, run: ScheduleRun, project: ProjectRef): Promise<void> {
+  const flipped = await prisma.schedule.updateMany({ where: { id: schedule.id, failing: false }, data: { failing: true } });
+  if (flipped.count === 1) {
+    await sendScheduleAlert({ event: "schedule.failed", schedule: { ...schedule, failing: true }, run, project });
+  }
+}
+
+// Failure state + alerts. `failing` (and the one "failing" alert) waits for
+// SCHEDULE_ALERT_AFTER_FAILURES failed runs in a row, or for the streak to
+// be SCHEDULE_ALERT_AFTER_HOURS old (checked here and by
+// alertAgedFailureStreaks); the first success after that sends the one
+// "recovered" alert. Shorter streaks reset silently. Every flip is a
+// compare-and-set on a fresh row, not on the `schedule` snapshot this run
+// started from, so a manual run overlapping a scheduled one can't send an
+// alert twice or miss one.
 async function settleFailureState(schedule: Schedule, run: ScheduleRun, project: ProjectRef): Promise<void> {
   if (run.outcome === "failed") {
-    const updated = await prisma.schedule.update({
+    await prisma.schedule.updateMany({ where: { id: schedule.id, failingSince: null }, data: { failingSince: run.startedAt } });
+    const counted = await prisma.schedule.update({
       where: { id: schedule.id },
-      data: { consecutiveFailures: { increment: 1 }, failing: true },
+      data: { consecutiveFailures: { increment: 1 } },
     });
-    if (!schedule.failing) await sendScheduleAlert({ event: "schedule.failed", schedule: updated, run, project });
-  } else if (run.outcome === "ok" && (schedule.failing || schedule.consecutiveFailures > 0)) {
-    const updated = await prisma.schedule.update({
-      where: { id: schedule.id },
-      data: { consecutiveFailures: 0, failing: false },
+    if (counted.failing) return;
+    const aged = !!counted.failingSince && Date.now() - counted.failingSince.getTime() >= ALERT_AFTER_MS;
+    if (counted.consecutiveFailures >= SCHEDULE_ALERT_AFTER_FAILURES || aged) await raiseFailing(counted, run, project);
+  } else if (run.outcome === "ok") {
+    const current = await prisma.schedule.findUnique({ where: { id: schedule.id } });
+    if (!current || (!current.failing && current.consecutiveFailures === 0 && !current.failingSince)) return;
+    const recovered = await prisma.schedule.updateMany({
+      where: { id: schedule.id, failing: true },
+      data: { failing: false, consecutiveFailures: 0, failingSince: null },
     });
-    if (schedule.failing) await sendScheduleAlert({ event: "schedule.recovered", schedule: updated, run, project });
+    if (recovered.count === 1) {
+      await sendScheduleAlert({
+        event: "schedule.recovered",
+        schedule: { ...current, failing: false, consecutiveFailures: 0, failingSince: null },
+        run,
+        project,
+        failedInARow: current.consecutiveFailures,
+      });
+    } else {
+      await prisma.schedule.update({ where: { id: schedule.id }, data: { consecutiveFailures: 0, failingSince: null } });
+    }
+  }
+}
+
+// A slow schedule (daily, weekly) may not run again for a long time after
+// a failure; this raises the alert once its streak is old enough, without
+// waiting for another failed run. Paused schedules are left alone.
+async function alertAgedFailureStreaks(): Promise<void> {
+  const aged = await prisma.schedule.findMany({
+    where: { enabled: true, failing: false, failingSince: { lte: new Date(Date.now() - ALERT_AFTER_MS) } },
+    include: { project: { select: { id: true, slug: true, createdBy: true } } },
+  });
+  for (const { project, ...schedule } of aged) {
+    const lastFailed = await prisma.scheduleRun.findFirst({
+      where: { scheduleId: schedule.id, outcome: "failed" },
+      orderBy: { startedAt: "desc" },
+    });
+    if (lastFailed) await raiseFailing(schedule, lastFailed, project);
   }
 }
 
@@ -217,6 +269,10 @@ export async function startRun(
 }
 
 async function tick(): Promise<void> {
+  await alertAgedFailureStreaks().catch((e) =>
+    logger.error(`[scheduleRunner] aged failure check failed: ${(e as Error).message}`)
+  );
+
   const capacity = SCHEDULE_MAX_CONCURRENT_RUNS - inFlight.size;
   if (capacity <= 0) return;
 

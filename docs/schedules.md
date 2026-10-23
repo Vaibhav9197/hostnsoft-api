@@ -122,8 +122,18 @@ boundary after "bot").
 ## Alerts
 
 One alert when a schedule starts failing, one when it recovers, never one
-per failed run (`Schedule.failing`, `consecutiveFailures`). Both
-destinations are best-effort, logged on failure, never retried:
+per failed run (`Schedule.failing`, `consecutiveFailures`, `failingSince`).
+"Starts failing" means `SCHEDULE_ALERT_AFTER_FAILURES` (default 3) runs
+failed in a row, or the streak is `SCHEDULE_ALERT_AFTER_HOURS` (default 6)
+old with no success, whichever comes first. A single failed run is usually
+a blip (a dropped connection while the proxy restarted) that the next run
+gets past, so a shorter, younger streak only counts up and resets on the
+next success, with no alert and no "Needs attention" on the dashboard. The
+age rule is for slow schedules: a daily job would otherwise wait three days.
+The runner checks streak ages every tick, so it fires even when no further
+run is due; paused schedules are skipped. The recovered alert goes only
+after a failing alert did. Both destinations are best-effort, logged on failure,
+never retried:
 
 - **Email** to the project's creator (`Project.createdBy`, else the
   schedule's creator), through the viaSocket email flow
@@ -136,7 +146,7 @@ destinations are best-effort, logged on failure, never retried:
   "app": { "name": "my-app", "url": "https://my-app.embarko.app" },
   "schedule": { "id": "…", "name": "daily digest", "cron": "0 9 * * 1-5", "timezone": "Asia/Kolkata", "path": "/tasks/daily-digest" },
   "run": { "id": "…", "trigger": "schedule", "outcome": "failed", "terminal": true, "httpStatus": 500, "error": "HTTP 500", "responseExcerpt": "…", "startedAt": "…", "finishedAt": "…", "durationMs": 812 },
-  "consecutiveFailures": 1,
+  "consecutiveFailures": 3,
   "sentAt": "…"
 }
 ```

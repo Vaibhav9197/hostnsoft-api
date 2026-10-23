@@ -259,10 +259,14 @@ model Schedule {
   // both fire the same occurrence. Null while disabled.
   nextRunAt DateTime?
 
-  // Failure state for alerting: one alert when it starts failing, one when
-  // it recovers — never one per failed run.
-  consecutiveFailures Int     @default(0)
-  failing             Boolean @default(false)
+  // Failure state for alerting: `failing` flips (and one alert goes out)
+  // after SCHEDULE_ALERT_AFTER_FAILURES failed runs in a row, or once the
+  // streak is SCHEDULE_ALERT_AFTER_HOURS old with no success, whichever
+  // comes first; one more alert when it recovers — never one per failed run.
+  consecutiveFailures Int       @default(0)
+  failing             Boolean   @default(false)
+  // When the current failure streak's first run started; null with no streak.
+  failingSince        DateTime?
 
   createdBy String // proxy userId — the deploy token's creator on the agent path
   createdAt DateTime @default(now())
