@@ -45,3 +45,11 @@ the same email sends it again.
 Showcase and schedule-alert emails (they all take the same `to` / `subject`
 / `variables.content` shape). It should get its own flow once the invite
 email needs its own sender, look or tracking.
+
+## Join request email (same flow)
+
+Sent to every Owner and Admin when someone asks to join through the
+workspace's invite link (`services/inviteLinks.ts` `notifyAdmins`). Same
+webhook and payload shape; the body comes from `src/lib/joinRequestEmail.ts`
+and links to `${FRONTEND_ORIGIN}/app/people`. Subject: "Asha wants to join
+Acme on Embarko". Sent once per new request, best effort.

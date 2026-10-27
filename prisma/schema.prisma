@@ -156,6 +156,10 @@ model WorkspaceMember {
   // apps in AppGrant, at their level, the rest hidden. Always "full" on
   // what they created. Ignored for other roles.
   appAccess String   @default("use")
+  // When they last did anything in this workspace (middleware/
+  // companyContext.ts, at most once an hour). Null: not since this column
+  // arrived. Shown as "last active" on the People page, nothing else.
+  lastSeenAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -197,8 +201,68 @@ model PendingInvite {
   grants    String   @default("[]")
   invitedBy String
   createdAt DateTime @default(now())
+  // Last time the invite email went out (create or resend). Null: only
+  // the first send, before this column existed — createdAt then.
+  lastSentAt DateTime?
 
   @@unique([companyId, email])
+}
+
+// A workspace's invite link — services/inviteLinks.ts. At most one live
+// (disabledAt null) per workspace; "reset" disables it and makes a new one,
+// so the old URL stops working at once. The code is the whole secret
+// (randomBytes(24), base64url) and kept readable, unlike deploy tokens: it
+// only lets someone *ask* to join after signing in, and the panel must be
+// able to copy the link again at any time.
+//
+// rule: "anyone" (any signed-in person may ask), "domain" (only people
+// whose proxy-verified email is on one of `domains`), "invite_only" (only
+// emails with a PendingInvite). Joining always goes through a JoinRequest
+// an Owner or Admin approves: proxy can only add someone to a company as a
+// person already in it (msg91.ts addUserToCompany), so there is nobody to
+// add them at the moment they click. `eligible` on the request says the
+// link's rule let them in, so approving is one click.
+model InviteLink {
+  id         String    @id @default(cuid())
+  companyId  String
+  code       String    @unique
+  rule       String    @default("anyone") // "anyone" | "domain" | "invite_only"
+  domains    String    @default("[]") // JSON ["walkover.in"], lowercased
+  // What people joining through it get: role "member" or "billing" only
+  // (never Owner/Admin), access as WorkspaceMember.appAccess minus "chosen".
+  role       String    @default("member")
+  appAccess  String    @default("use")
+  createdBy  String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  uses       Int       @default(0)
+  disabledAt DateTime?
+
+  @@index([companyId, disabledAt])
+}
+
+// Someone asking to join a workspace, from its invite link —
+// services/inviteLinks.ts. One row per (workspace, person): asking again
+// after a refusal reopens it. Approved and rejected rows stay as history.
+model JoinRequest {
+  id        String    @id @default(cuid())
+  companyId String
+  userId    String
+  email     String // lowercased, from proxy's verified identity
+  name      String?
+  linkId    String?
+  // true: the link's rule let them in (domain matched / anyone) —
+  // false: they asked although it didn't.
+  eligible  Boolean   @default(false)
+  reason    String?
+  status    String    @default("pending") // "pending" | "approved" | "rejected"
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  decidedBy String?
+  decidedAt DateTime?
+
+  @@unique([companyId, userId])
+  @@index([companyId, status])
 }
 
 // How far a workspace's roles have been set up (permissions.ts
