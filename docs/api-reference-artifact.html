@@ -523,7 +523,8 @@
 
     <div class="navgroup">
       <div class="navgroup-label">Admin <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></div>
-      <a class="navlink" href="#ep-admin-apps">List all apps</a>
+      <a class="navlink" href="#ep-admin-apps">List customer apps</a>
+      <a class="navlink" href="#ep-admin-platform">Platform health</a>
       <a class="navlink" href="#ep-admin-feature-requests">List customer queries</a>
     </div>
 
@@ -2133,29 +2134,97 @@
           <span class="path">/admin/apps</span>
           <span class="role-chip admin">proxy_auth_token · admin only</span>
         </div>
-        <p class="endpoint-desc">Every app on the platform, across every company (including unclaimed orphan deploys), newest first. One flat list — no per-company grouping, no pagination.</p>
+        <p class="endpoint-desc">Every customer app on the platform, across every company (including unclaimed orphan deploys), newest first, with its live runtime and what is wrong with it. Backs the admin panel's <em>Customer apps</em> page. One list — no per-company grouping, no pagination. <strong>Changed 2026-10-27:</strong> the body is now <code>{items, runtime}</code> instead of a bare array; every earlier field is unchanged inside <code>items</code>.</p>
         <div class="panels">
           <div class="panel">
             <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
-            <pre><code><span class="tok-punc">[</span>
-  <span class="tok-punc">{</span>
-    <span class="tok-key">"appSlug"</span><span class="tok-punc">:</span> <span class="tok-str">"my-app"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> <span class="tok-str">"Acme Inc"</span><span class="tok-punc">,</span> <span class="tok-comment">// "Unclaimed (orphan)" for an orphan deploy</span>
-    <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-08-01T12:00:00.000Z"</span><span class="tok-punc">,</span>
-    <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> <span class="tok-num">256</span><span class="tok-punc">,</span>
-    <span class="tok-key">"deploymentCount"</span><span class="tok-punc">:</span> <span class="tok-num">14</span><span class="tok-punc">,</span>
-    <span class="tok-key">"status"</span><span class="tok-punc">:</span> <span class="tok-str">"success"</span><span class="tok-punc">,</span> <span class="tok-comment">// "success" | "failed" | "in_progress" | "no_deployments"</span>
-    <span class="tok-key">"lastDeploySource"</span><span class="tok-punc">:</span> <span class="tok-str">"agent"</span><span class="tok-punc">,</span> <span class="tok-comment">// new — latest deployment's source, or null</span>
-    <span class="tok-key">"lastDeployAgentName"</span><span class="tok-punc">:</span> <span class="tok-str">"claude-code"</span> <span class="tok-comment">// new — latest deployment's agentName, or null</span>
-  <span class="tok-punc">}</span>
-<span class="tok-punc">]</span></code></pre>
+            <pre><code>{
+  <span class="tok-key">"items"</span><span class="tok-punc">:</span> [
+    {
+      <span class="tok-key">"id"</span><span class="tok-punc">:</span> &quot;cmh1x0...&quot;,
+      <span class="tok-key">"appSlug"</span><span class="tok-punc">:</span> &quot;my-app&quot;,
+      <span class="tok-key">"name"</span><span class="tok-punc">:</span> &quot;My App&quot;,
+      <span class="tok-key">"kind"</span><span class="tok-punc">:</span> &quot;service&quot;, <span class="tok-comment">// &quot;service&quot; | &quot;static&quot;</span>
+      <span class="tok-key">"isOrphan"</span><span class="tok-punc">:</span> false,
+      <span class="tok-key">"companyName"</span><span class="tok-punc">:</span> &quot;Acme Inc&quot;, <span class="tok-comment">// &quot;Unclaimed (orphan)&quot; for an orphan deploy</span>
+      <span class="tok-key">"createdAt"</span><span class="tok-punc">:</span> &quot;2026-08-01T12:00:00.000Z&quot;,
+      <span class="tok-key">"memoryMb"</span><span class="tok-punc">:</span> 256,
+      <span class="tok-key">"deploymentCount"</span><span class="tok-punc">:</span> 14,
+      <span class="tok-key">"status"</span><span class="tok-punc">:</span> &quot;success&quot;, <span class="tok-comment">// latest deploy: &quot;success&quot; | &quot;failed&quot; | &quot;in_progress&quot; | &quot;no_deployments&quot;</span>
+      <span class="tok-key">"lastDeployAt"</span><span class="tok-punc">:</span> &quot;2026-10-26T09:00:00.000Z&quot;,
+      <span class="tok-key">"lastDeploySource"</span><span class="tok-punc">:</span> &quot;agent&quot;,
+      <span class="tok-key">"lastDeployAgentName"</span><span class="tok-punc">:</span> &quot;claude-code&quot;,
+      <span class="tok-key">"health"</span><span class="tok-punc">:</span> &quot;running&quot;, <span class="tok-comment">// new — &quot;running&quot; | &quot;starting&quot; | &quot;asleep&quot; | &quot;stopped&quot; | &quot;crashed&quot; | &quot;unknown&quot;; null: static or no job</span>
+      <span class="tok-key">"asleepSince"</span><span class="tok-punc">:</span> null,
+      <span class="tok-key">"memoryLimitMb"</span><span class="tok-punc">:</span> 256, <span class="tok-comment">// new — the hard limit the app runs under</span>
+      <span class="tok-key">"memoryUsedMb"</span><span class="tok-punc">:</span> 244, <span class="tok-comment">// new — latest sample (last 10 min), null when none</span>
+      <span class="tok-key">"memoryPeak24hMb"</span><span class="tok-punc">:</span> 256,
+      <span class="tok-key">"cpuPercent"</span><span class="tok-punc">:</span> 3.1,
+      <span class="tok-key">"crashes24h"</span><span class="tok-punc">:</span> 0, <span class="tok-comment">// new — restarts the app caused itself</span>
+      <span class="tok-key">"lastCrashAt"</span><span class="tok-punc">:</span> null,
+      <span class="tok-key">"platformRestarts24h"</span><span class="tok-punc">:</span> 0, <span class="tok-comment">// new — restarts the platform caused (Docker restart, many apps at once)</span>
+      <span class="tok-key">"oomKills24h"</span><span class="tok-punc">:</span> 14, <span class="tok-comment">// new — killed for exceeding its memory limit</span>
+      <span class="tok-key">"lastOom"</span><span class="tok-punc">:</span> { <span class="tok-key">"at"</span><span class="tok-punc">:</span> &quot;2026-10-26T07:59:25.000Z&quot;, <span class="tok-key">"task"</span><span class="tok-punc">:</span> &quot;server&quot;, <span class="tok-key">"process"</span><span class="tok-punc">:</span> &quot;node&quot;, <span class="tok-key">"mb"</span><span class="tok-punc">:</span> 286 },
+      <span class="tok-key">"wakeFailures24h"</span><span class="tok-punc">:</span> 0, <span class="tok-comment">// new — the activator could not wake it from sleep</span>
+      <span class="tok-key">"lastWakeFailure"</span><span class="tok-punc">:</span> null,
+      <span class="tok-key">"problems"</span><span class="tok-punc">:</span> [ <span class="tok-comment">// new — what is wrong, whose side it is on</span>
+        { <span class="tok-key">"kind"</span><span class="tok-punc">:</span> &quot;oom&quot;, <span class="tok-key">"cause"</span><span class="tok-punc">:</span> &quot;our-limit&quot;, <span class="tok-key">"severity"</span><span class="tok-punc">:</span> &quot;attention&quot;, <span class="tok-key">"text"</span><span class="tok-punc">:</span> &quot;Ran out of memory 14× in 24 h at its 256 MB limit&quot; },
+        { <span class="tok-key">"kind"</span><span class="tok-punc">:</span> &quot;memory-high&quot;, <span class="tok-key">"cause"</span><span class="tok-punc">:</span> &quot;our-limit&quot;, <span class="tok-key">"severity"</span><span class="tok-punc">:</span> &quot;attention&quot;, <span class="tok-key">"text"</span><span class="tok-punc">:</span> &quot;Using 95% of its 256 MB memory limit&quot; }
+      ]
+    }
+  ],
+  <span class="tok-key">"runtime"</span><span class="tok-punc">:</span> { <span class="tok-key">"available"</span><span class="tok-punc">:</span> true, <span class="tok-key">"error"</span><span class="tok-punc">:</span> null, <span class="tok-key">"generatedAt"</span><span class="tok-punc">:</span> &quot;2026-10-27T03:46:26.893Z&quot; }
+}</code></pre>
           </div>
           <div class="panel">
             <div class="panel-head"><span class="label">404 (not an admin)</span><button class="copy-btn" data-copy>Copy</button></div>
             <pre><code><span class="tok-punc">{</span> <span class="tok-key">"error"</span><span class="tok-punc">:</span> <span class="tok-str">"Not found"</span> <span class="tok-punc">}</span></code></pre>
           </div>
         </div>
-        <div class="endpoint-note info"><code>status</code> is the most recent deployment's own status, not a separate computed field — <code>"no_deployments"</code> covers a project row that exists (e.g. claimed) but hasn't completed a deploy attempt yet. <code>memoryMb</code> is the project's current allocation, not necessarily the most recent deployment's — it only ever moves upward automatically (see Projects), so it reflects the real applied ceiling even after a since-reverted deploy.</div>
+        <div class="endpoint-note info"><code>status</code> is the most recent deployment's own status; <code>"no_deployments"</code> covers a project row that exists but has not completed a deploy. <code>memoryMb</code> is the project's configured allocation; <code>memoryLimitMb</code> is the limit the running app actually has. The runtime fields come from one call to the deploy service; when it can't answer, the list still returns, with <code>runtime.available: false</code> and the runtime fields <code>null</code>. <code>problems[].cause</code> is <code>"our-limit"</code> (a limit the platform sets), <code>"platform"</code> (our machinery: waking, server or Docker restarts) or <code>"app"</code> (the app's own code or deploy). <code>severity: "note"</code> is shown but does not count as needing attention.</div>
+      </article>
+
+      <article class="endpoint" id="ep-admin-platform">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/admin/platform</span>
+          <span class="role-chip admin">proxy_auth_token · admin only</span>
+          <span class="role-chip new" style="margin-left:8px;">new</span>
+        </div>
+        <p class="endpoint-desc">The platform's own infrastructure — not customers' apps: whether Traefik and the services are up, how full the server is, the Nomad budget, and what the platform monitor did on its own in the last 7 days. Backs the admin panel's <em>Platform health</em> page. Same access model as <code>GET /admin/apps</code>.</p>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><span class="label">200 Response</span><button class="copy-btn" data-copy>Copy</button></div>
+            <pre><code>{
+  <span class="tok-key">"available"</span><span class="tok-punc">:</span> true,
+  <span class="tok-key">"error"</span><span class="tok-punc">:</span> null,
+  <span class="tok-key">"generatedAt"</span><span class="tok-punc">:</span> &quot;2026-10-27T03:46:26.893Z&quot;,
+  <span class="tok-key">"monitor"</span><span class="tok-punc">:</span> { <span class="tok-comment">// the platform monitor&#x27;s status file, as written</span>
+    <span class="tok-key">"env"</span><span class="tok-punc">:</span> &quot;prod&quot;,
+    <span class="tok-key">"generatedAt"</span><span class="tok-punc">:</span> &quot;2026-10-27T03:46:00.000Z&quot;,
+    <span class="tok-key">"checkErrors"</span><span class="tok-punc">:</span> [],
+    <span class="tok-key">"components"</span><span class="tok-punc">:</span> [ { <span class="tok-key">"key"</span><span class="tok-punc">:</span> &quot;traefik&quot;, <span class="tok-key">"label"</span><span class="tok-punc">:</span> &quot;Traefik&quot;, <span class="tok-key">"ok"</span><span class="tok-punc">:</span> true, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> null } ],
+    <span class="tok-key">"server"</span><span class="tok-punc">:</span> {
+      <span class="tok-key">"memory"</span><span class="tok-punc">:</span> { <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 45.2, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> &quot;14.2 of 31.3 GB&quot; },
+      <span class="tok-key">"disks"</span><span class="tok-punc">:</span> [ { <span class="tok-key">"mount"</span><span class="tok-punc">:</span> &quot;/srv/embarko&quot;, <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 76 } ],
+      <span class="tok-key">"nomadCpu"</span><span class="tok-punc">:</span> { <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 43.8, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> &quot;7010 of 16000 reserved; new deploys fail when it is full&quot; },
+      <span class="tok-key">"nomadMemory"</span><span class="tok-punc">:</span> { <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 16.9, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> &quot;5440 of 32101 MB reserved&quot; },
+      <span class="tok-key">"traefikMemory"</span><span class="tok-punc">:</span> { <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 10.7, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> &quot;219.7MiB / 2GiB&quot; },
+      <span class="tok-key">"appsCpuCapThrottledPct"</span><span class="tok-punc">:</span> 0
+    },
+    <span class="tok-key">"pm2Memory"</span><span class="tok-punc">:</span> [ { <span class="tok-key">"name"</span><span class="tok-punc">:</span> &quot;prod-api-service&quot;, <span class="tok-key">"pct"</span><span class="tok-punc">:</span> 14.4, <span class="tok-key">"detail"</span><span class="tok-punc">:</span> &quot;147 of 1024 MB&quot; } ],
+    <span class="tok-key">"buildsPaused"</span><span class="tok-punc">:</span> null,
+    <span class="tok-key">"openIssues"</span><span class="tok-punc">:</span> [],
+    <span class="tok-key">"history"</span><span class="tok-punc">:</span> { <span class="tok-key">"actions"</span><span class="tok-punc">:</span> [ { <span class="tok-key">"at"</span><span class="tok-punc">:</span> &quot;...&quot;, <span class="tok-key">"text"</span><span class="tok-punc">:</span> &quot;restarted Traefik. Why: ...&quot; } ], <span class="tok-key">"alerts"</span><span class="tok-punc">:</span> [ { <span class="tok-key">"at"</span><span class="tok-punc">:</span> &quot;...&quot;, <span class="tok-key">"severity"</span><span class="tok-punc">:</span> &quot;critical&quot;, <span class="tok-key">"text"</span><span class="tok-punc">:</span> &quot;...&quot; } ], <span class="tok-key">"appOoms"</span><span class="tok-punc">:</span> [] }
+  },
+  <span class="tok-key">"monitorStale"</span><span class="tok-punc">:</span> false, <span class="tok-comment">// true when the monitor has not written for 5 minutes</span>
+  <span class="tok-key">"monitorError"</span><span class="tok-punc">:</span> null,
+  <span class="tok-key">"customerApps"</span><span class="tok-punc">:</span> { <span class="tok-key">"byHealth"</span><span class="tok-punc">:</span> { <span class="tok-key">"running"</span><span class="tok-punc">:</span> 61, <span class="tok-key">"asleep"</span><span class="tok-punc">:</span> 9, <span class="tok-key">"crashed"</span><span class="tok-punc">:</span> 1 }, <span class="tok-key">"needsAttention"</span><span class="tok-punc">:</span> 3 },
+  <span class="tok-key">"netdataUrl"</span><span class="tok-punc">:</span> &quot;https:<span class="tok-comment">//ship.embarko.ai/netdata/&quot;</span>
+}</code></pre>
+          </div>
+        </div>
+        <div class="endpoint-note info"><code>monitor</code> is <code>null</code> (with <code>error</code> or <code>monitorError</code> saying why) when the deploy service can't be reached or the monitor has not written its status yet. Percentages are of each thing's own limit; the monitor alerts at 80% and acts at 90% for 5 minutes.</div>
       </article>
 
       <article class="endpoint" id="ep-admin-feature-requests">

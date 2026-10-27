@@ -6,24 +6,31 @@ import { getCompanyById, getUserByEmail, getUserById } from "../lib/msg91";
 import { requireProxyToken } from "../middleware/proxyToken";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin";
 import { featureRequestTypeSchema } from "../services/featureRequests";
+import { fetchAdminOverview, needsAttention, problemsFor } from "../services/adminOverview";
+import { API_PUBLIC_URL } from "../lib/publicTokenConfig";
 
 export const adminRouter = Router();
 
 adminRouter.use(requireProxyToken);
 adminRouter.use(requireSuperAdmin);
 
-// GET /admin/apps — every app across every company, super-admin only. See
-// docs/admin-panel.md Part 4. Real data throughout: Project/Deployment are
-// the same tables the rest of the API reads/writes, and companyName comes
-// from proxy (getCompanyById, already TTL-cached) — nothing here is mocked.
+// GET /admin/apps — every customer app across every company, super-admin
+// only: the admin panel's Customer apps page. Project/Deployment are the
+// same tables the rest of the API reads/writes, and companyName comes from
+// proxy (getCompanyById, already TTL-cached). Since 2026-10-27 each app also
+// carries its live runtime (health, memory against its limit, restarts,
+// out-of-memory kills, failed wake-ups) and `problems`, from one call to
+// hostnsoft-deploy (services/adminOverview.ts). When that call fails the
+// list still answers, with `runtime.available: false` and the per-app
+// runtime fields null, rather than not at all.
 adminRouter.get("/admin/apps", async (req, res) => {
-  const projects = await prisma.project.findMany({
+  const [projects, { overview, error: runtimeError }] = await Promise.all([prisma.project.findMany({
     orderBy: { createdAt: "desc" },
     include: {
       deployments: { orderBy: { createdAt: "desc" }, take: 1 },
       _count: { select: { deployments: true } },
     },
-  });
+  }), fetchAdminOverview()]);
 
   // Batch-resolve company names once per unique companyId rather than once
   // per project — getCompanyById is already TTL-cached, but no reason to
@@ -32,10 +39,16 @@ adminRouter.get("/admin/apps", async (req, res) => {
   const companies = await Promise.all(companyIds.map((id) => getCompanyById(id)));
   const companyNameById = new Map(companyIds.map((id, i) => [id, companies[i]?.name ?? "Unknown company"]));
 
-  const apps = projects.map((p) => {
+  const items = projects.map((p) => {
     const latest = p.deployments[0];
+    const rt = overview?.apps[p.slug];
+    const status = latest?.status ?? "no_deployments";
     return {
+      id: p.id,
       appSlug: p.slug,
+      name: p.name,
+      kind: p.kind,
+      isOrphan: p.isOrphan,
       companyName: p.companyId ? companyNameById.get(p.companyId)! : "Unclaimed (orphan)",
       createdAt: p.createdAt.toISOString(),
       // Project.memoryMb is the platform's own source of truth for current
@@ -45,15 +58,57 @@ adminRouter.get("/admin/apps", async (req, res) => {
       // a failed or still-in-progress attempt.
       memoryMb: p.memoryMb,
       deploymentCount: p._count.deployments,
-      status: latest?.status ?? "no_deployments",
+      status,
+      lastDeployAt: latest?.createdAt.toISOString() ?? null,
       // Who made the latest deploy — see schema.prisma's Deployment.source
       // and agentName. Null when there are no deployments.
       lastDeploySource: latest?.source ?? null,
       lastDeployAgentName: latest?.agentName ?? null,
+      // Live runtime. A static site has no process, so none of this applies
+      // to it; a never-deployed or deleted app has no Nomad job. Both: null.
+      health: rt?.health ?? null,
+      asleepSince: rt?.asleepSince ?? null,
+      memoryLimitMb: rt?.memoryLimitMb ?? null,
+      memoryUsedMb: rt?.memoryMb ?? null,
+      memoryPeak24hMb: rt?.memoryPeak24hMb ?? null,
+      cpuPercent: rt?.cpuPercent ?? null,
+      crashes24h: rt?.crashes24h ?? null,
+      lastCrashAt: rt?.lastCrashAt ?? null,
+      platformRestarts24h: rt?.platformRestarts24h ?? null,
+      oomKills24h: rt ? Math.max(rt.oomKills24h, rt.oomTerminations24h) : null,
+      lastOom: rt?.lastOom ?? null,
+      wakeFailures24h: rt?.wakeFailures24h ?? null,
+      lastWakeFailure: rt?.lastWakeFailure ?? null,
+      problems: problemsFor(rt, status),
     };
   });
 
-  res.json(apps);
+  res.json({
+    items,
+    runtime: { available: overview !== null, error: runtimeError, generatedAt: overview?.generatedAt ?? null },
+  });
+});
+
+// GET /admin/platform — the admin panel's Platform health page: our own
+// infrastructure, not customers' apps. The platform monitor's status (see
+// services/adminOverview.ts) plus a count of customer apps by health, so
+// the page can say how the fleet is doing and link to Customer apps.
+adminRouter.get("/admin/platform", async (_req, res) => {
+  const { overview, error } = await fetchAdminOverview();
+  const counts: Record<string, number> = {};
+  for (const rt of Object.values(overview?.apps ?? {})) counts[rt.health] = (counts[rt.health] ?? 0) + 1;
+  const attentionCount = Object.values(overview?.apps ?? {}).filter((rt) => needsAttention(problemsFor(rt, ""))).length;
+  res.json({
+    available: overview !== null,
+    error,
+    generatedAt: overview?.generatedAt ?? null,
+    monitor: overview?.monitor ?? null,
+    monitorStale: overview?.monitorStale ?? false,
+    monitorError: overview?.monitorError ?? null,
+    customerApps: { byHealth: counts, needsAttention: attentionCount },
+    // Netdata's dashboard, behind its own password. server-setup.md#netdata-dashboard
+    netdataUrl: `${new URL(API_PUBLIC_URL).origin}/netdata/`,
+  });
 });
 
 const featureRequestQuerySchema = z.object({
