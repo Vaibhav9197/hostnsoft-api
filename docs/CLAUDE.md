@@ -200,6 +200,61 @@ invites — `403 owner_required`); the last Owner who is still a member can't be
 demoted or removed; if every Owner has left proxy, an Admin may make someone
 Owner. Every change is audited (`member.*`; removal `member.remove`).
 
+**Team access (added 2026-10-27, `services/inviteLinks.ts`, routes in
+`members.routes.ts` + `publicInviteLinks.routes.ts`).** Everything here is
+new tables, new nullable columns and new routes; nothing above changed.
+- Member view gains `lastActiveAt` (`WorkspaceMember.lastSeenAt`, touched by
+  `loadCompanyContext` at most once an hour per person, never awaited).
+  Invite view gains `lastSentAt`.
+- `POST …/invites/:inviteId/resend` → invite view; `429 resend_too_soon`
+  within 10 minutes of the last send. Audited `member.invite_resend`.
+- `POST /companies/:companyId/transfer-ownership {userId}` (Owner only,
+  `403 owner_required`): target becomes Owner, caller becomes Admin, one
+  transaction. Audited `member.transfer_ownership`.
+- `GET /companies/:companyId/activity/joins` (any member) →
+  `{joins: [{userId, name, email, at}]}`, read off `member.invite_applied`
+  and `member.join` audit rows.
+- `GET /companies/:companyId/projects/:projectId/access` (`app.view`) →
+  `{people: [{userId, name, email, role, level, source, isYou}], canAdd,
+  complete}` — the app's Share panel, built from the same members list and
+  `projectLevel` rule requests use. `source`: `role` (Owner/Admin),
+  `creator`, `workspace` (a Member's workspace-wide level) or `app` (a grant).
+  `PUT …/access/:userId {level|null}` (`members.manage`) sets or clears one
+  grant without touching the person's other apps; only for a Member on
+  `chosen` apps, else `409 not_chosen`. Audited `member.app_access`.
+- **Invite link** (`InviteLink`), all `members.manage`: `GET
+  /companies/:companyId/invite-link` → `{link|null}` (never creates);
+  `POST` gets or creates (default rule `anyone`, Member, `use`); `PATCH
+  {rule?, domains?, role?, access?}` (`400 domain_required|invalid_domain`);
+  `POST …/reset` (new code, same settings, old code dead at once); `POST
+  …/disable`. Link view: `{id, url, rule, domains, role, access, createdBy,
+  createdAt, lastUsedAt, uses, active}`. Code: `randomBytes(24)` base64url,
+  stored readable so the panel can copy it again. Role is `member|billing`
+  only, access `use|edit|full`. Audited `invite_link.*`.
+- **Joining.** `GET /invite-links/:code` (no sign-in) →
+  `{workspaceName, inviterName, role, access, rule, domains}`; every bad,
+  old or disabled code is the same `404 invalid_link`. Signed in: `POST
+  /invite-links/:code/join` → `{status: "member", companyId}` (already in),
+  `{status: "requested", companyId, eligible: true}`, or `403 not_eligible`;
+  `POST …/request {reason?}` asks anyway (`eligible: false`); `GET …/me` →
+  the caller's own request. Rules read proxy's verified email only: `anyone`;
+  `domain` (exact match on the part after `@`); `invite_only` (a
+  `PendingInvite` for that email).
+- **Why every join is a request:** proxy only adds someone to a company as a
+  person already in it (`c/addUser`, user-key), and the admin key has no
+  safe "add user to company by id" (`createCUsers` matches companies by
+  name). So a join writes a `JoinRequest` and emails Owners/Admins
+  (`lib/joinRequestEmail.ts`, same webhook); approving adds them on proxy as
+  the approver. If proxy ever offers an admin-key add, eligible joins can
+  become instant inside `joinWithLink` with nothing else changing.
+- **Join requests**, all `members.manage`: `GET
+  /companies/:companyId/join-requests` → `{requests: [{id, userId, name,
+  email, eligible, reason, status, createdAt}]}` (pending only); `POST
+  …/:requestId/approve {role?, access?}` (defaults to the link's role; Owner
+  and Admin need an Owner, `403 owner_required`) → `204`; `POST
+  …/:requestId/reject` → `204`; `404 request_not_found`. Audited
+  `join_request.create|reject`, approval as `member.join`.
+
 A user can belong to multiple companies; which one a request targets is always
 the `:companyId` in the URL, checked against proxy membership per request.
 

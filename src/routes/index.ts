@@ -10,6 +10,7 @@ import { publicCustomerQueryRouter } from "./publicCustomerQuery.routes";
 import { publicDocsRouter } from "./publicDocs.routes";
 import { publicShowcaseRouter } from "./publicShowcase.routes";
 import { publicBillingRouter } from "./publicBilling.routes";
+import { publicInviteLinksRouter } from "./publicInviteLinks.routes";
 import { connectorAuthRouter } from "./connectorAuth.routes";
 import { agentAppsRouter } from "./agentApps.routes";
 import { authRouter } from "./auth.routes";
@@ -51,6 +52,7 @@ router.use(publicCustomerQueryRouter);
 router.use(publicShowcaseRouter);
 router.use(publicDocsRouter);
 router.use(publicBillingRouter);
+router.use(publicInviteLinksRouter);
 router.use(connectorAuthRouter);
 // Agent control plane: deploy-token auth, mounted with the other
 // non-requireProxyToken routers per the ordering rule above.

@@ -72,6 +72,9 @@ export interface MemberView {
   // With access "chosen": the apps they can reach and how far. Else [].
   apps: { projectId: string; level: AccessLevel }[];
   isYou: boolean;
+  // When they last did anything in this workspace; null if not seen since
+  // that started being recorded (WorkspaceMember.lastSeenAt).
+  lastActiveAt: Date | null;
 }
 
 export type RoleError =
@@ -92,7 +95,7 @@ async function liveOwnerIds(companyId: string): Promise<string[]> {
 }
 
 // May `actor` touch someone whose role is (or would become) owner/admin?
-async function mayManageOwnerish(actor: Access): Promise<boolean> {
+export async function mayManageOwnerish(actor: Access): Promise<boolean> {
   if (actor.role === "owner") return true;
   // The recovery case: no Owner left who is still a member.
   return actor.role === "admin" && (await liveOwnerIds(actor.companyId)).length === 0;
@@ -136,6 +139,7 @@ function toView(
     // Grants only count for a Member on chosen apps.
     apps: row?.role === "member" && row.appAccess === "chosen" ? apps : [],
     isYou: userId === callerId,
+    lastActiveAt: row?.lastSeenAt ?? null,
   };
 }
 
@@ -310,6 +314,7 @@ function toInviteView(i: Awaited<ReturnType<typeof prisma.pendingInvite.findMany
     apps: parseInviteGrants(i.grants),
     invitedBy: i.invitedBy,
     createdAt: i.createdAt,
+    lastSentAt: i.lastSentAt ?? i.createdAt,
   };
 }
 
@@ -379,8 +384,8 @@ export async function createInvite(actor: Access, input: InviteInput, proxyAuthT
   };
   const invite = await prisma.pendingInvite.upsert({
     where: { companyId_email: { companyId, email } },
-    update: data,
-    create: { companyId, email, ...data },
+    update: { ...data, lastSentAt: new Date() },
+    create: { companyId, email, ...data, lastSentAt: new Date() },
   });
 
   try {
@@ -480,6 +485,175 @@ function accessInWords(access: AppAccess, chosenCount: number): string {
   if (access === "edit") return "Can edit all apps";
   if (access === "full") return "Full access to all apps";
   return chosenCount === 1 ? "1 app" : `${chosenCount} apps`;
+}
+
+// Sends the invite email again. Once per RESEND_GAP_MS per invite, so the
+// button can't be used to flood someone's inbox.
+const RESEND_GAP_MS = 10 * 60 * 1000;
+
+export async function resendInvite(actor: Access, inviteId: string) {
+  const invite = await prisma.pendingInvite.findFirst({ where: { id: inviteId, companyId: actor.companyId } });
+  if (!invite) return { ok: false as const, status: 404 as const, code: "invite_not_found", error: "Invite not found" };
+  const last = (invite.lastSentAt ?? invite.createdAt).getTime();
+  if (Date.now() - last < RESEND_GAP_MS) {
+    return {
+      ok: false as const,
+      status: 429 as const,
+      code: "resend_too_soon",
+      error: "That invite was sent a few minutes ago. Try again in a little while.",
+    };
+  }
+  const grants = parseInviteGrants(invite.grants);
+  await sendInviteEmail(actor, actor.companyId, invite.email, invite.role as Role, invite.appAccess as AppAccess, grants.length);
+  const updated = await prisma.pendingInvite.update({ where: { id: invite.id }, data: { lastSentAt: new Date() } });
+  await logAudit({ actorUserId: actor.userId, companyId: actor.companyId, action: "member.invite_resend", details: invite.email });
+  return { ok: true as const, invite: toInviteView(updated) };
+}
+
+// Hands the workspace to someone else in one step: they become Owner, the
+// caller (an Owner) becomes Admin. The same thing as making them Owner and
+// then stepping down, without the moment in between.
+export async function transferOwnership(
+  actor: Access,
+  targetUserId: string
+): Promise<{ ok: true; member: MemberView } | { ok: false; err: RoleError }> {
+  const companyId = actor.companyId;
+  if (actor.role !== "owner") {
+    return { ok: false, err: { status: 403, code: "owner_required", error: "Only an Owner can hand over the workspace." } };
+  }
+  if (targetUserId === actor.userId) {
+    return { ok: false, err: { status: 400, code: "not_yourself", error: "You're already the Owner." } };
+  }
+  if (!(await isCompanyMember(targetUserId, companyId))) {
+    return { ok: false, err: { status: 404, code: "member_not_found", error: "That person isn't a member of this workspace." } };
+  }
+  await startSetUp(companyId);
+  const before = await resolveAccess(targetUserId, companyId, { membershipChecked: true });
+  await prisma.$transaction([
+    prisma.workspaceMember.upsert({
+      where: { companyId_userId: { companyId, userId: targetUserId } },
+      update: { role: "owner", appAccess: MEMBER_DEFAULT_ACCESS },
+      create: { companyId, userId: targetUserId, role: "owner", appAccess: MEMBER_DEFAULT_ACCESS },
+    }),
+    prisma.appGrant.deleteMany({ where: { userId: targetUserId, project: { companyId } } }),
+    prisma.workspaceMember.upsert({
+      where: { companyId_userId: { companyId, userId: actor.userId } },
+      update: { role: "admin" },
+      create: { companyId, userId: actor.userId, role: "admin" },
+    }),
+  ]);
+  await logAudit({
+    actorUserId: actor.userId,
+    companyId,
+    action: "member.transfer_ownership",
+    details: `${actor.userId} -> ${targetUserId} (was ${before?.role ?? DEFAULT_ROLE}); ${actor.userId} is now admin`,
+  });
+  return { ok: true, member: (await getMember(companyId, targetUserId, actor.userId))! };
+}
+
+// ---------------------------------------------------------------- one app
+
+export type AccessSource = "role" | "creator" | "workspace" | "app";
+
+// Who can reach one app and how far, for the app's Share panel. Built from
+// the same members list and the same projectLevel rule a request uses, so
+// it can't disagree with what is enforced. `source` says where the level
+// comes from: their role (Owner/Admin), having made the app, their
+// workspace-wide access, or a level given for this app alone — only the
+// last can be changed from the Share panel.
+export async function appAccessList(companyId: string, projectId: string, callerId: string) {
+  const project = await prisma.project.findFirst({ where: { id: projectId, companyId }, select: { id: true, createdBy: true } });
+  if (!project) return null;
+  const { members, complete } = await listMembers(companyId, callerId);
+  const people = members.flatMap((m) => {
+    let level: AccessLevel | null = null;
+    let source: AccessSource = "role";
+    if (m.role === "owner" || m.role === "admin") level = "full";
+    else if (m.role === "member") {
+      if (project.createdBy && project.createdBy === m.userId) {
+        level = "full";
+        source = "creator";
+      } else if (m.access === "chosen") {
+        level = m.apps.find((a) => a.projectId === projectId)?.level ?? null;
+        source = "app";
+      } else {
+        level = (m.access as AccessLevel | null) ?? null;
+        source = "workspace";
+      }
+    }
+    return level ? [{ userId: m.userId, name: m.name, email: m.email, role: m.role, level, source, isYou: m.isYou }] : [];
+  });
+  // Members on chosen apps without this one: who can be added here.
+  const canAdd = members
+    .filter((m) => m.role === "member" && m.access === "chosen" && !m.apps.some((a) => a.projectId === projectId))
+    .map((m) => ({ userId: m.userId, name: m.name, email: m.email }));
+  return { people, canAdd, complete };
+}
+
+// Gives or takes away one person's level on one app, leaving their other
+// apps alone. Only for a Member on chosen apps: everyone else's access to
+// this app comes from their role or workspace-wide access, changed on the
+// People page.
+export async function setAppAccess(
+  actor: Access,
+  projectId: string,
+  targetUserId: string,
+  level: AccessLevel | null
+): Promise<{ ok: true } | { ok: false; err: RoleError | { status: 409; code: "not_chosen"; error: string } }> {
+  const companyId = actor.companyId;
+  if (!(await isCompanyMember(targetUserId, companyId))) {
+    return { ok: false, err: { status: 404, code: "member_not_found", error: "That person isn't a member of this workspace." } };
+  }
+  const project = await prisma.project.findFirst({ where: { id: projectId, companyId }, select: { id: true, slug: true } });
+  if (!project) return { ok: false, err: { status: 400, code: "unknown_app", error: "That app isn't in this workspace." } };
+  const current = await resolveAccess(targetUserId, companyId, { membershipChecked: true });
+  if (!current || current.role !== "member" || current.appAccess !== "chosen") {
+    return {
+      ok: false,
+      err: {
+        status: 409,
+        code: "not_chosen",
+        error: "Their access to this app comes from their workspace role. Change it on the People page.",
+      },
+    };
+  }
+  if (level) {
+    await prisma.appGrant.upsert({
+      where: { projectId_userId: { projectId, userId: targetUserId } },
+      update: { level },
+      create: { projectId, userId: targetUserId, level },
+    });
+  } else {
+    await prisma.appGrant.deleteMany({ where: { projectId, userId: targetUserId } });
+  }
+  await logAudit({
+    actorUserId: actor.userId,
+    companyId,
+    projectId,
+    action: "member.app_access",
+    details: `${targetUserId}: ${project.slug}=${level ?? "(none)"}`,
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- activity
+
+// Who joined lately, newest first — for the panel's "X joined your
+// workspace" note. Read off the audit log rows joining writes (an invite
+// applied, a request approved), whose details start with the user id.
+export async function recentJoins(companyId: string, limit = 20) {
+  const rows = await prisma.auditLog.findMany({
+    where: { companyId, action: { in: ["member.invite_applied", "member.join"] } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { details: true, createdAt: true },
+  });
+  const joins = rows.flatMap((r) => {
+    const userId = r.details?.split(" ")[0];
+    return userId ? [{ userId, at: r.createdAt }] : [];
+  });
+  const people = await Promise.all(joins.map((j) => getUserById(j.userId).catch(() => null)));
+  return joins.map((j, i) => ({ userId: j.userId, name: people[i]?.name || null, email: people[i]?.email || null, at: j.at }));
 }
 
 async function sendInviteEmail(
