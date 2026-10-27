@@ -120,13 +120,16 @@ model Project {
   // header keeps the previous value rather than clearing it.
   appType String?
 
-  deployments Deployment[]
-  envVars     EnvVar[]
-  domains     Domain[]
-  schedules   Schedule[]
-  appDetails  AppDetails?
-  slugAliases SlugAlias[]
-  appGrants   AppGrant[]
+  deployments            Deployment[]
+  envVars                EnvVar[]
+  domains                Domain[]
+  schedules              Schedule[]
+  appDetails             AppDetails?
+  slugAliases            SlugAlias[]
+  appGrants              AppGrant[]
+  // At most one live row at a time (disable/rotate revoke rather than
+  // delete), so this is a list only because revoked rows are kept.
+  integrationsProject    IntegrationsProject?
 
   @@index([companyId])
 }
@@ -282,20 +285,20 @@ model Schedule {
 // One call the runner made (or chose not to make). Pruned to the newest
 // SCHEDULE_RUN_HISTORY rows per schedule.
 model ScheduleRun {
-  id         String    @id @default(cuid())
-  scheduleId String
+  id              String    @id @default(cuid())
+  scheduleId      String
   // "manual" (POST .../run) | "schedule"
-  trigger    String    @default("schedule")
+  trigger         String    @default("schedule")
   // "running" | "ok" | "failed" | "skipped" (previous run still in flight)
-  outcome    String
-  httpStatus Int?
-  error      String?
+  outcome         String
+  httpStatus      Int?
+  error           String?
   // First SCHEDULE_RESPONSE_EXCERPT_BYTES of the response body, so an
   // agent can return a one-line summary of what the run did.
   responseExcerpt String?
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-  durationMs Int?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  durationMs      Int?
 
   schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
@@ -359,10 +362,10 @@ model Deployment {
   // from the optional X-Agent-Name header. Self-reported and unverified —
   // useful for "who's deploying with us", not for access decisions. Null
   // when not sent, and always null for a dashboard deploy.
-  agentName String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  finishedAt  DateTime?
+  agentName  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -435,6 +438,7 @@ model AuditLog {
   @@index([projectId, action, createdAt])
   @@index([companyId, action, createdAt])
 }
+
 // ---------------------------------------------------------------- Showcase
 // See docs/showcase.md. Two places an app can be shown:
 //   public — the home gallery at /showcase. A flag on AppDetails.
@@ -456,27 +460,27 @@ model AppDetails {
   // Proxy userId of whoever wrote the details.
   createdBy String
 
-  tagline     String
-  description String?
-  story       String?
+  tagline           String
+  description       String?
+  story             String?
   // Snapshot: the project's active custom domain if it had one, else its
   // platform URL. Repointed by services/projectSlugChange.ts on a rename.
-  appUrl         String
-  screenshotUrls     String @default("[]")
-  videoUrl       String?
-  creatorName    String
-  creatorProfile String?
+  appUrl            String
+  screenshotUrls    String  @default("[]")
+  videoUrl          String?
+  creatorName       String
+  creatorProfile    String?
   // JSON-encoded string[] — several people can contribute to one app.
-  contributorEmails  String @default("[]")
+  contributorEmails String  @default("[]")
   // Offered options only; enforced in services/showcase.ts (SQLite has no
   // enums under Prisma 5).
-  builtWith String?
-  category  String?
+  builtWith         String?
+  category          String?
   // JSON-encoded string[] — SQLite has no array column.
-  tagsJson String @default("[]")
+  tagsJson          String  @default("[]")
   // Creator-supplied HTML rendered on the app details page. Stored raw; the
   // panel sanitises on render.
-  customHtml String?
+  customHtml        String?
 
   // Shown on the /showcase home gallery.
   isPublic Boolean @default(false)
@@ -486,7 +490,7 @@ model AppDetails {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  project  Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project  Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
   listings ShowcaseEventListing[]
 
   @@index([companyId])
@@ -496,18 +500,18 @@ model AppDetails {
 // An event page, /showcase/<slug>: a hackathon, a demo day. Made by a
 // company from its console; any company's members can list their own apps.
 model ShowcaseEvent {
-  id String @id @default(cuid())
+  id          String  @id @default(cuid())
   // Immutable once created — it's an address people will have shared.
   // Lowercase letters, digits, dashes; see eventSlugSchema for the rule.
-  slug  String  @unique
-  title String
-  intro String?
+  slug        String  @unique
+  title       String
+  intro       String?
   // Proxy company id of the organiser.
-  companyId String
-  createdBy String
+  companyId   String
+  createdBy   String
   // Handed out by the organiser. A submission carrying it is approved at
   // once; without it the organiser reviews. Generated in services/showcase.ts.
-  submitCode String @unique
+  submitCode  String  @unique
   // Organiser's switch. On: every submission is approved at once, code or
   // not. Off (default): pending until reviewed, unless the code matches.
   autoApprove Boolean @default(false)
@@ -515,7 +519,7 @@ model ShowcaseEvent {
   // schedule, sponsors. Stored raw, capped at 50k by the API; the panel
   // renders it in a sandboxed frame with scripts off. The one field an
   // organiser can change after creating the page.
-  customHtml String?
+  customHtml  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -527,21 +531,21 @@ model ShowcaseEvent {
 
 // One app shown on one event page.
 model ShowcaseEventListing {
-  id           String @id @default(cuid())
-  appDetailsId String
-  eventId      String
+  id              String    @id @default(cuid())
+  appDetailsId    String
+  eventId         String
   // Proxy userId of the member who listed it.
-  addedBy String
+  addedBy         String
   // pending | approved | rejected (LISTING_STATUSES in services/showcase.ts;
   // SQLite has no enums). Only approved listings are public.
   status          String    @default("pending")
   rejectionReason String?
   // Organiser member who approved or rejected, and when.
-  reviewedBy String?
-  reviewedAt DateTime?
+  reviewedBy      String?
+  reviewedAt      DateTime?
   // The organiser's switch: hides an approved listing from the event's
   // public page without removing it.
-  isHidden Boolean @default(false)
+  isHidden        Boolean   @default(false)
 
   createdAt DateTime @default(now())
 
@@ -558,10 +562,63 @@ model ShowcaseEventListing {
 // last Lago plan we saw (written on assignPlan + the Lago webhook) and is
 // only read when Lago is unreachable.
 model Company {
-  id               String    @id
+  id               String   @id
   planCode         String?
   lagoCustomerId   String?
   stripeCustomerId String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  // Integrations for this workspace. Off by default; only an Owner turns
+  // it on, and no app in the workspace can enable Integrations until then.
+  integrationsEnabled Boolean @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ----------------------------------------------------- Integrations
+// See docs/integrations.md. Embarko gives each workspace a hidden
+// workspace on viasocket (the integration engine), and each app that
+// turns Integrations on an embed project inside it. The app receives the
+// ids and the workspace's key as env vars and loads viasocket's embed
+// itself. Keyed by proxy companyId with no foreign key, same as
+// everything else here. Nothing a customer sees names viasocket.
+
+// The viasocket workspace behind one Embarko workspace. Created on first
+// use (services/integrationsWorkspace.ts) and never deleted.
+model IntegrationsWorkspace {
+  companyId   String   @id
+  // viasocket's `company_id` — the <org_id> its API addresses the workspace by.
+  orgId       String
+  // viasocket's `org_id` — the workspace's NAME ("72191-Embarko-<id>"). Support-facing only.
+  orgName     String
+  // The person whose SSO login created the workspace: the member who first
+  // opened the builder, or the workspace Owner on the agent path. Logging
+  // in again as them is how later API calls get a session.
+  ownerEmail  String
+  ownerUserId String
+  // The workspace's own auth key (GET /orgs/<org_id>/token). Signs the
+  // embed tokens the customer's app mints. Secret: never returned by any
+  // endpoint, reaches apps only as an env var.
+  authKey     String
+  createdBy   String
+  createdAt   DateTime @default(now())
+}
+
+// One app's embed project on viasocket. Title "Embarko-<projectId>", never
+// the slug, since a slug can change. Goes with the project.
+model IntegrationsProject {
+  projectId      String   @id
+  companyId      String
+  embedProjectId String
+  // The key this app signs embed tokens with. Today a copy of the
+  // workspace's key (viasocket issues one per workspace); viasocket is
+  // moving to one key per project, and then this is where it lives.
+  authKey        String
+  createdBy      String
+  createdAt      DateTime @default(now())
+  // Set when Integrations is turned off for the app; cleared when turned
+  // on again. The row is never deleted while the app exists: it is
+  // Embarko's only record of which viasocket project is this app's, and
+  // the person's flows live in that project.
+  disabledAt     DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }

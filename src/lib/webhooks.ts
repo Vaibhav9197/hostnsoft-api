@@ -28,6 +28,9 @@ export enum Webhook {
   // email itself.
   // ponytail: same flow URL as above; give it its own flow when it needs one.
   MEMBER_INVITE_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
+  // An app (via its AI) asked for Integrations in a workspace where it is
+  // off: tells the Owners, who are the only ones who can turn it on.
+  INTEGRATIONS_REQUEST_EMAIL = "https://flow.sokt.io/func/scriCDraa3NO",
 }
 
 export class WebhookError extends Error { }

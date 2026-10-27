@@ -16,12 +16,14 @@ const WHAT = {
   env_vars: "Env vars don't apply",
   memory: "Memory can't be set",
   schedules: "Schedules can't run",
+  integrations: "Integrations can't be turned on",
 } as const;
 
 const NEXT = {
   env_vars: "Put the config in the site's files instead, or deploy it as a server app under a new name (see links.help).",
   memory: "Static sites need no memory setting; to run server code, deploy it as a server app under a new name (see links.help).",
   schedules: "A schedule calls a route in the app's server code; deploy it as a server app under a new name (see links.help).",
+  integrations: "Integrations works by giving the app settings it reads on its server to sign embed tokens; deploy it as a server app under a new name (see links.help).",
 } as const;
 
 export function refuseForStaticApp(feature: keyof typeof WHAT) {

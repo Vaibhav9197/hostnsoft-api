@@ -91,7 +91,20 @@ const FONT = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Hel
 const TONE = {
   failed: { label: "Needs attention", fg: "#b42318", bg: "#fef3f2", border: "#fecdca" },
   recovered: { label: "Working again", fg: "#067647", bg: "#ecfdf3", border: "#abefc6" },
+  request: { label: "Request", fg: "#1f2328", bg: "#f6f8fa", border: "#d0d7de" },
 };
+
+// The same layout for a one-off notice from elsewhere (an Integrations
+// request). Strings are escaped here; pass plain text.
+export function renderNoticeEmail(o: { title: string; body: string; cta: { url: string; label: string }; footer: string }): string {
+  return layout({
+    tone: TONE.request,
+    title: escapeHtml(o.title),
+    body: escapeHtml(o.body),
+    ctas: [{ ...o.cta, primary: true }],
+    footer: escapeHtml(o.footer),
+  });
+}
 
 type Cta = { url: string; label: string; primary?: boolean };
 

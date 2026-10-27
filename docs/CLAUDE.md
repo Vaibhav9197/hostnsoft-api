@@ -66,6 +66,9 @@ foreign key. See `docs/plans/2026-09-04-001-refactor-proxy-owned-identity-plan.m
  AppGrant (projectId → Project, userId, level use|edit|full)                ← a "chosen" Member's apps
  PendingInvite (companyId, email, role, appAccess, invitedBy, grants JSON)  ← role waiting for an invitee
  WorkspaceRoleSetup (companyId, ownerDecidedAt, membersCapturedAt)          ← one-time roles setup per workspace
+ Company.integrationsEnabled (workspace switch, Owner only)                  ← Integrations, added 2026-10-24
+ IntegrationsWorkspace (companyId → its hidden workspace on viasocket, authKey) ← Integrations, added 2026-10-23
+ IntegrationsProject (projectId → Project, embedProjectId, authKey, disabledAt) ← one app's embed project + key; flagged off, never deleted
 ```
 
 **Authorization (changed 2026-10-21): proxy membership, then a local role.**

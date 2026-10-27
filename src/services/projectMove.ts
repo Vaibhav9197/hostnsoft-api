@@ -42,6 +42,7 @@ import { isCompanyOnFreePlan } from "../lib/lago";
 import { can } from "../lib/permissions";
 import { getCompanyById } from "../lib/msg91";
 import { logAudit } from "./audit";
+import { revokeForWorkspaceMove } from "./integrationsProject";
 import { isRenameInProgress } from "./renameStatus";
 import { pushCustomDomainConfig } from "./customDomainActivation";
 import { appLimitRefusal } from "./planLimits";
@@ -141,6 +142,12 @@ export async function moveProject(input: {
       reason: "This app changed while you were moving it. Reload the page and try again.",
     };
   }
+
+  // Integrations does NOT follow the app. Its embed project belongs to the
+  // workspace it just left, so the mapping and the app's settings are
+  // removed; the owner turns it on again where the app now lives. Best
+  // effort, after the move is committed — the move must not fail over this.
+  await revokeForWorkspaceMove(moved.id, actorUserId);
 
   // Both workspaces: the old one needs the row for its tokens to be told
   // the app moved (tokenAccess.ts wasMovedOutOf), the new one for "where did

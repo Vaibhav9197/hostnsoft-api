@@ -442,6 +442,16 @@
     </div>
 
     <div class="navgroup">
+      <div class="navgroup-label">Integrations</div>
+      <a class="navlink" href="#ep-integrations-workspace-get">Workspace switch <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-integrations-workspace-set">Flip workspace switch <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-integrations-console">Open platform <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-integrations-app-get">App state <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-integrations-app-enable">Turn on <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+      <a class="navlink" href="#ep-integrations-app-disable">Turn off <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
+    </div>
+
+    <div class="navgroup">
       <div class="navgroup-label">Schedules (agent)</div>
       <a class="navlink" href="#ep-schedules-list">List <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
       <a class="navlink" href="#ep-schedules-create">Create <span class="chip role-chip new" style="margin-left:4px;padding:0 4px;">new</span></a>
@@ -1462,6 +1472,74 @@
     </section>
 
     <hr class="rule" />
+
+    <hr class="rule" />
+
+    <section class="resource" id="integrations">
+      <div class="resource-head"><h2>Integrations <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>
+      <p class="resource-intro">Gives an app the integration engine\'s embed: its end users connect Slack, Google Sheets, a CRM and the like and build flows inside the customer\'s own product. A workspace gets its own hidden workspace on the engine the first time an app turns Integrations on. An app with Integrations on receives three env vars — <code>INTEGRATIONS_ORG_ID</code>, <code>INTEGRATIONS_PROJECT_ID</code>, <code>INTEGRATIONS_SECRET</code> — signs an embed token per end user with the secret, and loads the embed itself. Nothing a customer sees names the engine.</p>
+
+
+
+
+
+
+      <article class="endpoint" id="ep-integrations-workspace-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/integrations</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">The workspace switch. Off by default; while off, no app in the workspace can turn Integrations on. Any member. Response: <code>{enabled, canChange}</code>, where <code>canChange</code> is whether the caller is an Owner.</p>
+      </article>
+
+      <article class="endpoint" id="ep-integrations-workspace-set">
+        <div class="endpoint-head">
+          <span class="method put">PUT</span>
+          <span class="path">/companies/:companyId/integrations</span>
+          <span class="role-chip">Owner</span>
+        </div>
+        <p class="endpoint-desc">Flips the workspace switch: <code>{enabled}</code>. Owner only; anyone else gets <code>403 owner_required</code> "Only company owners can enable or disable this feature." Audited as <code>integrations.workspace.enable</code> / <code>.disable</code>.</p>
+      </article>
+
+      <article class="endpoint" id="ep-integrations-console">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/integrations/console · …/projects/:projectId/integrations/console</span>
+          <span class="role-chip">proxy_auth_token</span>
+        </div>
+        <p class="endpoint-desc">A one-time link into the integrations platform, already signed in as the caller: the workspace's page, or one app's embed metrics (needs the app on). <code>302</code> by default; <code>?format=json</code> answers <code>{url}</code>. The link carries a session, so the reply is <code>no-store</code> with <code>Referrer-Policy: no-referrer</code>. <code>409 integrations_disabled_for_workspace</code>, <code>409 integrations_not_enabled</code>, <code>409 email_required</code>.</p>
+      </article>
+
+      <article class="endpoint" id="ep-integrations-app-get">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/companies/:companyId/projects/:projectId/integrations</span>
+          <span class="role-chip">app.view</span>
+        </div>
+        <p class="endpoint-desc">Whether this app has Integrations on. Response: <code>{enabled, envVars, appliesWhen}</code>. Agent equivalent: <code>GET /api/apps/:appName/integrations</code>.</p>
+      </article>
+
+      <article class="endpoint" id="ep-integrations-app-enable">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/companies/:companyId/projects/:projectId/integrations</span>
+          <span class="role-chip">app.view</span>
+        </div>
+        <p class="endpoint-desc">Turns Integrations on: creates (or finds) the app's embed project on the engine, titled by the app's id, and writes three env vars: <code>INTEGRATIONS_ORG_ID</code>, <code>INTEGRATIONS_PROJECT_ID</code>, <code>INTEGRATIONS_SECRET</code>. Calling it again answers <code>200 {alreadyEnabled: true}</code>. <code>409 integrations_disabled_for_workspace</code> while the workspace switch is off (the agent route also emails the Owners, once a day per app); <code>409 env_var_conflict</code> if the app already sets any of them itself; <code>409 not_supported_for_static</code>; <code>409 app_not_claimed</code>; <code>409 email_required</code> when no owner email is known; <code>502 integrations_unavailable</code> when the engine does not answer. The vars reach the app on its next deploy, or at once with the agent route's <code>{"apply": true}</code>.</p>
+      </article>
+
+
+      <article class="endpoint" id="ep-integrations-app-disable">
+        <div class="endpoint-head">
+          <span class="method delete">DELETE</span>
+          <span class="path">/companies/:companyId/projects/:projectId/integrations</span>
+          <span class="role-chip">app.view</span>
+        </div>
+        <p class="endpoint-desc">Removes the three env vars and flags the app off. The mapping row and the embed project with its flows stay; turning it on again restores the env vars from the stored ids without calling the engine.</p>
+      </article>
+
+    </section>
 
     <section class="resource" id="schedules">
       <div class="resource-head"><h2>Schedules <span class="role-chip new" style="margin-left:8px;">new</span></h2></div>

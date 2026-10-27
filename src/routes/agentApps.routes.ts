@@ -59,6 +59,10 @@ import { startRun } from "../services/scheduleRunner";
 import { ensureCronSecret } from "../services/scheduleSync";
 import { SCHEDULE_MAX_PER_APP } from "../lib/scheduleConfig";
 import { UnsafeUrlError, assertPublicHttpsUrl } from "../lib/publicHttpsUrl";
+import { CredentialError, disableIntegrations, enableIntegrations, integrationsStatus } from "../services/integrationsProject";
+import { requestWorkspaceIntegrations } from "../services/integrationsRequest";
+import { getUserById } from "../lib/msg91";
+import { requireIntegrationsConfigured, sendFeatureError } from "./integrations.routes";
 
 export const agentAppsRouter = Router();
 
@@ -1070,4 +1074,98 @@ appScoped.put("/showcase", requirePermission("app.settings"), async (req, res) =
   let next = submitNext(placed.placement, `${FRONTEND_ORIGIN}${where}`, placed.created);
   if (status === "approved") next += " " + (placed.app.videoUrl ? PROMOTE_WITH_VIDEO : PROMOTE_NO_VIDEO);
   res.status(placed.created ? 201 : 200).json({ ...toOwnerListing(placed.app, placed.placement), next });
+});
+
+// ------------------------------------------------------- Integrations
+// Agent parity (docs/integrations.md R7): everything a member can do —
+// turn Integrations on or off for an app, read its state — an agent can do
+// with the deploy token it already has. Most apps here are agent-deployed.
+//
+// Same services as the dashboard routes; only addressing and auth differ.
+
+appScoped.get("/integrations", requireIntegrationsConfigured, requirePermission("app.view"), async (req, res) => {
+  res.json(await integrationsStatus(req.project!.id));
+});
+
+const enableIntegrationsSchema = z.object({
+  apply: z.boolean().optional().default(false),
+});
+
+// Turns it on and says what the app now has: three env vars to mint embed
+// tokens and load the embed with.
+appScoped.post(
+  "/integrations",
+  requireIntegrationsConfigured,
+  refuseForStaticApp("integrations"),
+  requirePermission("app.view"),
+  async (req, res) => {
+    const { apply } = enableIntegrationsSchema.parse(req.body ?? {});
+    let result;
+    try {
+      result = await enableIntegrations(req.project!, req.userId!);
+    } catch (err) {
+      // The workspace has Integrations off. An agent cannot flip that, so
+      // the Owners are told which app asked, and the agent is told to wait.
+      if (err instanceof CredentialError && err.code === "integrations_disabled_for_workspace") {
+        const person = (await getUserById(req.userId!).catch(() => null))?.email;
+        const notified = await requestWorkspaceIntegrations(
+          req.company!.id,
+          { id: req.project!.id, slug: req.project!.slug, name: req.project!.name },
+          req.userId!,
+          person ? `${person} (via their AI)` : "An AI agent"
+        );
+        return res.status(409).json({
+          error: `${err.message} The workspace Owners have been emailed about ${req.project!.name || req.project!.slug}.`,
+          code: err.code,
+          ownersNotified: notified > 0,
+          next: "Tell the person: Integrations is off for their workspace, and the workspace Owners have an email with a link to turn it on. Do not retry until they say it is on.",
+        });
+      }
+      if (sendFeatureError(res, err)) return;
+      throw err;
+    }
+
+    const body = {
+      ...result.status,
+      alreadyEnabled: result.alreadyEnabled,
+      next: "Integrations is on. The app has INTEGRATIONS_ORG_ID, INTEGRATIONS_PROJECT_ID and INTEGRATIONS_SECRET. Build the panel by following https://flow.viasocket.com/documentation/skill.md; where it reads VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID and VIASOCKET_EMBED_SECRET, use those three in that order. Don't ask the person for them.",
+    };
+
+    // Same contract as env vars: the settings exist, but a running
+    // container only sees them after a deploy or an apply. Saying
+    // "enabled" without that would have the agent report success while
+    // the app still can't read the settings.
+    if (!apply) {
+      return res.status(result.alreadyEnabled ? 200 : 201).json({ ...body, applied: false, appliesOn: "next_deploy" });
+    }
+
+    const outcome = await applyCurrentConfig(req.project!, agentAttribution(req, `config:${agentActor(req)}`));
+    if (!outcome.ok) {
+      if (outcome.code === "no_current_deployment") {
+        // Turning it on DID work; only pushing it to a running container
+        // didn't, because there isn't one yet.
+        return res.status(422).json({
+          ...body,
+          error: "Integrations is on, but there's no running deployment to apply it to. Deploy the app to pick it up.",
+          code: "no_current_deployment",
+          applied: false,
+          appliesOn: "next_deploy",
+        });
+      }
+      return sendRedeployFailure(res, outcome);
+    }
+
+    res.status(202).json({
+      ...body,
+      applied: true,
+      deploymentId: outcome.deployment.id,
+      statusUrl: `/api/apps/${req.project!.slug}/deployments/${outcome.deployment.id}`,
+      terminal: false,
+    });
+  }
+);
+
+appScoped.delete("/integrations", requireIntegrationsConfigured, requirePermission("app.view"), async (req, res) => {
+  await disableIntegrations(req.project!, req.userId!);
+  res.status(204).end();
 });
